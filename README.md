@@ -29,8 +29,8 @@ This library is composed of 3 feature-gated layers:
   - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature)
   - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
   - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
-- **CalDAV** calendars and items (requires `rfc4791` feature)
-- **CardDAV** addressbooks and cards (requires `rfc6352` feature)
+- **CalDAV** calendars and items
+- **CardDAV** addressbooks and cards
 - **HTTP Auth mechanisms**: `BASIC`, `BEARER`
 
 > [!TIP]
@@ -38,13 +38,13 @@ This library is composed of 3 feature-gated layers:
 
 ## RFC coverage
 
-| Module | What it covers                                                                                                       |
-|--------|----------------------------------------------------------------------------------------------------------------------|
+| Module | What it covers                                                                                                        |
+|--------|-----------------------------------------------------------------------------------------------------------------------|
 | [4918] | WebDAV core: `PROPFIND`, `PROPPATCH`, `MKCOL`, `COPY`, `MOVE`, `DELETE`, `GET`, `PUT`, `OPTIONS`, multistatus parsing |
-| [4791] | CalDAV: calendar collections and calendar object resources (items)                                                   |
+| [4791] | CalDAV: calendar collections and calendar object resources (items)                                                    |
 | [5397] | WebDAV current principal: `current-user-principal` discovery                                                          |
-| [6352] | CardDAV: addressbook collections and address object resources (cards)                                                |
-| [6764] | Service discovery: `.well-known/caldav` and `.well-known/carddav` bootstrap                                          |
+| [6352] | CardDAV: addressbook collections and address object resources (cards)                                                 |
+| [6764] | Service discovery: `.well-known/caldav` and `.well-known/carddav` bootstrap                                           |
 
 [4918]: https://www.rfc-editor.org/rfc/rfc4918
 [4791]: https://www.rfc-editor.org/rfc/rfc4791
@@ -127,7 +127,7 @@ Enable the `client` feature. `WebdavClientStd::new(stream, auth, base_url)` wrap
 
 ```toml,ignore
 [dependencies]
-io-webdav = { version = "0.0.1", default-features = false, features = ["client", "rfc4791"] }
+io-webdav = { version = "0.0.1", default-features = false, features = ["client"] }
 ```
 
 ```rust,no_run
@@ -164,7 +164,7 @@ Enable one of the TLS feature flags: `rustls-ring` (default), `rustls-aws`, or `
 
 ```toml,ignore
 [dependencies]
-io-webdav = "0.0.1" # rustls-ring, rfc4791 and rfc6352 are enabled by default
+io-webdav = "0.0.1" # rustls-ring is enabled by default
 ```
 
 ```rust,no_run

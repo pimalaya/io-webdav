@@ -17,12 +17,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["rustls-ring", "rfc4791", "rfc6352"]
+default = ["rustls-ring"]
 client = []
-caldav = ["rfc4791"]
-rfc4791 = []
-carddav = ["rfc6352"]
-rfc6352 = []
 rustls-ring = ["client", "pimalaya-stream/rustls-ring", "dep:anyhow", "dep:pimalaya-stream"]
 rustls-aws = ["client", "pimalaya-stream/rustls-aws", "dep:anyhow", "dep:pimalaya-stream"]
 native-tls = ["client", "pimalaya-stream/native-tls", "dep:anyhow", "dep:pimalaya-stream"]

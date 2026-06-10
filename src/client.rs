@@ -41,10 +41,12 @@ use core::fmt;
 
 use alloc::{
     boxed::Box,
+    collections::BTreeSet,
+    format,
     string::{String, ToString},
+    vec::Vec,
 };
-#[cfg(any(feature = "rfc4791", feature = "rfc6352"))]
-use alloc::{collections::BTreeSet, vec::Vec};
+
 use std::io::{self, Read, Write};
 
 use log::trace;
@@ -59,36 +61,32 @@ use url::Url;
 
 use crate::{
     coroutine::*,
+    rfc4791::{
+        calendar::{
+            Calendar, create::CreateCalendar, delete::DeleteCalendar, home_set::CalendarHomeSet,
+            list::ListCalendars, update::UpdateCalendar,
+        },
+        item::{
+            CreateItemOk, ItemBody, ItemEntry, UpdateItemOk, create::CreateItem,
+            delete::DeleteItem, list::ListItems, read::ReadItem, update::UpdateItem,
+        },
+    },
     rfc4918::{
         WebdavAuth, coroutine::WebdavRedirectYield, follow_redirects::FollowRedirectsError,
         send::SendError,
     },
     rfc5397::current_user_principal::CurrentUserPrincipal,
+    rfc6352::{
+        addressbook::{
+            Addressbook, create::CreateAddressbook, delete::DeleteAddressbook,
+            home_set::AddressbookHomeSet, list::ListAddressbooks, update::UpdateAddressbook,
+        },
+        card::{
+            CardBody, CardEntry, CreateCardOk, UpdateCardOk, create::CreateCard,
+            delete::DeleteCard, list::ListCards, read::ReadCard, update::UpdateCard,
+        },
+    },
     rfc6764::well_known::{WellKnown, WellKnownError, WellKnownKind},
-};
-
-#[cfg(feature = "rfc4791")]
-use crate::rfc4791::{
-    calendar::{
-        Calendar, create::CreateCalendar, delete::DeleteCalendar, home_set::CalendarHomeSet,
-        list::ListCalendars, update::UpdateCalendar,
-    },
-    item::{
-        CreateItemOk, ItemBody, ItemEntry, UpdateItemOk, create::CreateItem, delete::DeleteItem,
-        list::ListItems, read::ReadItem, update::UpdateItem,
-    },
-};
-
-#[cfg(feature = "rfc6352")]
-use crate::rfc6352::{
-    addressbook::{
-        Addressbook, create::CreateAddressbook, delete::DeleteAddressbook,
-        home_set::AddressbookHomeSet, list::ListAddressbooks, update::UpdateAddressbook,
-    },
-    card::{
-        CardBody, CardEntry, CreateCardOk, UpdateCardOk, create::CreateCard, delete::DeleteCard,
-        list::ListCards, read::ReadCard, update::UpdateCard,
-    },
 };
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
@@ -143,14 +141,9 @@ pub enum WebdavClientStdError {
     MissingAddressbookHomeSet,
 }
 
-/// Marker for everything the client can run against; auto-implemented
-/// for any blocking `Read + Write + Send` impl.
-trait Stream: Read + Write + Send {}
-impl<T: Read + Write + Send + ?Sized> Stream for T {}
-
 /// Std-blocking WebDAV client wrapping a single blocking stream.
 pub struct WebdavClientStd {
-    stream: Box<dyn Stream>,
+    stream: Box<dyn WebdavStream>,
     auth: WebdavAuth,
 
     /// Base URL prepended to every request path.
@@ -303,16 +296,15 @@ impl WebdavClientStd {
                 }
                 WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
                     self.stream.write_all(&bytes)?;
-                    arg = None;
                 }
             }
         }
     }
 
-    /// Runs a redirect-aware discovery coroutine
-    /// (`Yield = WebdavRedirectYield`, `Return = Option<Url>`). A 3xx
-    /// is surfaced as [`UnexpectedRedirect`] (or [`TooManyRedirects`]
-    /// past [`max_redirects`]) rather than followed.
+    /// Runs a redirect-aware discovery coroutine (`Yield =
+    /// WebdavRedirectYield`, `Return = Option<Url>`). A 3xx is surfaced as
+    /// [`UnexpectedRedirect`] (or [`TooManyRedirects`] past [`max_redirects`])
+    /// rather than followed.
     ///
     /// [`UnexpectedRedirect`]: WebdavClientStdError::UnexpectedRedirect
     /// [`TooManyRedirects`]: WebdavClientStdError::TooManyRedirects
@@ -400,7 +392,6 @@ impl WebdavClientStd {
     ///
     /// [`calendar_home_set`]: WebdavClientStd::calendar_home_set
     /// [`principal_url`]: WebdavClientStd::principal_url
-    #[cfg(feature = "rfc4791")]
     pub fn calendar_home_set(&mut self) -> Result<Url, WebdavClientStdError> {
         if let Some(url) = &self.calendar_home_set {
             return Ok(url.clone());
@@ -421,7 +412,6 @@ impl WebdavClientStd {
     /// [`calendar_home_set`].
     ///
     /// [`calendar_home_set`]: WebdavClientStd::calendar_home_set
-    #[cfg(feature = "rfc4791")]
     pub fn list_calendars(&mut self) -> Result<BTreeSet<Calendar>, WebdavClientStdError> {
         let home = self
             .calendar_home_set
@@ -437,7 +427,6 @@ impl WebdavClientStd {
     /// [`calendar_home_set`].
     ///
     /// [`calendar_home_set`]: WebdavClientStd::calendar_home_set
-    #[cfg(feature = "rfc4791")]
     pub fn create_calendar(&mut self, calendar: &Calendar) -> Result<(), WebdavClientStdError> {
         let home = self
             .calendar_home_set
@@ -456,7 +445,6 @@ impl WebdavClientStd {
     }
 
     /// Updates a calendar collection's properties.
-    #[cfg(feature = "rfc4791")]
     pub fn update_calendar(&mut self, calendar: &Calendar) -> Result<(), WebdavClientStdError> {
         let home = self
             .calendar_home_set
@@ -475,7 +463,6 @@ impl WebdavClientStd {
     }
 
     /// Deletes a calendar collection.
-    #[cfg(feature = "rfc4791")]
     pub fn delete_calendar(&mut self, calendar_id: &str) -> Result<(), WebdavClientStdError> {
         let home = self
             .calendar_home_set
@@ -497,7 +484,6 @@ impl WebdavClientStd {
     /// is the optional VCALENDAR child filter (e.g.
     /// `<C:comp-filter name=\"VEVENT\" />`); pass an empty string to
     /// list every component type.
-    #[cfg(feature = "rfc4791")]
     pub fn list_items(
         &mut self,
         calendar_id: &str,
@@ -516,7 +502,6 @@ impl WebdavClientStd {
 
     /// Reads a single calendar item's raw iCalendar bytes plus its
     /// ETag.
-    #[cfg(feature = "rfc4791")]
     pub fn read_item(
         &mut self,
         calendar_id: &str,
@@ -528,7 +513,6 @@ impl WebdavClientStd {
     }
 
     /// Creates a calendar item by id.
-    #[cfg(feature = "rfc4791")]
     pub fn create_item(
         &mut self,
         calendar_id: &str,
@@ -548,7 +532,6 @@ impl WebdavClientStd {
     }
 
     /// Updates an existing calendar item.
-    #[cfg(feature = "rfc4791")]
     pub fn update_item(
         &mut self,
         calendar_id: &str,
@@ -570,7 +553,6 @@ impl WebdavClientStd {
     }
 
     /// Deletes a calendar item.
-    #[cfg(feature = "rfc4791")]
     pub fn delete_item(
         &mut self,
         calendar_id: &str,
@@ -595,7 +577,6 @@ impl WebdavClientStd {
     /// it in [`addressbook_home_set`].
     ///
     /// [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
-    #[cfg(feature = "rfc6352")]
     pub fn addressbook_home_set(&mut self) -> Result<Url, WebdavClientStdError> {
         if let Some(url) = &self.addressbook_home_set {
             return Ok(url.clone());
@@ -617,7 +598,6 @@ impl WebdavClientStd {
     /// [`addressbook_home_set`].
     ///
     /// [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
-    #[cfg(feature = "rfc6352")]
     pub fn list_addressbooks(&mut self) -> Result<BTreeSet<Addressbook>, WebdavClientStdError> {
         let home = self
             .addressbook_home_set
@@ -633,7 +613,6 @@ impl WebdavClientStd {
     /// [`addressbook_home_set`].
     ///
     /// [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
-    #[cfg(feature = "rfc6352")]
     pub fn create_addressbook(
         &mut self,
         addressbook: &Addressbook,
@@ -655,7 +634,6 @@ impl WebdavClientStd {
     }
 
     /// Updates an addressbook collection's properties.
-    #[cfg(feature = "rfc6352")]
     pub fn update_addressbook(
         &mut self,
         addressbook: &Addressbook,
@@ -677,7 +655,6 @@ impl WebdavClientStd {
     }
 
     /// Deletes an addressbook collection.
-    #[cfg(feature = "rfc6352")]
     pub fn delete_addressbook(&mut self, addressbook_id: &str) -> Result<(), WebdavClientStdError> {
         let home = self
             .addressbook_home_set
@@ -696,7 +673,6 @@ impl WebdavClientStd {
     }
 
     /// Lists every card inside `addressbook_id`.
-    #[cfg(feature = "rfc6352")]
     pub fn list_cards(
         &mut self,
         addressbook_id: &str,
@@ -707,7 +683,6 @@ impl WebdavClientStd {
     }
 
     /// Reads a single card's raw vCard bytes plus its ETag.
-    #[cfg(feature = "rfc6352")]
     pub fn read_card(
         &mut self,
         addressbook_id: &str,
@@ -719,7 +694,6 @@ impl WebdavClientStd {
     }
 
     /// Creates a card by id.
-    #[cfg(feature = "rfc6352")]
     pub fn create_card(
         &mut self,
         addressbook_id: &str,
@@ -739,7 +713,6 @@ impl WebdavClientStd {
     }
 
     /// Updates an existing card.
-    #[cfg(feature = "rfc6352")]
     pub fn update_card(
         &mut self,
         addressbook_id: &str,
@@ -761,7 +734,6 @@ impl WebdavClientStd {
     }
 
     /// Deletes a card.
-    #[cfg(feature = "rfc6352")]
     pub fn delete_card(
         &mut self,
         addressbook_id: &str,
@@ -781,15 +753,13 @@ impl WebdavClientStd {
     }
 }
 
-#[cfg(feature = "rfc4791")]
 fn calendar_path(home: Option<&Url>, calendar_id: &str) -> Result<String, WebdavClientStdError> {
     let home = home.ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
     let base = home.path().trim_end_matches('/');
     let id = calendar_id.trim_matches('/');
-    Ok(alloc::format!("{base}/{id}"))
+    Ok(format!("{base}/{id}"))
 }
 
-#[cfg(feature = "rfc6352")]
 fn addressbook_path(
     home: Option<&Url>,
     addressbook_id: &str,
@@ -797,5 +767,10 @@ fn addressbook_path(
     let home = home.ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
     let base = home.path().trim_end_matches('/');
     let id = addressbook_id.trim_matches('/');
-    Ok(alloc::format!("{base}/{id}"))
+    Ok(format!("{base}/{id}"))
 }
+
+/// Marker for everything the client can run against; auto-implemented
+/// for any blocking `Read + Write + Send` impl.
+trait WebdavStream: Read + Write + Send {}
+impl<T: Read + Write + Send + ?Sized> WebdavStream for T {}
