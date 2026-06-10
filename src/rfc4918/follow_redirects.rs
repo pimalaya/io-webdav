@@ -1,29 +1,83 @@
 //! Send coroutine that surfaces 3xx redirects to the caller.
 //!
-//! Wraps [`crate::rfc4918::send`] and turns the underlying HTTP
-//! `WantsRedirect` event into a typed [`FollowRedirectsResult::WantsRedirect`]
-//! variant so the client can rebuild its connection and restart the
-//! operation against the new target URL.
+//! Runs an HTTP/1.1 exchange and turns the underlying
+//! `HttpSendYield::WantsRedirect` into a
+//! [`WebdavRedirectYield::WantsRedirect`] so the client can rebuild its
+//! connection and restart the operation against the new target URL.
 //!
-//! Lifted from io-calendar/src/caldav/coroutines/follow-redirects.rs
-//! and io-addressbook/src/carddav/coroutines/follow-redirects.rs.
+//! [`WebdavRedirectYield::WantsRedirect`]: crate::rfc4918::coroutine::WebdavRedirectYield::WantsRedirect
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
+//! use io_webdav::{
+//!     coroutine::{WebdavCoroutine, WebdavCoroutineState},
+//!     rfc4918::{
+//!         WebdavAuth,
+//!         coroutine::WebdavRedirectYield,
+//!         follow_redirects::FollowRedirects,
+//!         request::WebdavRequest,
+//!         send::Empty,
+//!     },
+//! };
+//! use url::Url;
+//!
+//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
+//! let mut buf = [0u8; 4096];
+//!
+//! let base_url: Url = "https://dav.example.org/".parse().unwrap();
+//! let auth = WebdavAuth::None;
+//! let request = WebdavRequest::propfind(&base_url, &auth, "io-webdav", "/")
+//!     .content_type_xml()
+//!     .body(Vec::new());
+//! let mut coroutine = FollowRedirects::<Empty>::new(request);
+//! let mut arg = None;
+//!
+//! let ok = loop {
+//!     match coroutine.resume(arg.take()) {
+//!         WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsWrite(bytes)) => {
+//!             stream.write_all(&bytes).unwrap();
+//!         }
+//!         WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRead) => {
+//!             let n = stream.read(&mut buf).unwrap();
+//!             arg = Some(&buf[..n]);
+//!         }
+//!         WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRedirect { url, .. }) => {
+//!             todo!("reconnect to {url}");
+//!         }
+//!         WebdavCoroutineState::Complete(Ok(ok)) => break ok,
+//!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
+//!     }
+//! };
+//!
+//! println!("keep-alive: {}", ok.keep_alive);
+//! ```
 
-use core::marker::PhantomData;
+use core::{fmt, marker::PhantomData};
 
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 
 use io_http::{
-    rfc9110::{request::HttpRequest, response::HttpResponse},
-    rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
+    coroutine::*,
+    rfc9110::{request::HttpRequest, response::HttpResponse, send::HttpSendOutput},
+    rfc9112::send::{Http11Send, Http11SendError},
 };
 use log::trace;
 use serde::Deserialize;
 use thiserror::Error;
-use url::Url;
 
-use crate::rfc4918::send::SendOk;
+use crate::{
+    coroutine::*,
+    rfc4918::{coroutine::WebdavRedirectYield, send::SendOk},
+};
 
-/// Errors that can occur during a redirect-aware WebDAV send.
+/// Failure causes during a redirect-aware WebDAV send.
 #[derive(Debug, Error)]
 pub enum FollowRedirectsError {
     #[error("WebDAV server returned HTTP {0}: {1}")]
@@ -35,34 +89,13 @@ pub enum FollowRedirectsError {
     Send(#[from] Http11SendError),
 }
 
-/// Result returned by [`FollowRedirects::resume`].
-#[derive(Debug)]
-pub enum FollowRedirectsResult<T> {
-    /// The coroutine has successfully terminated.
-    Ok(SendOk<T>),
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The server responded with a 3xx redirect; the caller must
-    /// reconnect to `url` (and reopen the connection when
-    /// `!keep_alive || !same_origin`) and retry the operation.
-    WantsRedirect {
-        url: Url,
-        keep_alive: bool,
-        same_origin: bool,
-    },
-    /// The coroutine encountered an error.
-    Err(FollowRedirectsError),
-}
-
-/// Coroutine that sends a WebDAV request, surfaces 3xx redirects via
-/// [`FollowRedirectsResult::WantsRedirect`] and parses the success
-/// body as XML into `T`.
+/// I/O-free coroutine that sends a WebDAV request, surfaces 3xx
+/// redirects via [`WebdavRedirectYield::WantsRedirect`] and parses the
+/// success body as XML into `T`.
 #[derive(Debug)]
 pub struct FollowRedirects<T: for<'a> Deserialize<'a>> {
     phantom: PhantomData<T>,
-    send: Http11Send,
+    state: State,
 }
 
 impl<T: for<'a> Deserialize<'a>> FollowRedirects<T> {
@@ -73,31 +106,37 @@ impl<T: for<'a> Deserialize<'a>> FollowRedirects<T> {
 
         Self {
             phantom: PhantomData,
-            send: Http11Send::new(request),
+            state: State::Send(Http11Send::new(request)),
         }
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> FollowRedirectsResult<T> {
-        match self.send.resume(arg) {
-            Http11SendResult::Ok {
-                response,
-                keep_alive,
-                ..
-            } => parse_ok(response, keep_alive),
-            Http11SendResult::WantsRead => FollowRedirectsResult::WantsRead,
-            Http11SendResult::WantsWrite(bytes) => FollowRedirectsResult::WantsWrite(bytes),
-            Http11SendResult::WantsRedirect {
-                url,
-                keep_alive,
-                same_origin,
-                ..
-            } => FollowRedirectsResult::WantsRedirect {
-                url,
-                keep_alive,
-                same_origin,
-            },
-            Http11SendResult::Err(err) => FollowRedirectsResult::Err(err.into()),
+impl<T: for<'a> Deserialize<'a>> WebdavCoroutine for FollowRedirects<T> {
+    type Yield = WebdavRedirectYield;
+    type Return = Result<SendOk<T>, FollowRedirectsError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
+        trace!("follow redirects: {}", self.state);
+        match &mut self.state {
+            State::Send(send) => {
+                let out = match send.resume(arg) {
+                    HttpCoroutineState::Yielded(y) => {
+                        return WebdavCoroutineState::Yielded(y.into());
+                    }
+                    HttpCoroutineState::Complete(Err(err)) => {
+                        return WebdavCoroutineState::Complete(Err(err.into()));
+                    }
+                    HttpCoroutineState::Complete(Ok(out)) => out,
+                };
+
+                let HttpSendOutput {
+                    response,
+                    keep_alive,
+                    ..
+                } = out;
+
+                parse_ok(response, keep_alive)
+            }
         }
     }
 }
@@ -105,23 +144,39 @@ impl<T: for<'a> Deserialize<'a>> FollowRedirects<T> {
 fn parse_ok<T: for<'a> Deserialize<'a>>(
     response: HttpResponse,
     keep_alive: bool,
-) -> FollowRedirectsResult<T> {
+) -> WebdavCoroutineState<WebdavRedirectYield, Result<SendOk<T>, FollowRedirectsError>> {
     let body = String::from_utf8_lossy(&response.body);
     trace!("WebDAV response body: {body}");
 
     if !response.status.is_success() {
         let err = FollowRedirectsError::HttpStatus(*response.status, body.into_owned());
-        return FollowRedirectsResult::Err(err);
+        return WebdavCoroutineState::Complete(Err(err));
     }
 
     let parsed = match quick_xml::de::from_str::<T>(&body) {
         Ok(parsed) => parsed,
-        Err(err) => return FollowRedirectsResult::Err(FollowRedirectsError::ParseXmlResponseBody(err)),
+        Err(err) => {
+            let err = FollowRedirectsError::ParseXmlResponseBody(err);
+            return WebdavCoroutineState::Complete(Err(err));
+        }
     };
 
-    FollowRedirectsResult::Ok(SendOk {
+    WebdavCoroutineState::Complete(Ok(SendOk {
         response,
         keep_alive,
         body: parsed,
-    })
+    }))
+}
+
+#[derive(Debug)]
+enum State {
+    Send(Http11Send),
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Send(_) => f.write_str("send"),
+        }
+    }
 }

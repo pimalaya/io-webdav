@@ -1,28 +1,75 @@
 //! `.well-known/caldav` and `.well-known/carddav` discovery (RFC 6764).
 //!
-//! Sends a single non-PROPFIND request against `/.well-known/caldav`
-//! (or `/.well-known/carddav`) and surfaces the redirect target so the
+//! Sends a single request against `/.well-known/caldav` (or
+//! `/.well-known/carddav`) and surfaces the redirect target so the
 //! caller can rebuild its [`crate::client::WebdavClientStd`] against
 //! the actual server root.
 //!
-//! Lifted from io-calendar/src/caldav/coroutines/well-known.rs and
-//! io-addressbook/src/carddav/coroutines/well-known.rs and unified
-//! into a single coroutine parametrized by `WellKnownKind`.
+//! # Example
+//!
+//! ```rust,no_run
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
+//! use io_webdav::{
+//!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
+//!     rfc4918::WebdavAuth,
+//!     rfc6764::well_known::{WellKnown, WellKnownKind},
+//! };
+//! use url::Url;
+//!
+//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! let mut stream = TcpStream::connect("example.org:443").unwrap();
+//! let mut buf = [0u8; 4096];
+//!
+//! let base_url: Url = "https://example.org/".parse().unwrap();
+//! let auth = WebdavAuth::None;
+//! let mut coroutine = WellKnown::new(&base_url, &auth, "io-webdav", WellKnownKind::Caldav);
+//! let mut arg = None;
+//!
+//! let out = loop {
+//!     match coroutine.resume(arg.take()) {
+//!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
+//!             stream.write_all(&bytes).unwrap();
+//!         }
+//!         WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => {
+//!             let n = stream.read(&mut buf).unwrap();
+//!             arg = Some(&buf[..n]);
+//!         }
+//!         WebdavCoroutineState::Complete(Ok(out)) => break out,
+//!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
+//!     }
+//! };
+//!
+//! println!("CalDAV root: {}", out.url);
+//! ```
+
+use core::fmt;
 
 use alloc::{
+    format,
     string::{String, ToString},
-    vec::Vec,
 };
 
 use io_http::{
-    rfc9110::{request::HttpRequest, response::HttpResponse},
-    rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
+    coroutine::*,
+    rfc9110::{
+        request::HttpRequest,
+        response::HttpResponse,
+        send::{HttpSendOutput, HttpSendYield},
+    },
+    rfc9112::send::{Http11Send, Http11SendError},
 };
 use log::trace;
 use thiserror::Error;
 use url::Url;
 
-use crate::rfc4918::auth::{WebdavAuth, emit_header};
+use crate::{
+    coroutine::*,
+    rfc4918::{WebdavAuth, emit_header},
+};
 
 /// Which RFC 6764 service to discover.
 #[derive(Clone, Copy, Debug)]
@@ -43,7 +90,7 @@ impl WellKnownKind {
     }
 }
 
-/// Errors that can occur during well-known discovery.
+/// Failure causes during well-known discovery.
 #[derive(Debug, Error)]
 pub enum WellKnownError {
     #[error("Expected a 3xx redirection from .well-known, got HTTP {0}: {1}")]
@@ -57,35 +104,23 @@ pub enum WellKnownError {
     Send(#[from] Http11SendError),
 }
 
-/// Result returned by [`WellKnown::resume`].
-#[derive(Debug)]
-pub enum WellKnownResult {
-    /// The coroutine has successfully terminated; `url` is the
-    /// redirect target.
-    Ok { url: Url, keep_alive: bool },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(WellKnownError),
+/// Successful terminal output of [`WellKnown`]: the redirect target.
+#[derive(Clone, Debug)]
+pub struct WellKnownOutput {
+    pub url: Url,
+    pub keep_alive: bool,
 }
 
-/// Well-known discovery coroutine.
+/// I/O-free well-known discovery coroutine.
 #[derive(Debug)]
 pub struct WellKnown {
-    send: Http11Send,
+    state: State,
 }
 
 impl WellKnown {
     /// Builds a new well-known discovery coroutine against
     /// `base_url`'s authority.
-    pub fn new(
-        base_url: &Url,
-        auth: &WebdavAuth,
-        user_agent: &str,
-        kind: WellKnownKind,
-    ) -> Self {
+    pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, kind: WellKnownKind) -> Self {
         let mut url = base_url.clone();
         url.set_path(kind.path());
 
@@ -106,27 +141,44 @@ impl WellKnown {
         }
 
         Self {
-            send: Http11Send::new(request),
+            state: State::Send(Http11Send::new(request)),
         }
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> WellKnownResult {
-        match self.send.resume(arg) {
-            Http11SendResult::Ok {
-                response,
-                keep_alive,
-                ..
-            } => match read_location(&response) {
-                Ok(url) => WellKnownResult::Ok { url, keep_alive },
-                Err(err) => WellKnownResult::Err(err),
+impl WebdavCoroutine for WellKnown {
+    type Yield = WebdavYield;
+    type Return = Result<WellKnownOutput, WellKnownError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
+        trace!("well-known: {}", self.state);
+        match &mut self.state {
+            State::Send(send) => match send.resume(arg) {
+                HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
+                    WebdavCoroutineState::Yielded(WebdavYield::WantsRead)
+                }
+                HttpCoroutineState::Yielded(HttpSendYield::WantsWrite(bytes)) => {
+                    WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes))
+                }
+                HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect {
+                    url,
+                    keep_alive,
+                    ..
+                }) => WebdavCoroutineState::Complete(Ok(WellKnownOutput { url, keep_alive })),
+                HttpCoroutineState::Complete(Err(err)) => {
+                    WebdavCoroutineState::Complete(Err(err.into()))
+                }
+                HttpCoroutineState::Complete(Ok(HttpSendOutput {
+                    response,
+                    keep_alive,
+                    ..
+                })) => match read_location(&response) {
+                    Ok(url) => {
+                        WebdavCoroutineState::Complete(Ok(WellKnownOutput { url, keep_alive }))
+                    }
+                    Err(err) => WebdavCoroutineState::Complete(Err(err)),
+                },
             },
-            Http11SendResult::WantsRead => WellKnownResult::WantsRead,
-            Http11SendResult::WantsWrite(bytes) => WellKnownResult::WantsWrite(bytes),
-            Http11SendResult::WantsRedirect {
-                url, keep_alive, ..
-            } => WellKnownResult::Ok { url, keep_alive },
-            Http11SendResult::Err(err) => WellKnownResult::Err(err.into()),
         }
     }
 }
@@ -142,6 +194,18 @@ fn read_location(response: &HttpResponse) -> Result<Url, WellKnownError> {
         .header("location")
         .ok_or(WellKnownError::MissingLocationHeader)?;
 
-    Url::parse(location)
-        .map_err(|err| WellKnownError::InvalidLocationUrl(location.into(), err))
+    Url::parse(location).map_err(|err| WellKnownError::InvalidLocationUrl(location.into(), err))
+}
+
+#[derive(Debug)]
+enum State {
+    Send(Http11Send),
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Send(_) => f.write_str("send"),
+        }
+    }
 }

@@ -7,59 +7,142 @@
 //! Supports the optional `If-Match` (RFC 9110 §13.1.1) and
 //! `If-None-Match` (RFC 9110 §13.1.2) preconditions so callers can
 //! gate the write on a known ETag.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
+//! use io_webdav::{
+//!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
+//!     rfc4918::{
+//!         WebdavAuth,
+//!         put::{Put, PutArgs},
+//!     },
+//! };
+//! use url::Url;
+//!
+//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
+//! let mut buf = [0u8; 4096];
+//!
+//! let base_url: Url = "https://dav.example.org/".parse().unwrap();
+//! let auth = WebdavAuth::None;
+//! let mut coroutine = Put::new(PutArgs {
+//!     base_url: &base_url,
+//!     auth: &auth,
+//!     user_agent: "io-webdav",
+//!     path: "/dav/calendars/personal/event-1.ics",
+//!     content_type: "text/calendar; charset=utf-8",
+//!     body: b"BEGIN:VCALENDAR\r\n...\r\nEND:VCALENDAR\r\n".to_vec(),
+//!     if_match: None,
+//!     if_none_match: Some("*"),
+//! });
+//! let mut arg = None;
+//!
+//! let ok = loop {
+//!     match coroutine.resume(arg.take()) {
+//!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
+//!             stream.write_all(&bytes).unwrap();
+//!         }
+//!         WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => {
+//!             let n = stream.read(&mut buf).unwrap();
+//!             arg = Some(&buf[..n]);
+//!         }
+//!         WebdavCoroutineState::Complete(Ok(ok)) => break ok,
+//!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
+//!     }
+//! };
+//!
+//! println!("keep-alive: {}", ok.keep_alive);
+//! ```
 
-use alloc::{string::String, vec::Vec};
+use core::fmt;
 
+use alloc::vec::Vec;
+
+use log::trace;
 use url::Url;
 
-use crate::rfc4918::{
-    auth::WebdavAuth,
-    request::WebdavRequest,
-    send::{SendRaw, SendResult},
+use crate::{
+    coroutine::*,
+    rfc4918::{
+        WebdavAuth,
+        request::WebdavRequest,
+        send::{SendError, SendOk, SendRaw},
+    },
 };
+
+/// Build inputs for a [`Put`] coroutine.
+///
+/// Uses a struct rather than positional arguments so callers can
+/// build the request literal-style and skip the two optional
+/// precondition fields without juggling positional `None`s.
+#[derive(Clone, Debug)]
+pub struct PutArgs<'a> {
+    pub base_url: &'a Url,
+    pub auth: &'a WebdavAuth,
+    pub user_agent: &'a str,
+    pub path: &'a str,
+    pub content_type: &'a str,
+    pub body: Vec<u8>,
+    /// Optional `If-Match` ETag (RFC 9110 §13.1.1).
+    pub if_match: Option<&'a str>,
+    /// Optional `If-None-Match` ETag (RFC 9110 §13.1.2).
+    pub if_none_match: Option<&'a str>,
+}
 
 /// Coroutine that runs a `PUT`.
 #[derive(Debug)]
-pub struct Put(SendRaw);
+pub struct Put {
+    state: State,
+}
 
 impl Put {
     /// Builds a new `PUT` coroutine.
-    pub fn new(
-        base_url: &Url,
-        auth: &WebdavAuth,
-        user_agent: &str,
-        path: &str,
-        content_type: &str,
-        body: Vec<u8>,
-        if_match: Option<&str>,
-        if_none_match: Option<&str>,
-    ) -> Self {
-        let mut builder = WebdavRequest::put(base_url, auth, user_agent, path)
-            .content_type(content_type);
+    pub fn new(args: PutArgs<'_>) -> Self {
+        let mut builder = WebdavRequest::put(args.base_url, args.auth, args.user_agent, args.path)
+            .content_type(args.content_type);
 
-        if let Some(etag) = if_match {
+        if let Some(etag) = args.if_match {
             builder = builder.if_match(etag);
         }
 
-        if let Some(etag) = if_none_match {
+        if let Some(etag) = args.if_none_match {
             builder = builder.if_none_match(etag);
         }
 
-        let request = builder.body(body);
-        Self(SendRaw::new(request))
-    }
-
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> SendResult<Vec<u8>> {
-        self.0.resume(arg)
+        let request = builder.body(args.body);
+        Self {
+            state: State::Send(SendRaw::new(request)),
+        }
     }
 }
 
-/// Reads the `ETag` header (RFC 9110 §8.8.3) out of an HTTP response,
-/// stripping the surrounding double quotes when present. Useful for
-/// callers that want to thread the post-`PUT` ETag into their cache.
-pub fn read_etag(response: &io_http::rfc9110::response::HttpResponse) -> Option<String> {
-    response
-        .header("etag")
-        .map(|raw| raw.trim_matches('"').into())
+impl WebdavCoroutine for Put {
+    type Yield = WebdavYield;
+    type Return = Result<SendOk<Vec<u8>>, SendError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
+        trace!("put: {}", self.state);
+        match &mut self.state {
+            State::Send(send) => send.resume(arg),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum State {
+    Send(SendRaw),
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Send(_) => f.write_str("send"),
+        }
+    }
 }

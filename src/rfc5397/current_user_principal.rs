@@ -1,60 +1,82 @@
 //! `current-user-principal` discovery (RFC 5397).
 //!
 //! Runs a `PROPFIND` against `/` with the `<DAV:current-user-principal>`
-//! property request and surfaces the discovered principal URL.
-//! Follows redirects since the entry path is usually `/` and servers
+//! property request and surfaces the discovered principal URL. Yields
+//! [`WantsRedirect`] since the entry path is usually `/` and servers
 //! often redirect to the actual DAV root.
 //!
-//! Lifted from io-calendar/src/caldav/coroutines/current-user-principal.rs
-//! and io-addressbook/src/carddav/coroutines/current-user-principal.rs
-//! and split out of CalDAV/CardDAV into its own RFC module.
+//! [`WantsRedirect`]: crate::rfc4918::coroutine::WebdavRedirectYield::WantsRedirect
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
+//! use io_webdav::{
+//!     coroutine::{WebdavCoroutine, WebdavCoroutineState},
+//!     rfc4918::{WebdavAuth, coroutine::WebdavRedirectYield},
+//!     rfc5397::current_user_principal::CurrentUserPrincipal,
+//! };
+//! use url::Url;
+//!
+//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
+//! let mut buf = [0u8; 4096];
+//!
+//! let base_url: Url = "https://dav.example.org/".parse().unwrap();
+//! let auth = WebdavAuth::None;
+//! let mut coroutine = CurrentUserPrincipal::new(&base_url, &auth, "io-webdav");
+//! let mut arg = None;
+//!
+//! let principal = loop {
+//!     match coroutine.resume(arg.take()) {
+//!         WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsWrite(bytes)) => {
+//!             stream.write_all(&bytes).unwrap();
+//!         }
+//!         WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRead) => {
+//!             let n = stream.read(&mut buf).unwrap();
+//!             arg = Some(&buf[..n]);
+//!         }
+//!         WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRedirect { url, .. }) => {
+//!             todo!("reconnect to {url}");
+//!         }
+//!         WebdavCoroutineState::Complete(Ok(principal)) => break principal,
+//!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
+//!     }
+//! };
+//!
+//! println!("{principal:?}");
+//! ```
 
-use alloc::vec::Vec;
+use core::fmt;
 
 use log::trace;
 use serde::Deserialize;
 use url::Url;
 
-use crate::rfc4918::{
-    auth::WebdavAuth,
-    follow_redirects::{FollowRedirects, FollowRedirectsResult},
-    request::WebdavRequest,
-    response::{HrefProp, Multistatus},
-    send::SendOk,
+use crate::{
+    coroutine::*,
+    rfc4918::{
+        coroutine::WebdavRedirectYield,
+        follow_redirects::{FollowRedirects, FollowRedirectsError},
+        request::WebdavRequest,
+        send::SendOk,
+        {HrefProp, Multistatus, WebdavAuth},
+    },
+    webdav_try,
 };
 
 const BODY: &str = include_str!("./current_user_principal.xml");
 
-/// Result returned by [`CurrentUserPrincipal::resume`].
-#[derive(Debug)]
-pub enum CurrentUserPrincipalResult {
-    /// The coroutine has successfully terminated. `url` is the
-    /// principal URL when found, [`None`] when the server returned an
-    /// empty multistatus.
-    Ok {
-        url: Option<Url>,
-        ok: SendOk<Multistatus<Prop>>,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The server responded with a 3xx redirect; the caller must
-    /// reconnect to `url` and retry.
-    WantsRedirect {
-        url: Url,
-        keep_alive: bool,
-        same_origin: bool,
-    },
-    /// The coroutine encountered an error.
-    Err(crate::rfc4918::follow_redirects::FollowRedirectsError),
-}
-
-/// Coroutine that discovers the current user principal URL.
+/// I/O-free coroutine that discovers the current user principal URL.
+/// Yields [`None`] when the server returned an empty multistatus.
 #[derive(Debug)]
 pub struct CurrentUserPrincipal {
     base_url: Url,
-    send: FollowRedirects<Multistatus<Prop>>,
+    state: State,
 }
 
 impl CurrentUserPrincipal {
@@ -67,35 +89,24 @@ impl CurrentUserPrincipal {
 
         Self {
             base_url: base_url.clone(),
-            send: FollowRedirects::new(request),
+            state: State::Send(FollowRedirects::new(request)),
         }
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> CurrentUserPrincipalResult {
-        let ok = match self.send.resume(arg) {
-            FollowRedirectsResult::Ok(ok) => ok,
-            FollowRedirectsResult::WantsRead => return CurrentUserPrincipalResult::WantsRead,
-            FollowRedirectsResult::WantsWrite(bytes) => {
-                return CurrentUserPrincipalResult::WantsWrite(bytes);
+impl WebdavCoroutine for CurrentUserPrincipal {
+    type Yield = WebdavRedirectYield;
+    type Return = Result<Option<Url>, FollowRedirectsError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
+        trace!("current-user-principal: {}", self.state);
+        match &mut self.state {
+            State::Send(send) => {
+                let ok = webdav_try!(send, arg);
+                let url = first_principal(&ok, &self.base_url);
+                WebdavCoroutineState::Complete(Ok(url))
             }
-            FollowRedirectsResult::WantsRedirect {
-                url,
-                keep_alive,
-                same_origin,
-            } => {
-                return CurrentUserPrincipalResult::WantsRedirect {
-                    url,
-                    keep_alive,
-                    same_origin,
-                };
-            }
-            FollowRedirectsResult::Err(err) => return CurrentUserPrincipalResult::Err(err),
-        };
-
-        let url = first_principal(&ok, &self.base_url);
-
-        CurrentUserPrincipalResult::Ok { url, ok }
+        }
     }
 }
 
@@ -127,6 +138,19 @@ fn first_principal(ok: &SendOk<Multistatus<Prop>>, base_url: &Url) -> Option<Url
     }
 
     None
+}
+
+#[derive(Debug)]
+enum State {
+    Send(FollowRedirects<Multistatus<Prop>>),
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Send(_) => f.write_str("send"),
+        }
+    }
 }
 
 /// `<prop>` payload returned by the principal discovery PROPFIND.

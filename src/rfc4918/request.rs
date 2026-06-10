@@ -6,9 +6,8 @@
 //! `Overwrite`, `If-Match`, `If-None-Match` and content-type headers
 //! every CalDAV/CardDAV coroutine touches.
 //!
-//! Builds on [`url::Url::join`] for path composition; the legacy
-//! `push_uri_path` helper from the previous io-calendar/io-addressbook
-//! caldav modules is gone.
+//! Builds on [`url::Url::join`] for path composition via
+//! [`crate::rfc4918::resolve`].
 
 use alloc::{
     format,
@@ -19,7 +18,7 @@ use alloc::{
 use io_http::rfc9110::request::HttpRequest;
 use url::Url;
 
-use crate::rfc4918::auth::{WebdavAuth, emit_header};
+use crate::rfc4918::{WebdavAuth, utils::*};
 
 /// Fluent builder for a WebDAV HTTP request.
 #[derive(Clone, Debug)]
@@ -173,39 +172,13 @@ impl WebdavRequest {
     }
 }
 
-/// Resolves `path` against `base_url`.
-///
-/// Empty paths return `base_url` unchanged. Absolute paths (starting
-/// with `/`) replace the base path. Relative paths are appended to the
-/// base path. Falls back to `base_url` when the join fails, preserving
-/// the legacy push-path semantics.
-fn resolve(base_url: &Url, path: &str) -> Url {
-    if path.is_empty() {
-        return base_url.clone();
-    }
-
-    if path.starts_with('/') {
-        if let Ok(mut url) = Url::parse(base_url.as_str()) {
-            url.set_path(path);
-            return url;
-        }
-    }
-
-    let mut base = base_url.clone();
-    if !base.path().ends_with('/') {
-        let mut new_path = base.path().to_string();
-        new_path.push('/');
-        base.set_path(&new_path);
-    }
-
-    base.join(path).unwrap_or_else(|_| base_url.clone())
-}
-
 #[cfg(test)]
 mod tests {
+    use alloc::string::ToString;
+
     use url::Url;
 
-    use crate::rfc4918::{auth::WebdavAuth, request::*};
+    use crate::rfc4918::{WebdavAuth, request::*};
 
     fn base() -> Url {
         Url::parse("https://dav.example.org/dav/").unwrap()
@@ -230,10 +203,7 @@ mod tests {
     fn relative_path_appends() {
         let req = WebdavRequest::propfind(&base(), &WebdavAuth::None, "io-webdav/test", "personal");
         let request = req.body(Vec::new());
-        assert_eq!(
-            request.url.as_str(),
-            "https://dav.example.org/dav/personal"
-        );
+        assert_eq!(request.url.as_str(), "https://dav.example.org/dav/personal");
     }
 
     #[test]
@@ -244,9 +214,11 @@ mod tests {
         };
         let req = WebdavRequest::get(&base(), &auth, "io-webdav/test", "");
         let request = req.body(Vec::new());
-        assert!(request
-            .headers
-            .iter()
-            .any(|(name, value)| name == "Authorization" && value.starts_with("Basic ")));
+        assert!(
+            request
+                .headers
+                .iter()
+                .any(|(name, value)| name == "Authorization" && value.starts_with("Basic "))
+        );
     }
 }

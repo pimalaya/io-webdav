@@ -2,24 +2,73 @@
 //!
 //! Sends a `PROPFIND` against `path` with the caller-supplied XML body
 //! and parses the multistatus body into [`Multistatus<T>`].
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
+//! use io_webdav::{
+//!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
+//!     rfc4918::{WebdavAuth, propfind::Propfind, send::Empty},
+//! };
+//! use url::Url;
+//!
+//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
+//! let mut buf = [0u8; 4096];
+//!
+//! let base_url: Url = "https://dav.example.org/".parse().unwrap();
+//! let auth = WebdavAuth::None;
+//! let body = b"<propfind xmlns=\"DAV:\"><prop><displayname/></prop></propfind>".to_vec();
+//! let mut coroutine = Propfind::<Empty>::new(&base_url, &auth, "io-webdav", "/dav/", 0, body);
+//! let mut arg = None;
+//!
+//! let ok = loop {
+//!     match coroutine.resume(arg.take()) {
+//!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
+//!             stream.write_all(&bytes).unwrap();
+//!         }
+//!         WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => {
+//!             let n = stream.read(&mut buf).unwrap();
+//!             arg = Some(&buf[..n]);
+//!         }
+//!         WebdavCoroutineState::Complete(Ok(ok)) => break ok,
+//!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
+//!     }
+//! };
+//!
+//! println!("keep-alive: {}", ok.keep_alive);
+//! ```
+
+use core::fmt;
 
 use alloc::vec::Vec;
 
+use log::trace;
+use serde::Deserialize;
 use url::Url;
 
-use crate::rfc4918::{
-    auth::WebdavAuth,
-    request::WebdavRequest,
-    response::Multistatus,
-    send::{Send, SendResult},
+use crate::{
+    coroutine::*,
+    rfc4918::{
+        request::WebdavRequest,
+        send::{Send, SendError, SendOk},
+        {Multistatus, WebdavAuth},
+    },
 };
 
 /// Coroutine that runs a `PROPFIND` and deserializes the response into
-/// `Multistatus<T>`.
+/// [`Multistatus<T>`].
 #[derive(Debug)]
-pub struct Propfind<T: for<'a> serde::Deserialize<'a>>(Send<Multistatus<T>>);
+pub struct Propfind<T: for<'a> Deserialize<'a>> {
+    state: State<T>,
+}
 
-impl<T: for<'a> serde::Deserialize<'a>> Propfind<T> {
+impl<T: for<'a> Deserialize<'a>> Propfind<T> {
     /// Builds a new `PROPFIND` coroutine targeting `path` (relative to
     /// `base_url`), with the given `depth` header and XML request body.
     pub fn new(
@@ -34,11 +83,33 @@ impl<T: for<'a> serde::Deserialize<'a>> Propfind<T> {
             .depth(depth)
             .content_type_xml()
             .body(body);
-        Self(Send::new(request))
+        Self {
+            state: State::Send(Send::new(request)),
+        }
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> SendResult<Multistatus<T>> {
-        self.0.resume(arg)
+impl<T: for<'a> Deserialize<'a>> WebdavCoroutine for Propfind<T> {
+    type Yield = WebdavYield;
+    type Return = Result<SendOk<Multistatus<T>>, SendError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
+        trace!("propfind: {}", self.state);
+        match &mut self.state {
+            State::Send(send) => send.resume(arg),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum State<T: for<'a> Deserialize<'a>> {
+    Send(Send<Multistatus<T>>),
+}
+
+impl<T: for<'a> Deserialize<'a>> fmt::Display for State<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Send(_) => f.write_str("send"),
+        }
     }
 }

@@ -1,11 +1,6 @@
+//! RFC 6352: CardDAV, vCard Extensions to WebDAV.
+//!
+//! <https://www.rfc-editor.org/rfc/rfc6352>
+
 pub mod addressbook;
-pub mod addressbook_home_set;
-pub mod create_addressbook;
-pub mod create_card;
-pub mod delete_addressbook;
-pub mod delete_card;
-pub mod list_addressbooks;
-pub mod list_cards;
-pub mod read_card;
-pub mod update_addressbook;
-pub mod update_card;
+pub mod card;

@@ -1,30 +1,81 @@
-//! Generic WebDAV `Send` coroutine.
+//! Base coroutine every higher-level WebDAV coroutine delegates to:
+//! runs an HTTP/1.1 exchange and adds quick-xml deserialization of the
+//! response body into the caller-chosen `T`. Use [`SendRaw`] when the
+//! body should stay as raw bytes (e.g. `GET` / `PUT` of an iCal/vCard
+//! resource).
 //!
-//! Wraps [`io_http::rfc9112::send::Http11Send`] and adds quick-xml
-//! deserialization of the response body into the caller-chosen `T`.
-//! Use [`SendRaw`] when the body should stay as raw bytes (e.g. `GET`
-//! / `PUT` of an iCal/vCard resource).
+//! All I/O is hoisted: the coroutine yields [`WebdavYield`] and the
+//! caller owns the stream work. 3xx redirects surface as
+//! [`SendError::UnexpectedRedirect`]; redirect-aware coroutines use
+//! [`crate::rfc4918::follow_redirects`] instead.
 //!
-//! Like the JMAP send coroutine, all I/O is hoisted: the coroutine
-//! emits [`WantsRead`] / [`WantsWrite`] and the caller does the
-//! actual stream work.
+//! # Example
 //!
-//! [`WantsRead`]: SendResult::WantsRead
-//! [`WantsWrite`]: SendResult::WantsWrite
+//! ```rust,no_run
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
+//! use io_webdav::{
+//!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
+//!     rfc4918::{
+//!         WebdavAuth,
+//!         request::WebdavRequest,
+//!         send::{Empty, Send},
+//!     },
+//! };
+//! use url::Url;
+//!
+//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
+//! let mut buf = [0u8; 4096];
+//!
+//! let base_url: Url = "https://dav.example.org/".parse().unwrap();
+//! let auth = WebdavAuth::None;
+//! let request = WebdavRequest::propfind(&base_url, &auth, "io-webdav", "/dav/")
+//!     .content_type_xml()
+//!     .body(Vec::new());
+//! let mut coroutine = Send::<Empty>::new(request);
+//! let mut arg = None;
+//!
+//! let ok = loop {
+//!     match coroutine.resume(arg.take()) {
+//!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
+//!             stream.write_all(&bytes).unwrap();
+//!         }
+//!         WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => {
+//!             let n = stream.read(&mut buf).unwrap();
+//!             arg = Some(&buf[..n]);
+//!         }
+//!         WebdavCoroutineState::Complete(Ok(ok)) => break ok,
+//!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
+//!     }
+//! };
+//!
+//! println!("keep-alive: {}", ok.keep_alive);
+//! ```
 
-use core::marker::PhantomData;
+use core::{fmt, marker::PhantomData};
 
 use alloc::{string::String, vec::Vec};
 
 use io_http::{
-    rfc9110::{request::HttpRequest, response::HttpResponse},
-    rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
+    coroutine::*,
+    rfc9110::{
+        request::HttpRequest,
+        response::HttpResponse,
+        send::{HttpSendOutput, HttpSendYield},
+    },
+    rfc9112::send::{Http11Send, Http11SendError},
 };
 use log::trace;
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
-/// Successful outcome of a WebDAV [`Send`] coroutine.
+use crate::coroutine::*;
+
+/// Successful terminal output of a WebDAV send coroutine.
 #[derive(Debug)]
 pub struct SendOk<T> {
     pub response: HttpResponse,
@@ -32,7 +83,7 @@ pub struct SendOk<T> {
     pub body: T,
 }
 
-/// Errors that can occur during a WebDAV send.
+/// Failure causes during a WebDAV send.
 #[derive(Debug, Error)]
 pub enum SendError {
     #[error("WebDAV server returned HTTP {0}: {1}")]
@@ -46,25 +97,12 @@ pub enum SendError {
     Send(#[from] Http11SendError),
 }
 
-/// Result returned by [`Send::resume`] / [`SendRaw::resume`].
-#[derive(Debug)]
-pub enum SendResult<T> {
-    /// The coroutine has successfully terminated.
-    Ok(SendOk<T>),
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(SendError),
-}
-
-/// Coroutine that sends a WebDAV request and deserializes the response
-/// body as XML into `T`.
+/// I/O-free coroutine that sends a WebDAV request and deserializes the
+/// response body as XML into `T`.
 #[derive(Debug)]
 pub struct Send<T: for<'a> Deserialize<'a>> {
     phantom: PhantomData<T>,
-    send: Http11Send,
+    state: State,
 }
 
 impl<T: for<'a> Deserialize<'a>> Send<T> {
@@ -75,53 +113,75 @@ impl<T: for<'a> Deserialize<'a>> Send<T> {
 
         Self {
             phantom: PhantomData,
-            send: Http11Send::new(request),
+            state: State::Send(Http11Send::new(request)),
         }
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> SendResult<T> {
-        match self.send.resume(arg) {
-            Http11SendResult::Ok {
-                response,
-                keep_alive,
-                ..
-            } => {
+impl<T: for<'a> Deserialize<'a>> WebdavCoroutine for Send<T> {
+    type Yield = WebdavYield;
+    type Return = Result<SendOk<T>, SendError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
+        trace!("send: {}", self.state);
+        match &mut self.state {
+            State::Send(send) => {
+                let out = match send.resume(arg) {
+                    HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
+                        return WebdavCoroutineState::Yielded(WebdavYield::WantsRead);
+                    }
+                    HttpCoroutineState::Yielded(HttpSendYield::WantsWrite(bytes)) => {
+                        return WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes));
+                    }
+                    HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect { .. }) => {
+                        return WebdavCoroutineState::Complete(Err(SendError::UnexpectedRedirect));
+                    }
+                    HttpCoroutineState::Complete(Err(err)) => {
+                        return WebdavCoroutineState::Complete(Err(err.into()));
+                    }
+                    HttpCoroutineState::Complete(Ok(out)) => out,
+                };
+
+                let HttpSendOutput {
+                    response,
+                    keep_alive,
+                    ..
+                } = out;
+
                 let body = String::from_utf8_lossy(&response.body);
                 trace!("WebDAV response body: {body}");
 
                 if !response.status.is_success() {
                     let err = SendError::HttpStatus(*response.status, body.into_owned());
-                    return SendResult::Err(err);
+                    return WebdavCoroutineState::Complete(Err(err));
                 }
 
                 let parsed = match quick_xml::de::from_str::<T>(&body) {
                     Ok(parsed) => parsed,
-                    Err(err) => return SendResult::Err(SendError::ParseXmlResponseBody(err)),
+                    Err(err) => {
+                        let err = SendError::ParseXmlResponseBody(err);
+                        return WebdavCoroutineState::Complete(Err(err));
+                    }
                 };
 
-                SendResult::Ok(SendOk {
+                WebdavCoroutineState::Complete(Ok(SendOk {
                     response,
                     keep_alive,
                     body: parsed,
-                })
+                }))
             }
-            Http11SendResult::WantsRead => SendResult::WantsRead,
-            Http11SendResult::WantsWrite(bytes) => SendResult::WantsWrite(bytes),
-            Http11SendResult::WantsRedirect { .. } => SendResult::Err(SendError::UnexpectedRedirect),
-            Http11SendResult::Err(err) => SendResult::Err(err.into()),
         }
     }
 }
 
-/// Coroutine that sends a WebDAV request and returns the response body
-/// as raw bytes (no XML parsing).
+/// I/O-free coroutine that sends a WebDAV request and returns the
+/// response body as raw bytes (no XML parsing).
 ///
 /// Used by `GET` / `PUT` / `DELETE` against an iCal/vCard resource:
 /// io-webdav stays byte-oriented and lets callers run calcard.
 #[derive(Debug)]
 pub struct SendRaw {
-    send: Http11Send,
+    state: State,
 }
 
 impl SendRaw {
@@ -131,35 +191,67 @@ impl SendRaw {
         trace!("send WebDAV request to {}", request.url);
 
         Self {
-            send: Http11Send::new(request),
+            state: State::Send(Http11Send::new(request)),
         }
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> SendResult<Vec<u8>> {
-        match self.send.resume(arg) {
-            Http11SendResult::Ok {
-                response,
-                keep_alive,
-                ..
-            } => {
+impl WebdavCoroutine for SendRaw {
+    type Yield = WebdavYield;
+    type Return = Result<SendOk<Vec<u8>>, SendError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
+        trace!("send raw: {}", self.state);
+        match &mut self.state {
+            State::Send(send) => {
+                let out = match send.resume(arg) {
+                    HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
+                        return WebdavCoroutineState::Yielded(WebdavYield::WantsRead);
+                    }
+                    HttpCoroutineState::Yielded(HttpSendYield::WantsWrite(bytes)) => {
+                        return WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes));
+                    }
+                    HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect { .. }) => {
+                        return WebdavCoroutineState::Complete(Err(SendError::UnexpectedRedirect));
+                    }
+                    HttpCoroutineState::Complete(Err(err)) => {
+                        return WebdavCoroutineState::Complete(Err(err.into()));
+                    }
+                    HttpCoroutineState::Complete(Ok(out)) => out,
+                };
+
+                let HttpSendOutput {
+                    response,
+                    keep_alive,
+                    ..
+                } = out;
+
                 if !response.status.is_success() {
                     let body = String::from_utf8_lossy(&response.body).into_owned();
                     let err = SendError::HttpStatus(*response.status, body);
-                    return SendResult::Err(err);
+                    return WebdavCoroutineState::Complete(Err(err));
                 }
 
                 let body = response.body.clone();
-                SendResult::Ok(SendOk {
+                WebdavCoroutineState::Complete(Ok(SendOk {
                     response,
                     keep_alive,
                     body,
-                })
+                }))
             }
-            Http11SendResult::WantsRead => SendResult::WantsRead,
-            Http11SendResult::WantsWrite(bytes) => SendResult::WantsWrite(bytes),
-            Http11SendResult::WantsRedirect { .. } => SendResult::Err(SendError::UnexpectedRedirect),
-            Http11SendResult::Err(err) => SendResult::Err(err.into()),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum State {
+    Send(Http11Send),
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Send(_) => f.write_str("send"),
         }
     }
 }
