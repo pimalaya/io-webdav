@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<propfind xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <prop>
+    <C:calendar-home-set />
+  </prop>
+</propfind>
