@@ -48,27 +48,27 @@
 
 use core::fmt;
 
-use alloc::{
-    collections::BTreeSet,
-    string::{String, ToString},
-};
+use alloc::{collections::BTreeSet, string::ToString};
 
 use log::trace;
-use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4918::{
-        request::WebdavRequest,
-        send::{Send, SendError, SendOk},
-        {Multistatus, Value, WebdavAuth},
+        GETETAG, WebdavAuth,
+        report::Report,
+        send::SendError,
+        trace_unrecognized, {Property, ResponseEntry},
     },
-    rfc6352::card::types::CardEntry,
+    rfc6352::{
+        addressbook::{ADDRESS_DATA, addressbook_query_body},
+        card::types::CardEntry,
+    },
     webdav_try,
 };
 
-const BODY: &str = include_str!("./list.xml");
+const CARD_PROPS: &[Property] = &[GETETAG, ADDRESS_DATA];
 
 /// Coroutine that lists cards inside an addressbook via REPORT
 /// `addressbook-query`.
@@ -85,13 +85,10 @@ impl ListCards {
         user_agent: &str,
         addressbook_path: &str,
     ) -> Self {
-        let request = WebdavRequest::report(base_url, auth, user_agent, addressbook_path)
-            .content_type_xml()
-            .depth(1)
-            .body(BODY.as_bytes().to_vec());
-
+        let body = addressbook_query_body(CARD_PROPS);
+        let report = Report::new(base_url, auth, user_agent, addressbook_path, 1, body);
         Self {
-            state: State::Send(Send::new(request)),
+            state: State::Report(report),
         }
     }
 }
@@ -103,95 +100,48 @@ impl WebdavCoroutine for ListCards {
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("list-cards: {}", self.state);
         match &mut self.state {
-            State::Send(send) => {
-                let ok = webdav_try!(send, arg);
-                WebdavCoroutineState::Complete(Ok(collect(&ok)))
+            State::Report(report) => {
+                let multistatus = webdav_try!(report, arg);
+                let cards = multistatus
+                    .responses
+                    .iter()
+                    .filter_map(from_entry)
+                    .collect();
+                WebdavCoroutineState::Complete(Ok(cards))
             }
         }
     }
 }
 
-fn collect(ok: &SendOk<Multistatus<Prop>>) -> BTreeSet<CardEntry> {
-    let mut cards = BTreeSet::new();
-
-    let Some(responses) = &ok.body.responses else {
-        return cards;
-    };
-
-    for response in responses {
-        trace!("process multistatus response");
-
-        if let Some(status) = &response.status {
-            if !status.is_success() {
-                trace!("skip multistatus response with non-2xx status");
-                continue;
-            }
-        }
-
-        let Some(propstats) = &response.propstats else {
-            continue;
-        };
-
-        let id = response
-            .href
-            .value
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
-            .trim_end_matches(".vcf")
-            .to_string();
-
-        if id.is_empty() {
-            continue;
-        }
-
-        for propstat in propstats {
-            if !propstat.status.is_success() {
-                trace!("skip propstat with non-2xx status");
-                continue;
-            }
-
-            let Some(data) = &propstat.prop.address_data else {
-                continue;
-            };
-
-            let etag = propstat
-                .prop
-                .getetag
-                .as_deref()
-                .map(|raw| raw.trim_matches('"').to_string());
-
-            cards.insert(CardEntry {
-                id: id.clone(),
-                etag,
-                data: data.value.as_bytes().to_vec(),
-            });
-
-            break;
-        }
+fn from_entry(entry: &ResponseEntry) -> Option<CardEntry> {
+    let id = entry.id().trim_end_matches(".vcf");
+    if id.is_empty() {
+        return None;
     }
 
-    cards
+    let data = entry.text(ADDRESS_DATA)?;
+    trace_unrecognized(entry, CARD_PROPS);
+
+    let etag = entry
+        .text(GETETAG)
+        .map(|raw| raw.trim_matches('"').to_string());
+
+    Some(CardEntry {
+        id: id.to_string(),
+        etag,
+        data: data.as_bytes().to_vec(),
+    })
 }
 
 #[derive(Debug)]
 enum State {
-    Send(Send<Multistatus<Prop>>),
+    Report(Report),
 }
 
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Send(_) => f.write_str("send"),
+            Self::Report(_) => f.write_str("report"),
         }
     }
-}
-
-/// `<prop>` payload returned by the list-cards REPORT.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Prop {
-    pub getetag: Option<String>,
-    pub address_data: Option<Value>,
 }

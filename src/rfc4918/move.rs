@@ -1,5 +1,4 @@
-//! `create-calendar` coroutine: extended `MKCOL` (RFC 5689) against
-//! the calendar home-set URL.
+//! Generic `MOVE` coroutine (RFC 4918 §9.9).
 //!
 //! # Example
 //!
@@ -11,8 +10,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::calendar::{Calendar, create::CreateCalendar},
-//!     rfc4918::WebdavAuth,
+//!     rfc4918::{WebdavAuth, r#move::Move},
 //! };
 //! use url::Url;
 //!
@@ -22,13 +20,14 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let calendar = Calendar {
-//!     id: "personal".into(),
-//!     display_name: Some("Personal".into()),
-//!     ..Default::default()
-//! };
-//! let mut coroutine =
-//!     CreateCalendar::new(&base_url, &auth, "io-webdav", "/dav/calendars/", &calendar);
+//! let mut coroutine = Move::new(
+//!     &base_url,
+//!     &auth,
+//!     "io-webdav",
+//!     "/dav/calendars/personal/event-1.ics",
+//!     "/dav/calendars/work/event-1.ics",
+//!     false,
+//! );
 //! let mut arg = None;
 //!
 //! loop {
@@ -48,64 +47,67 @@
 
 use core::fmt;
 
+use alloc::vec::Vec;
+
 use log::trace;
 use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::calendar::{
-        types::Calendar,
-        utils::{CALENDAR, join_path, property_set},
+    rfc4918::{
+        WebdavAuth,
+        request::WebdavRequest,
+        send::{SendError, SendOk, SendRaw},
     },
-    rfc4918::{WebdavAuth, mkcol::Mkcol, send::SendError},
 };
 
-/// Coroutine that creates a calendar collection.
+/// Coroutine that runs a `MOVE` of `path` to `destination`.
 #[derive(Debug)]
-pub struct CreateCalendar {
+pub struct Move {
     state: State,
 }
 
-impl CreateCalendar {
-    /// Builds a new `create-calendar` coroutine targeting
-    /// `home_set_path` joined with `calendar.id`.
+impl Move {
+    /// Builds a new `MOVE` coroutine.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
-        home_set_path: &str,
-        calendar: &Calendar,
+        path: &str,
+        destination: &str,
+        overwrite: bool,
     ) -> Self {
-        let path = join_path(home_set_path, &calendar.id);
-        let set = property_set(calendar);
-        let mkcol = Mkcol::new(base_url, auth, user_agent, &path, &[CALENDAR], &set);
+        let request = WebdavRequest::r#move(base_url, auth, user_agent, path)
+            .destination(destination)
+            .overwrite(overwrite)
+            .body(Vec::new());
         Self {
-            state: State::Mkcol(mkcol),
+            state: State::Send(SendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for CreateCalendar {
+impl WebdavCoroutine for Move {
     type Yield = WebdavYield;
-    type Return = Result<(), SendError>;
+    type Return = Result<SendOk<Vec<u8>>, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("create-calendar: {}", self.state);
+        trace!("move: {}", self.state);
         match &mut self.state {
-            State::Mkcol(mkcol) => mkcol.resume(arg),
+            State::Send(send) => send.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Mkcol(Mkcol),
+    Send(SendRaw),
 }
 
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Mkcol(_) => f.write_str("mkcol"),
+            Self::Send(_) => f.write_str("send"),
         }
     }
 }

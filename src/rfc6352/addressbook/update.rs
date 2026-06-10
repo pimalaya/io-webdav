@@ -48,27 +48,17 @@
 
 use core::fmt;
 
-use alloc::string::String;
-
 use log::trace;
-use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{
-        proppatch::Proppatch,
-        send::{SendError, SendOk},
-        {MkcolResponse, WebdavAuth},
-    },
+    rfc4918::{WebdavAuth, proppatch::Proppatch, send::SendError},
     rfc6352::addressbook::{
         types::Addressbook,
-        utils::{format_body, join_path},
+        utils::{join_path, property_set},
     },
-    webdav_try,
 };
-
-const BODY: &str = include_str!("./update.xml");
 
 /// Coroutine that updates an addressbook collection's properties.
 #[derive(Debug)]
@@ -86,9 +76,10 @@ impl UpdateAddressbook {
         addressbook: &Addressbook,
     ) -> Self {
         let path = join_path(home_set_path, &addressbook.id);
-        let body = format_body(BODY, addressbook).into_bytes();
+        let set = property_set(addressbook);
+        let proppatch = Proppatch::new(base_url, auth, user_agent, &path, &set);
         Self {
-            state: State::Proppatch(Proppatch::new(base_url, auth, user_agent, &path, body)),
+            state: State::Proppatch(proppatch),
         }
     }
 }
@@ -100,43 +91,14 @@ impl WebdavCoroutine for UpdateAddressbook {
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("update-addressbook: {}", self.state);
         match &mut self.state {
-            State::Proppatch(proppatch) => {
-                let ok = webdav_try!(proppatch, arg);
-                log_propstats(&ok);
-                WebdavCoroutineState::Complete(Ok(()))
-            }
-        }
-    }
-}
-
-fn log_propstats(ok: &SendOk<MkcolResponse<Prop>>) {
-    let Some(propstats) = &ok.body.propstats else {
-        return;
-    };
-
-    for propstat in propstats {
-        if !propstat.status.is_success() {
-            trace!("skip propstat with non-2xx status");
-            continue;
-        }
-
-        if let Some(name) = &propstat.prop.displayname {
-            trace!("addressbook displayname updated: {name}");
-        }
-
-        if let Some(desc) = &propstat.prop.addressbook_description {
-            trace!("addressbook description updated: {desc}");
-        }
-
-        if let Some(color) = &propstat.prop.addressbook_color {
-            trace!("addressbook color updated: {color}");
+            State::Proppatch(proppatch) => proppatch.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Proppatch(Proppatch<Prop>),
+    Proppatch(Proppatch),
 }
 
 impl fmt::Display for State {
@@ -145,13 +107,4 @@ impl fmt::Display for State {
             Self::Proppatch(_) => f.write_str("proppatch"),
         }
     }
-}
-
-/// `<prop>` payload echoed by a `PROPPATCH` response.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Prop {
-    pub displayname: Option<String>,
-    pub addressbook_color: Option<String>,
-    pub addressbook_description: Option<String>,
 }

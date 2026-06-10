@@ -45,27 +45,25 @@
 
 use core::fmt;
 
-use alloc::{
-    collections::BTreeSet,
-    string::{String, ToString},
-};
+use alloc::{collections::BTreeSet, string::ToString};
 
 use log::trace;
-use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::calendar::types::Calendar,
+    rfc4791::calendar::{
+        types::Calendar,
+        utils::{
+            CALENDAR, CALENDAR_COLOR, CALENDAR_DESCRIPTION, CALENDAR_TIMEZONE, GETCTAG, LIST_PROPS,
+        },
+    },
     rfc4918::{
-        request::WebdavRequest,
-        send::{Send, SendError, SendOk},
-        {Multistatus, WebdavAuth},
+        DISPLAYNAME, RESOURCETYPE, ResponseEntry, WebdavAuth, propfind::Propfind, send::SendError,
+        trace_unrecognized,
     },
     webdav_try,
 };
-
-const BODY: &str = include_str!("./list.xml");
 
 /// Coroutine that lists calendars under `home_set_path`.
 #[derive(Debug)]
@@ -76,12 +74,9 @@ pub struct ListCalendars {
 impl ListCalendars {
     /// Builds a new `list-calendars` coroutine.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, home_set_path: &str) -> Self {
-        let request = WebdavRequest::propfind(base_url, auth, user_agent, home_set_path)
-            .depth(1)
-            .content_type_xml()
-            .body(BODY.as_bytes().to_vec());
+        let propfind = Propfind::new(base_url, auth, user_agent, home_set_path, 1, LIST_PROPS);
         Self {
-            state: State::Send(Send::new(request)),
+            state: State::Propfind(propfind),
         }
     }
 }
@@ -93,125 +88,51 @@ impl WebdavCoroutine for ListCalendars {
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("list-calendars: {}", self.state);
         match &mut self.state {
-            State::Send(send) => {
-                let ok = webdav_try!(send, arg);
-                WebdavCoroutineState::Complete(Ok(collect(&ok)))
+            State::Propfind(propfind) => {
+                let multistatus = webdav_try!(propfind, arg);
+                let calendars = multistatus
+                    .responses
+                    .iter()
+                    .filter_map(from_entry)
+                    .collect();
+                WebdavCoroutineState::Complete(Ok(calendars))
             }
         }
     }
 }
 
-fn collect(ok: &SendOk<Multistatus<Prop>>) -> BTreeSet<Calendar> {
-    let mut calendars = BTreeSet::new();
-
-    let Some(responses) = &ok.body.responses else {
-        return calendars;
-    };
-
-    for response in responses {
-        trace!("process multistatus response");
-
-        if let Some(status) = &response.status {
-            if !status.is_success() {
-                trace!("skip multistatus response with non-2xx status");
-                continue;
-            }
-        }
-
-        let Some(propstats) = &response.propstats else {
-            continue;
-        };
-
-        let id = response
-            .href
-            .value
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
-            .to_string();
-
-        let mut calendar = Calendar {
-            id,
-            ..Default::default()
-        };
-        let mut is_calendar = false;
-
-        for propstat in propstats {
-            if !propstat.status.is_success() {
-                trace!("skip propstat with non-2xx status");
-                continue;
-            }
-
-            if let Some(rtype) = &propstat.prop.resourcetype {
-                if rtype.calendar.is_some() {
-                    is_calendar = true;
-                }
-            }
-
-            if let Some(name) = non_empty(propstat.prop.displayname.as_deref()) {
-                calendar.display_name = Some(name);
-            }
-
-            if let Some(desc) = non_empty(propstat.prop.calendar_description.as_deref()) {
-                calendar.description = Some(desc);
-            }
-
-            if let Some(color) = non_empty(propstat.prop.calendar_color.as_deref()) {
-                calendar.color = Some(color);
-            }
-
-            if let Some(ctag) = non_empty(propstat.prop.getctag.as_deref()) {
-                calendar.ctag = Some(ctag);
-            }
-
-            if let Some(tz) = non_empty(propstat.prop.calendar_timezone.as_deref()) {
-                calendar.tz = Some(tz);
-            }
-        }
-
-        if is_calendar && !calendar.id.is_empty() {
-            calendars.insert(calendar);
-        }
+fn from_entry(entry: &ResponseEntry) -> Option<Calendar> {
+    if !entry.has_resource_type(RESOURCETYPE, CALENDAR) {
+        trace!("skip non-calendar response {}", entry.href);
+        return None;
     }
 
-    calendars
-}
+    let id = entry.id();
+    if id.is_empty() {
+        return None;
+    }
 
-fn non_empty(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(String::from)
+    trace_unrecognized(entry, LIST_PROPS);
+
+    Some(Calendar {
+        id: id.to_string(),
+        display_name: entry.text(DISPLAYNAME).map(ToString::to_string),
+        description: entry.text(CALENDAR_DESCRIPTION).map(ToString::to_string),
+        color: entry.text(CALENDAR_COLOR).map(ToString::to_string),
+        ctag: entry.text(GETCTAG).map(ToString::to_string),
+        tz: entry.text(CALENDAR_TIMEZONE).map(ToString::to_string),
+    })
 }
 
 #[derive(Debug)]
 enum State {
-    Send(Send<Multistatus<Prop>>),
+    Propfind(Propfind),
 }
 
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Send(_) => f.write_str("send"),
+            Self::Propfind(_) => f.write_str("propfind"),
         }
     }
-}
-
-/// `<prop>` payload returned by the list-calendars PROPFIND.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Prop {
-    pub resourcetype: Option<ResourceType>,
-    pub displayname: Option<String>,
-    pub calendar_color: Option<String>,
-    pub calendar_description: Option<String>,
-    pub getctag: Option<String>,
-    pub calendar_timezone: Option<String>,
-}
-
-/// `<resourcetype>` element returned by the list-calendars PROPFIND.
-#[derive(Clone, Debug, Deserialize)]
-pub struct ResourceType {
-    pub calendar: Option<()>,
 }

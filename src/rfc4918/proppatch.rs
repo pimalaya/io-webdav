@@ -1,8 +1,7 @@
 //! Generic `PROPPATCH` coroutine (RFC 4918 §9.2).
 //!
-//! Sends a `PROPPATCH` against `path` with the caller-supplied XML
-//! body. Most callers want the [`MkcolResponse`]-shaped body since
-//! `PROPPATCH` returns a multistatus.
+//! Sets each `(property, value)` pair against `path`; the request body
+//! is generated from the pairs. The multistatus body is not surfaced.
 //!
 //! # Example
 //!
@@ -14,7 +13,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{WebdavAuth, proppatch::Proppatch, send::Empty},
+//!     rfc4918::{DISPLAYNAME, WebdavAuth, proppatch::Proppatch},
 //! };
 //! use url::Url;
 //!
@@ -24,11 +23,11 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let body = b"<propertyupdate xmlns=\"DAV:\"></propertyupdate>".to_vec();
-//! let mut coroutine = Proppatch::<Empty>::new(&base_url, &auth, "io-webdav", "/dav/", body);
+//! let mut coroutine =
+//!     Proppatch::new(&base_url, &auth, "io-webdav", "/dav/collection/", &[(DISPLAYNAME, "Renamed")]);
 //! let mut arg = None;
 //!
-//! let ok = loop {
+//! loop {
 //!     match coroutine.resume(arg.take()) {
 //!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
 //!             stream.write_all(&bytes).unwrap();
@@ -37,74 +36,74 @@
 //!             let n = stream.read(&mut buf).unwrap();
 //!             arg = Some(&buf[..n]);
 //!         }
-//!         WebdavCoroutineState::Complete(Ok(ok)) => break ok,
+//!         WebdavCoroutineState::Complete(Ok(())) => break,
 //!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
 //!     }
-//! };
-//!
-//! println!("keep-alive: {}", ok.keep_alive);
+//! }
 //! ```
 
 use core::fmt;
 
-use alloc::vec::Vec;
-
 use log::trace;
-use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4918::{
+        proppatch_body,
         request::WebdavRequest,
-        send::{Send, SendError, SendOk},
-        {MkcolResponse, WebdavAuth},
+        send::{SendError, SendRaw},
+        types::{Property, WebdavAuth},
     },
+    webdav_try,
 };
 
-/// Coroutine that runs a `PROPPATCH` and deserializes the response into
-/// [`MkcolResponse<T>`].
+/// Coroutine that runs a `PROPPATCH`.
 #[derive(Debug)]
-pub struct Proppatch<T: for<'a> Deserialize<'a>> {
-    state: State<T>,
+pub struct Proppatch {
+    state: State,
 }
 
-impl<T: for<'a> Deserialize<'a>> Proppatch<T> {
-    /// Builds a new `PROPPATCH` coroutine.
+impl Proppatch {
+    /// Builds a new `PROPPATCH` coroutine setting each `(property,
+    /// value)` pair against `path`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         path: &str,
-        body: Vec<u8>,
+        set: &[(Property, &str)],
     ) -> Self {
         let request = WebdavRequest::proppatch(base_url, auth, user_agent, path)
             .content_type_xml()
-            .body(body);
+            .body(proppatch_body(set));
         Self {
-            state: State::Send(Send::new(request)),
+            state: State::Send(SendRaw::new(request)),
         }
     }
 }
 
-impl<T: for<'a> Deserialize<'a>> WebdavCoroutine for Proppatch<T> {
+impl WebdavCoroutine for Proppatch {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<MkcolResponse<T>>, SendError>;
+    type Return = Result<(), SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("proppatch: {}", self.state);
         match &mut self.state {
-            State::Send(send) => send.resume(arg),
+            State::Send(send) => {
+                webdav_try!(send, arg);
+                WebdavCoroutineState::Complete(Ok(()))
+            }
         }
     }
 }
 
 #[derive(Debug)]
-enum State<T: for<'a> Deserialize<'a>> {
-    Send(Send<MkcolResponse<T>>),
+enum State {
+    Send(SendRaw),
 }
 
-impl<T: for<'a> Deserialize<'a>> fmt::Display for State<T> {
+impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Send(_) => f.write_str("send"),

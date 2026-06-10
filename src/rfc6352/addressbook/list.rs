@@ -46,27 +46,23 @@
 
 use core::fmt;
 
-use alloc::{
-    collections::BTreeSet,
-    string::{String, ToString},
-};
+use alloc::{collections::BTreeSet, string::ToString};
 
 use log::trace;
-use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4918::{
-        request::WebdavRequest,
-        send::{Send, SendError, SendOk},
-        {Multistatus, WebdavAuth},
+        DISPLAYNAME, RESOURCETYPE, ResponseEntry, WebdavAuth, propfind::Propfind, send::SendError,
+        trace_unrecognized,
     },
-    rfc6352::addressbook::types::Addressbook,
+    rfc6352::addressbook::{
+        types::Addressbook,
+        utils::{ADDRESSBOOK, ADDRESSBOOK_COLOR, ADDRESSBOOK_DESCRIPTION, LIST_PROPS},
+    },
     webdav_try,
 };
-
-const BODY: &str = include_str!("./list.xml");
 
 /// Coroutine that lists addressbooks under `home_set_path`.
 #[derive(Debug)]
@@ -77,12 +73,9 @@ pub struct ListAddressbooks {
 impl ListAddressbooks {
     /// Builds a new `list-addressbooks` coroutine.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, home_set_path: &str) -> Self {
-        let request = WebdavRequest::propfind(base_url, auth, user_agent, home_set_path)
-            .content_type_xml()
-            .depth(1)
-            .body(BODY.as_bytes().to_vec());
+        let propfind = Propfind::new(base_url, auth, user_agent, home_set_path, 1, LIST_PROPS);
         Self {
-            state: State::Send(Send::new(request)),
+            state: State::Propfind(propfind),
         }
     }
 }
@@ -94,115 +87,49 @@ impl WebdavCoroutine for ListAddressbooks {
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("list-addressbooks: {}", self.state);
         match &mut self.state {
-            State::Send(send) => {
-                let ok = webdav_try!(send, arg);
-                WebdavCoroutineState::Complete(Ok(collect(&ok)))
+            State::Propfind(propfind) => {
+                let multistatus = webdav_try!(propfind, arg);
+                let addressbooks = multistatus
+                    .responses
+                    .iter()
+                    .filter_map(from_entry)
+                    .collect();
+                WebdavCoroutineState::Complete(Ok(addressbooks))
             }
         }
     }
 }
 
-fn collect(ok: &SendOk<Multistatus<Prop>>) -> BTreeSet<Addressbook> {
-    let mut addressbooks = BTreeSet::new();
-
-    let Some(responses) = &ok.body.responses else {
-        return addressbooks;
-    };
-
-    for response in responses {
-        trace!("process multistatus response");
-
-        if let Some(status) = &response.status {
-            if !status.is_success() {
-                trace!("skip multistatus response with non-2xx status");
-                continue;
-            }
-        }
-
-        let Some(propstats) = &response.propstats else {
-            continue;
-        };
-
-        let id = response
-            .href
-            .value
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
-            .to_string();
-
-        let mut addressbook = Addressbook {
-            id,
-            ..Default::default()
-        };
-        let mut is_addressbook = false;
-
-        for propstat in propstats {
-            if !propstat.status.is_success() {
-                trace!("skip propstat with non-2xx status");
-                continue;
-            }
-
-            if let Some(rtype) = &propstat.prop.resourcetype {
-                if rtype.addressbook.is_some() {
-                    is_addressbook = true;
-                }
-            }
-
-            if let Some(name) = non_empty(propstat.prop.displayname.as_deref()) {
-                addressbook.display_name = Some(name);
-            }
-
-            if let Some(desc) = non_empty(propstat.prop.addressbook_description.as_deref()) {
-                addressbook.description = Some(desc);
-            }
-
-            if let Some(color) = non_empty(propstat.prop.addressbook_color.as_deref()) {
-                addressbook.color = Some(color);
-            }
-        }
-
-        if is_addressbook && !addressbook.id.is_empty() {
-            addressbooks.insert(addressbook);
-        }
+fn from_entry(entry: &ResponseEntry) -> Option<Addressbook> {
+    if !entry.has_resource_type(RESOURCETYPE, ADDRESSBOOK) {
+        trace!("skip non-addressbook response {}", entry.href);
+        return None;
     }
 
-    addressbooks
-}
+    let id = entry.id();
+    if id.is_empty() {
+        return None;
+    }
 
-fn non_empty(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(String::from)
+    trace_unrecognized(entry, LIST_PROPS);
+
+    Some(Addressbook {
+        id: id.to_string(),
+        display_name: entry.text(DISPLAYNAME).map(ToString::to_string),
+        description: entry.text(ADDRESSBOOK_DESCRIPTION).map(ToString::to_string),
+        color: entry.text(ADDRESSBOOK_COLOR).map(ToString::to_string),
+    })
 }
 
 #[derive(Debug)]
 enum State {
-    Send(Send<Multistatus<Prop>>),
+    Propfind(Propfind),
 }
 
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Send(_) => f.write_str("send"),
+            Self::Propfind(_) => f.write_str("propfind"),
         }
     }
-}
-
-/// `<prop>` payload returned by the list-addressbooks PROPFIND.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Prop {
-    pub resourcetype: Option<ResourceType>,
-    pub displayname: Option<String>,
-    pub addressbook_color: Option<String>,
-    pub addressbook_description: Option<String>,
-}
-
-/// `<resourcetype>` element returned by the list-addressbooks PROPFIND.
-#[derive(Clone, Debug, Deserialize)]
-pub struct ResourceType {
-    pub addressbook: Option<()>,
 }

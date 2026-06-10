@@ -50,23 +50,24 @@
 
 use core::fmt;
 
+use alloc::string::String;
+
 use log::trace;
-use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
+    rfc4791::calendar::utils::CALENDAR_HOME_SET,
     rfc4918::{
+        WebdavAuth,
         coroutine::WebdavRedirectYield,
         follow_redirects::{FollowRedirects, FollowRedirectsError},
+        parse_multistatus, propfind_body,
         request::WebdavRequest,
-        send::SendOk,
-        {HrefProp, Multistatus, WebdavAuth},
+        resolve_href,
     },
     webdav_try,
 };
-
-const BODY: &str = include_str!("./home_set.xml");
 
 /// I/O-free coroutine that discovers the calendar-home-set URL. Yields
 /// [`None`] when the server returned an empty multistatus.
@@ -82,7 +83,7 @@ impl CalendarHomeSet {
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, principal_path: &str) -> Self {
         let request = WebdavRequest::propfind(base_url, auth, user_agent, principal_path)
             .content_type_xml()
-            .body(BODY.as_bytes().to_vec());
+            .body(propfind_body(&[CALENDAR_HOME_SET]));
 
         Self {
             base_url: base_url.clone(),
@@ -100,46 +101,21 @@ impl WebdavCoroutine for CalendarHomeSet {
         match &mut self.state {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
-                let url = first_home_set(&ok, &self.base_url);
+                let xml = String::from_utf8_lossy(&ok.body);
+                let url = parse_multistatus(&xml)
+                    .responses
+                    .iter()
+                    .find_map(|entry| entry.text(CALENDAR_HOME_SET))
+                    .and_then(|href| resolve_href(&self.base_url, href));
                 WebdavCoroutineState::Complete(Ok(url))
             }
         }
     }
 }
 
-fn first_home_set(ok: &SendOk<Multistatus<Prop>>, base_url: &Url) -> Option<Url> {
-    let responses = ok.body.responses.as_ref()?;
-
-    for response in responses {
-        if let Some(status) = &response.status {
-            if !status.is_success() {
-                trace!("skip multistatus response with non-2xx status");
-                continue;
-            }
-        }
-
-        let Some(propstats) = &response.propstats else {
-            continue;
-        };
-
-        for propstat in propstats {
-            if !propstat.status.is_success() {
-                trace!("skip propstat with non-2xx status");
-                continue;
-            }
-
-            if let Ok(url) = propstat.prop.calendar_home_set.url(base_url) {
-                return Some(url);
-            }
-        }
-    }
-
-    None
-}
-
 #[derive(Debug)]
 enum State {
-    Send(FollowRedirects<Multistatus<Prop>>),
+    Send(FollowRedirects),
 }
 
 impl fmt::Display for State {
@@ -148,12 +124,4 @@ impl fmt::Display for State {
             Self::Send(_) => f.write_str("send"),
         }
     }
-}
-
-/// `<prop>` payload returned by the calendar-home-set discovery
-/// PROPFIND.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Prop {
-    pub calendar_home_set: HrefProp,
 }

@@ -53,23 +53,29 @@
 
 use core::fmt;
 
+use alloc::string::String;
+
 use log::trace;
-use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4918::{
+        DAV, Property, WebdavAuth,
         coroutine::WebdavRedirectYield,
         follow_redirects::{FollowRedirects, FollowRedirectsError},
+        parse_multistatus, propfind_body,
         request::WebdavRequest,
-        send::SendOk,
-        {HrefProp, Multistatus, WebdavAuth},
+        resolve_href,
     },
     webdav_try,
 };
 
-const BODY: &str = include_str!("./current_user_principal.xml");
+/// `DAV:current-user-principal` property (RFC 5397 §3).
+pub const CURRENT_USER_PRINCIPAL: Property = Property {
+    ns: DAV,
+    local: "current-user-principal",
+};
 
 /// I/O-free coroutine that discovers the current user principal URL.
 /// Yields [`None`] when the server returned an empty multistatus.
@@ -85,7 +91,7 @@ impl CurrentUserPrincipal {
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str) -> Self {
         let request = WebdavRequest::propfind(base_url, auth, user_agent, "/")
             .content_type_xml()
-            .body(BODY.as_bytes().to_vec());
+            .body(propfind_body(&[CURRENT_USER_PRINCIPAL]));
 
         Self {
             base_url: base_url.clone(),
@@ -103,46 +109,21 @@ impl WebdavCoroutine for CurrentUserPrincipal {
         match &mut self.state {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
-                let url = first_principal(&ok, &self.base_url);
+                let xml = String::from_utf8_lossy(&ok.body);
+                let url = parse_multistatus(&xml)
+                    .responses
+                    .iter()
+                    .find_map(|entry| entry.text(CURRENT_USER_PRINCIPAL))
+                    .and_then(|href| resolve_href(&self.base_url, href));
                 WebdavCoroutineState::Complete(Ok(url))
             }
         }
     }
 }
 
-fn first_principal(ok: &SendOk<Multistatus<Prop>>, base_url: &Url) -> Option<Url> {
-    let responses = ok.body.responses.as_ref()?;
-
-    for response in responses {
-        if let Some(status) = &response.status {
-            if !status.is_success() {
-                trace!("skip multistatus response with non-2xx status");
-                continue;
-            }
-        }
-
-        let Some(propstats) = &response.propstats else {
-            continue;
-        };
-
-        for propstat in propstats {
-            if !propstat.status.is_success() {
-                trace!("skip propstat with non-2xx status");
-                continue;
-            }
-
-            if let Ok(url) = propstat.prop.current_user_principal.url(base_url) {
-                return Some(url);
-            }
-        }
-    }
-
-    None
-}
-
 #[derive(Debug)]
 enum State {
-    Send(FollowRedirects<Multistatus<Prop>>),
+    Send(FollowRedirects),
 }
 
 impl fmt::Display for State {
@@ -151,11 +132,4 @@ impl fmt::Display for State {
             Self::Send(_) => f.write_str("send"),
         }
     }
-}
-
-/// `<prop>` payload returned by the principal discovery PROPFIND.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Prop {
-    pub current_user_principal: HrefProp,
 }

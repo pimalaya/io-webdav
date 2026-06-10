@@ -53,18 +53,12 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{
-        WebdavAuth,
-        mkcol::Mkcol,
-        send::{Empty, SendError, SendOk},
-    },
+    rfc4918::{WebdavAuth, mkcol::Mkcol, send::SendError},
     rfc6352::addressbook::{
         types::Addressbook,
-        utils::{format_body, join_path},
+        utils::{ADDRESSBOOK, join_path, property_set},
     },
 };
-
-const BODY: &str = include_str!("./create.xml");
 
 /// Coroutine that creates an addressbook collection.
 #[derive(Debug)]
@@ -82,16 +76,17 @@ impl CreateAddressbook {
         addressbook: &Addressbook,
     ) -> Self {
         let path = join_path(home_set_path, &addressbook.id);
-        let body = format_body(BODY, addressbook).into_bytes();
+        let set = property_set(addressbook);
+        let mkcol = Mkcol::new(base_url, auth, user_agent, &path, &[ADDRESSBOOK], &set);
         Self {
-            state: State::Mkcol(Mkcol::new(base_url, auth, user_agent, &path, body)),
+            state: State::Mkcol(mkcol),
         }
     }
 }
 
 impl WebdavCoroutine for CreateAddressbook {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Empty>, SendError>;
+    type Return = Result<(), SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("create-addressbook: {}", self.state);

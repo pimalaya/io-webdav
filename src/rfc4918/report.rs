@@ -1,4 +1,9 @@
-//! Generic `MOVE` coroutine (RFC 4918 §9.9).
+//! Generic `REPORT` coroutine (RFC 3253 §3.6).
+//!
+//! Sends a `REPORT` against `path` with a caller-built query body (e.g.
+//! a CalDAV `calendar-query` from
+//! [`calendar_query_body`](crate::rfc4791::calendar::calendar_query_body))
+//! and parses the response into a [`Multistatus`].
 //!
 //! # Example
 //!
@@ -10,7 +15,8 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{WebdavAuth, move_::Move},
+//!     rfc4791::calendar::calendar_query_body,
+//!     rfc4918::{GETETAG, WebdavAuth, report::Report},
 //! };
 //! use url::Url;
 //!
@@ -20,17 +26,12 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = Move::new(
-//!     &base_url,
-//!     &auth,
-//!     "io-webdav",
-//!     "/dav/calendars/personal/event-1.ics",
-//!     "/dav/calendars/work/event-1.ics",
-//!     false,
-//! );
+//! let body = calendar_query_body(&[GETETAG], "");
+//! let mut coroutine =
+//!     Report::new(&base_url, &auth, "io-webdav", "/dav/calendars/personal/", 1, body);
 //! let mut arg = None;
 //!
-//! loop {
+//! let multistatus = loop {
 //!     match coroutine.resume(arg.take()) {
 //!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
 //!             stream.write_all(&bytes).unwrap();
@@ -39,15 +40,17 @@
 //!             let n = stream.read(&mut buf).unwrap();
 //!             arg = Some(&buf[..n]);
 //!         }
-//!         WebdavCoroutineState::Complete(Ok(_)) => break,
+//!         WebdavCoroutineState::Complete(Ok(multistatus)) => break multistatus,
 //!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
 //!     }
-//! }
+//! };
+//!
+//! println!("{} entries", multistatus.responses.len());
 //! ```
 
 use core::fmt;
 
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use log::trace;
 use url::Url;
@@ -55,46 +58,53 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth,
+        parse_multistatus,
         request::WebdavRequest,
-        send::{SendError, SendOk, SendRaw},
+        send::{SendError, SendRaw},
+        types::{Multistatus, WebdavAuth},
     },
+    webdav_try,
 };
 
-/// Coroutine that runs a `MOVE` of `path` to `destination`.
+/// Coroutine that runs a `REPORT` and parses the multistatus body.
 #[derive(Debug)]
-pub struct Move {
+pub struct Report {
     state: State,
 }
 
-impl Move {
-    /// Builds a new `MOVE` coroutine.
+impl Report {
+    /// Builds a new `REPORT` coroutine against `path` with the given
+    /// `Depth` and query `body`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         path: &str,
-        destination: &str,
-        overwrite: bool,
+        depth: u8,
+        body: Vec<u8>,
     ) -> Self {
-        let request = WebdavRequest::move_(base_url, auth, user_agent, path)
-            .destination(destination)
-            .overwrite(overwrite)
-            .body(Vec::new());
+        let request = WebdavRequest::report(base_url, auth, user_agent, path)
+            .depth(depth)
+            .content_type_xml()
+            .body(body);
         Self {
             state: State::Send(SendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Move {
+impl WebdavCoroutine for Report {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<Multistatus, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("move: {}", self.state);
+        trace!("report: {}", self.state);
         match &mut self.state {
-            State::Send(send) => send.resume(arg),
+            State::Send(send) => {
+                let ok = webdav_try!(send, arg);
+                let xml = String::from_utf8_lossy(&ok.body);
+                WebdavCoroutineState::Complete(Ok(parse_multistatus(&xml)))
+            }
         }
     }
 }

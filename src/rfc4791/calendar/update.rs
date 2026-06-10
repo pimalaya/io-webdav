@@ -48,27 +48,17 @@
 
 use core::fmt;
 
-use alloc::string::String;
-
 use log::trace;
-use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4791::calendar::{
         types::Calendar,
-        utils::{format_body, join_path},
+        utils::{join_path, property_set},
     },
-    rfc4918::{
-        proppatch::Proppatch,
-        send::{SendError, SendOk},
-        {MkcolResponse, WebdavAuth},
-    },
-    webdav_try,
+    rfc4918::{WebdavAuth, proppatch::Proppatch, send::SendError},
 };
-
-const BODY: &str = include_str!("./update.xml");
 
 /// Coroutine that updates a calendar collection's properties.
 #[derive(Debug)]
@@ -87,9 +77,10 @@ impl UpdateCalendar {
         calendar: &Calendar,
     ) -> Self {
         let path = join_path(home_set_path, &calendar.id);
-        let body = format_body(BODY, calendar).into_bytes();
+        let set = property_set(calendar);
+        let proppatch = Proppatch::new(base_url, auth, user_agent, &path, &set);
         Self {
-            state: State::Proppatch(Proppatch::new(base_url, auth, user_agent, &path, body)),
+            state: State::Proppatch(proppatch),
         }
     }
 }
@@ -101,43 +92,14 @@ impl WebdavCoroutine for UpdateCalendar {
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("update-calendar: {}", self.state);
         match &mut self.state {
-            State::Proppatch(proppatch) => {
-                let ok = webdav_try!(proppatch, arg);
-                log_propstats(&ok);
-                WebdavCoroutineState::Complete(Ok(()))
-            }
-        }
-    }
-}
-
-fn log_propstats(ok: &SendOk<MkcolResponse<Prop>>) {
-    let Some(propstats) = &ok.body.propstats else {
-        return;
-    };
-
-    for propstat in propstats {
-        if !propstat.status.is_success() {
-            trace!("skip propstat with non-2xx status");
-            continue;
-        }
-
-        if let Some(name) = &propstat.prop.displayname {
-            trace!("calendar displayname updated: {name}");
-        }
-
-        if let Some(desc) = &propstat.prop.calendar_description {
-            trace!("calendar description updated: {desc}");
-        }
-
-        if let Some(color) = &propstat.prop.calendar_color {
-            trace!("calendar color updated: {color}");
+            State::Proppatch(proppatch) => proppatch.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Proppatch(Proppatch<Prop>),
+    Proppatch(Proppatch),
 }
 
 impl fmt::Display for State {
@@ -146,13 +108,4 @@ impl fmt::Display for State {
             Self::Proppatch(_) => f.write_str("proppatch"),
         }
     }
-}
-
-/// `<prop>` payload echoed by a `PROPPATCH` response.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Prop {
-    pub displayname: Option<String>,
-    pub calendar_color: Option<String>,
-    pub calendar_description: Option<String>,
 }

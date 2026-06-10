@@ -107,7 +107,7 @@ impl WebdavRequest {
     }
 
     /// Builds a `MOVE` request (RFC 4918 §9.9).
-    pub fn move_(base_url: &Url, auth: &WebdavAuth, user_agent: &str, path: &str) -> Self {
+    pub fn r#move(base_url: &Url, auth: &WebdavAuth, user_agent: &str, path: &str) -> Self {
         Self::new(base_url, auth, user_agent, "MOVE", path)
     }
 

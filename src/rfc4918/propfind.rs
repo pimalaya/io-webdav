@@ -1,7 +1,8 @@
 //! Generic `PROPFIND` coroutine (RFC 4918 §9.1).
 //!
-//! Sends a `PROPFIND` against `path` with the caller-supplied XML body
-//! and parses the multistatus body into [`Multistatus<T>`].
+//! Requests `props` against `path` at the given `Depth`; the request
+//! body is generated from the selector and the response is parsed into
+//! a [`Multistatus`].
 //!
 //! # Example
 //!
@@ -13,7 +14,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{WebdavAuth, propfind::Propfind, send::Empty},
+//!     rfc4918::{DISPLAYNAME, RESOURCETYPE, WebdavAuth, propfind::Propfind},
 //! };
 //! use url::Url;
 //!
@@ -23,11 +24,11 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let body = b"<propfind xmlns=\"DAV:\"><prop><displayname/></prop></propfind>".to_vec();
-//! let mut coroutine = Propfind::<Empty>::new(&base_url, &auth, "io-webdav", "/dav/", 0, body);
+//! let mut coroutine =
+//!     Propfind::new(&base_url, &auth, "io-webdav", "/dav/", 1, &[RESOURCETYPE, DISPLAYNAME]);
 //! let mut arg = None;
 //!
-//! let ok = loop {
+//! let multistatus = loop {
 //!     match coroutine.resume(arg.take()) {
 //!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
 //!             stream.write_all(&bytes).unwrap();
@@ -36,77 +37,83 @@
 //!             let n = stream.read(&mut buf).unwrap();
 //!             arg = Some(&buf[..n]);
 //!         }
-//!         WebdavCoroutineState::Complete(Ok(ok)) => break ok,
+//!         WebdavCoroutineState::Complete(Ok(multistatus)) => break multistatus,
 //!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
 //!     }
 //! };
 //!
-//! println!("keep-alive: {}", ok.keep_alive);
+//! for entry in &multistatus.responses {
+//!     println!("{}: {:?}", entry.href, entry.text(DISPLAYNAME));
+//! }
 //! ```
 
 use core::fmt;
 
-use alloc::vec::Vec;
+use alloc::string::String;
 
 use log::trace;
-use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4918::{
+        parse_multistatus, propfind_body,
         request::WebdavRequest,
-        send::{Send, SendError, SendOk},
-        {Multistatus, WebdavAuth},
+        send::{SendError, SendRaw},
+        types::{Multistatus, Property, WebdavAuth},
     },
+    webdav_try,
 };
 
-/// Coroutine that runs a `PROPFIND` and deserializes the response into
-/// [`Multistatus<T>`].
+/// Coroutine that runs a `PROPFIND` and parses the multistatus body.
 #[derive(Debug)]
-pub struct Propfind<T: for<'a> Deserialize<'a>> {
-    state: State<T>,
+pub struct Propfind {
+    state: State,
 }
 
-impl<T: for<'a> Deserialize<'a>> Propfind<T> {
-    /// Builds a new `PROPFIND` coroutine targeting `path` (relative to
-    /// `base_url`), with the given `depth` header and XML request body.
+impl Propfind {
+    /// Builds a new `PROPFIND` coroutine requesting `props` against
+    /// `path` (relative to `base_url`) with the given `depth`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         path: &str,
         depth: u8,
-        body: Vec<u8>,
+        props: &[Property],
     ) -> Self {
         let request = WebdavRequest::propfind(base_url, auth, user_agent, path)
             .depth(depth)
             .content_type_xml()
-            .body(body);
+            .body(propfind_body(props));
         Self {
-            state: State::Send(Send::new(request)),
+            state: State::Send(SendRaw::new(request)),
         }
     }
 }
 
-impl<T: for<'a> Deserialize<'a>> WebdavCoroutine for Propfind<T> {
+impl WebdavCoroutine for Propfind {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Multistatus<T>>, SendError>;
+    type Return = Result<Multistatus, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("propfind: {}", self.state);
         match &mut self.state {
-            State::Send(send) => send.resume(arg),
+            State::Send(send) => {
+                let ok = webdav_try!(send, arg);
+                let xml = String::from_utf8_lossy(&ok.body);
+                WebdavCoroutineState::Complete(Ok(parse_multistatus(&xml)))
+            }
         }
     }
 }
 
 #[derive(Debug)]
-enum State<T: for<'a> Deserialize<'a>> {
-    Send(Send<Multistatus<T>>),
+enum State {
+    Send(SendRaw),
 }
 
-impl<T: for<'a> Deserialize<'a>> fmt::Display for State<T> {
+impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Send(_) => f.write_str("send"),

@@ -3,7 +3,9 @@
 //! Runs an HTTP/1.1 exchange and turns the underlying
 //! `HttpSendYield::WantsRedirect` into a
 //! [`WebdavRedirectYield::WantsRedirect`] so the client can rebuild its
-//! connection and restart the operation against the new target URL.
+//! connection and restart the operation against the new target URL. The
+//! success body is returned raw; callers parse it with
+//! [`parse_multistatus`](crate::rfc4918::parse_multistatus).
 //!
 //! [`WebdavRedirectYield::WantsRedirect`]: crate::rfc4918::coroutine::WebdavRedirectYield::WantsRedirect
 //!
@@ -22,7 +24,6 @@
 //!         coroutine::WebdavRedirectYield,
 //!         follow_redirects::FollowRedirects,
 //!         request::WebdavRequest,
-//!         send::Empty,
 //!     },
 //! };
 //! use url::Url;
@@ -36,7 +37,7 @@
 //! let request = WebdavRequest::propfind(&base_url, &auth, "io-webdav", "/")
 //!     .content_type_xml()
 //!     .body(Vec::new());
-//! let mut coroutine = FollowRedirects::<Empty>::new(request);
+//! let mut coroutine = FollowRedirects::new(request);
 //! let mut arg = None;
 //!
 //! let ok = loop {
@@ -56,20 +57,19 @@
 //!     }
 //! };
 //!
-//! println!("keep-alive: {}", ok.keep_alive);
+//! println!("{} bytes", ok.body.len());
 //! ```
 
-use core::{fmt, marker::PhantomData};
+use core::fmt;
 
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 
 use io_http::{
     coroutine::*,
-    rfc9110::{request::HttpRequest, response::HttpResponse, send::HttpSendOutput},
+    rfc9110::{request::HttpRequest, send::HttpSendOutput},
     rfc9112::send::{Http11Send, Http11SendError},
 };
 use log::trace;
-use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
@@ -82,38 +82,34 @@ use crate::{
 pub enum FollowRedirectsError {
     #[error("WebDAV server returned HTTP {0}: {1}")]
     HttpStatus(u16, String),
-    #[error("Parse WebDAV XML response body error: {0}")]
-    ParseXmlResponseBody(#[source] quick_xml::DeError),
 
     #[error(transparent)]
     Send(#[from] Http11SendError),
 }
 
 /// I/O-free coroutine that sends a WebDAV request, surfaces 3xx
-/// redirects via [`WebdavRedirectYield::WantsRedirect`] and parses the
-/// success body as XML into `T`.
+/// redirects via [`WebdavRedirectYield::WantsRedirect`] and returns the
+/// success body as raw bytes.
 #[derive(Debug)]
-pub struct FollowRedirects<T: for<'a> Deserialize<'a>> {
-    phantom: PhantomData<T>,
+pub struct FollowRedirects {
     state: State,
 }
 
-impl<T: for<'a> Deserialize<'a>> FollowRedirects<T> {
+impl FollowRedirects {
     /// Builds a new redirect-aware send coroutine. `request` must
     /// already carry its body bytes.
     pub fn new(request: HttpRequest) -> Self {
         trace!("send WebDAV request to {} (redirect-aware)", request.url);
 
         Self {
-            phantom: PhantomData,
             state: State::Send(Http11Send::new(request)),
         }
     }
 }
 
-impl<T: for<'a> Deserialize<'a>> WebdavCoroutine for FollowRedirects<T> {
+impl WebdavCoroutine for FollowRedirects {
     type Yield = WebdavRedirectYield;
-    type Return = Result<SendOk<T>, FollowRedirectsError>;
+    type Return = Result<SendOk<Vec<u8>>, FollowRedirectsError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("follow redirects: {}", self.state);
@@ -135,37 +131,21 @@ impl<T: for<'a> Deserialize<'a>> WebdavCoroutine for FollowRedirects<T> {
                     ..
                 } = out;
 
-                parse_ok(response, keep_alive)
+                if !response.status.is_success() {
+                    let body = String::from_utf8_lossy(&response.body).into_owned();
+                    let err = FollowRedirectsError::HttpStatus(*response.status, body);
+                    return WebdavCoroutineState::Complete(Err(err));
+                }
+
+                let body = response.body.clone();
+                WebdavCoroutineState::Complete(Ok(SendOk {
+                    response,
+                    keep_alive,
+                    body,
+                }))
             }
         }
     }
-}
-
-fn parse_ok<T: for<'a> Deserialize<'a>>(
-    response: HttpResponse,
-    keep_alive: bool,
-) -> WebdavCoroutineState<WebdavRedirectYield, Result<SendOk<T>, FollowRedirectsError>> {
-    let body = String::from_utf8_lossy(&response.body);
-    trace!("WebDAV response body: {body}");
-
-    if !response.status.is_success() {
-        let err = FollowRedirectsError::HttpStatus(*response.status, body.into_owned());
-        return WebdavCoroutineState::Complete(Err(err));
-    }
-
-    let parsed = match quick_xml::de::from_str::<T>(&body) {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            let err = FollowRedirectsError::ParseXmlResponseBody(err);
-            return WebdavCoroutineState::Complete(Err(err));
-        }
-    };
-
-    WebdavCoroutineState::Complete(Ok(SendOk {
-        response,
-        keep_alive,
-        body: parsed,
-    }))
 }
 
 #[derive(Debug)]
