@@ -1,25 +1,23 @@
 //! # Standard, blocking WebDAV client
 //!
-//! Holds a single boxed stream (any blocking `Read + Write` impl)
-//! plus the [`WebdavAuth`] credential, the user-facing pub options
-//! ([`base_url`], [`follow_redirects`], [`max_redirects`],
-//! [`user_agent`]) and the discovery caches ([`principal_url`],
-//! [`calendar_home_set`], [`addressbook_home_set`]).
+//! Holds a single boxed stream (any blocking `Read + Write` impl) plus the
+//! [`WebdavAuth`] credential, the user-facing pub options ([`base_url`],
+//! [`follow_redirects`], [`max_redirects`], [`user_agent`]) and the discovery
+//! caches ([`principal_url`], [`calendar_home_set`], [`addressbook_home_set`]).
 //!
-//! The bare [`new`] constructor takes a pre-connected stream; callers
-//! handle TCP and TLS themselves. With one of the TLS feature flags
-//! enabled (`rustls-ring`, `rustls-aws`, `native-tls`), [`connect`] is
-//! also available and handles `https://` URLs end-to-end via
+//! The bare [`new`] constructor takes a pre-connected stream; callers handle
+//! TCP and TLS themselves. With one of the TLS feature flags enabled
+//! (`rustls-ring`, `rustls-aws`, `native-tls`), [`connect`] is also available
+//! and handles `https://` URLs end-to-end via
 //! [`pimalaya_stream::std::stream::StreamStd`].
 //!
-//! Discovery flows top-down: [`well_known_caldav`] /
-//! [`well_known_carddav`] resolve the DAV root; [`current_user_principal`]
-//! resolves the principal URL; [`calendar_home_set`] /
-//! [`addressbook_home_set`] resolve the per-RFC home-set URL. Each
-//! step caches its result; higher-level methods return
+//! Discovery flows top-down: [`well_known_caldav`] / [`well_known_carddav`]
+//! resolve the DAV root; [`current_user_principal`] resolves the principal URL;
+//! [`calendar_home_set`] / [`addressbook_home_set`] resolve the per-RFC
+//! home-set URL. Each step caches its result; higher-level methods return
 //! [`MissingPrincipal`] / [`MissingCalendarHomeSet`] /
-//! [`MissingAddressbookHomeSet`] when the cache is empty (mirrors
-//! io-jmap's `MissingSession`).
+//! [`MissingAddressbookHomeSet`] when the cache is empty (mirrors io-jmap's
+//! `MissingSession`).
 //!
 //! [`base_url`]: WebdavClientStd::base_url
 //! [`follow_redirects`]: WebdavClientStd::follow_redirects
@@ -143,7 +141,11 @@ pub enum WebdavClientStdError {
 
 /// Std-blocking WebDAV client wrapping a single blocking stream.
 pub struct WebdavClientStd {
-    stream: Box<dyn WebdavStream>,
+    /// The active blocking stream. Public so higher-level crates can pump their
+    /// own [`WebdavCoroutine`]s through it (as io-jmap exposes its stream),
+    /// reusing this client's discovery cache.
+    pub stream: Box<dyn WebdavStream>,
+
     auth: WebdavAuth,
 
     /// Base URL prepended to every request path.
@@ -772,5 +774,5 @@ fn addressbook_path(
 
 /// Marker for everything the client can run against; auto-implemented
 /// for any blocking `Read + Write + Send` impl.
-trait WebdavStream: Read + Write + Send {}
+pub trait WebdavStream: Read + Write + Send {}
 impl<T: Read + Write + Send + ?Sized> WebdavStream for T {}
