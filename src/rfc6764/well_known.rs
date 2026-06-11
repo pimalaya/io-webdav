@@ -46,8 +46,6 @@
 //! println!("CalDAV root: {}", out.url);
 //! ```
 
-use core::fmt;
-
 use alloc::{
     format,
     string::{String, ToString},
@@ -151,7 +149,7 @@ impl WebdavCoroutine for WellKnown {
     type Return = Result<WellKnownOutput, WellKnownError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("well-known: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Send(send) => match send.resume(arg) {
                 HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
@@ -200,12 +198,4 @@ fn read_location(response: &HttpResponse) -> Result<Url, WellKnownError> {
 #[derive(Debug)]
 enum State {
     Send(Http11Send),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }

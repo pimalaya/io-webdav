@@ -47,8 +47,6 @@
 //! }
 //! ```
 
-use core::fmt;
-
 use alloc::string::String;
 
 use log::trace;
@@ -97,7 +95,7 @@ impl WebdavCoroutine for Propfind {
     type Return = Result<Multistatus, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("propfind: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
@@ -111,12 +109,4 @@ impl WebdavCoroutine for Propfind {
 #[derive(Debug)]
 enum State {
     Send(SendRaw),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }

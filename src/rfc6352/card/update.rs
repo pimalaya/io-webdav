@@ -54,7 +54,7 @@
 //! println!("updated {} (etag {:?})", updated.id, updated.etag);
 //! ```
 
-use core::{fmt, mem};
+use core::mem;
 
 use alloc::{
     string::{String, ToString},
@@ -117,7 +117,7 @@ impl WebdavCoroutine for UpdateCard {
     type Return = Result<UpdateCardOk, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("update-card: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Put(put) => {
                 let SendOk { response, .. } = webdav_try!(put, arg);
@@ -132,12 +132,4 @@ impl WebdavCoroutine for UpdateCard {
 #[derive(Debug)]
 enum State {
     Put(Put),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Put(_) => f.write_str("put"),
-        }
-    }
 }

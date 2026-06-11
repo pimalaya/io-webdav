@@ -41,8 +41,6 @@
 //! }
 //! ```
 
-use core::fmt;
-
 use alloc::vec::Vec;
 
 use log::trace;
@@ -85,7 +83,7 @@ impl WebdavCoroutine for DeleteAddressbook {
     type Return = Result<SendOk<Vec<u8>>, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("delete-addressbook: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Delete(delete) => delete.resume(arg),
         }
@@ -95,12 +93,4 @@ impl WebdavCoroutine for DeleteAddressbook {
 #[derive(Debug)]
 enum State {
     Delete(Delete),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Delete(_) => f.write_str("delete"),
-        }
-    }
 }

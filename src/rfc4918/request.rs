@@ -16,6 +16,7 @@ use alloc::{
 };
 
 use io_http::rfc9110::request::HttpRequest;
+use log::trace;
 use url::Url;
 
 use crate::rfc4918::{WebdavAuth, utils::*};
@@ -132,14 +133,14 @@ impl WebdavRequest {
 
     /// Sets the `If-Match` header (RFC 9110 §13.1.1) to the given ETag.
     pub fn if_match(mut self, etag: &str) -> Self {
-        self.inner = self.inner.header("If-Match", etag);
+        self.inner = self.inner.header("If-Match", entity_tag(etag));
         self
     }
 
     /// Sets the `If-None-Match` header (RFC 9110 §13.1.2) to the given
     /// ETag.
     pub fn if_none_match(mut self, etag: &str) -> Self {
-        self.inner = self.inner.header("If-None-Match", etag);
+        self.inner = self.inner.header("If-None-Match", entity_tag(etag));
         self
     }
 
@@ -166,16 +167,33 @@ impl WebdavRequest {
 
     /// Finalizes the request with the given body and returns the
     /// underlying [`HttpRequest`] ready for [`crate::rfc4918::send`].
+    ///
+    /// Trace-logs the body: WebDAV request bodies are always UTF-8 text
+    /// (XML, iCalendar or vCard), so io-webdav can safely render them,
+    /// whereas io-http (which cannot know the content type) does not.
     pub fn body(mut self, body: Vec<u8>) -> HttpRequest {
+        if !body.is_empty() {
+            trace!("request body: {}", String::from_utf8_lossy(&body));
+        }
         self.inner = self.inner.body(body);
         self.inner
     }
 }
 
+/// Formats an ETag as a conditional-header entity-tag (RFC 9110 §8.8.3):
+/// a bare strong tag gets wrapped in double quotes; `*`, weak (`W/...`)
+/// and already-quoted values pass through unchanged.
+fn entity_tag(etag: &str) -> String {
+    if etag == "*" || etag.starts_with('"') || etag.starts_with("W/") {
+        etag.to_string()
+    } else {
+        format!("\"{etag}\"")
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use alloc::string::ToString;
-
+    use io_http::rfc7617::basic::HttpAuthBasic;
     use url::Url;
 
     use crate::rfc4918::{WebdavAuth, request::*};
@@ -208,10 +226,7 @@ mod tests {
 
     #[test]
     fn auth_basic_emits_header() {
-        let auth = WebdavAuth::Basic {
-            username: "alice".into(),
-            password: secrecy::SecretString::from("secret".to_string()),
-        };
+        let auth = WebdavAuth::Basic(HttpAuthBasic::new("alice", "secret"));
         let req = WebdavRequest::get(&base(), &auth, "io-webdav/test", "");
         let request = req.body(Vec::new());
         assert!(

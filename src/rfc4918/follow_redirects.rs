@@ -60,8 +60,6 @@
 //! println!("{} bytes", ok.body.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec::Vec};
 
 use io_http::{
@@ -99,8 +97,6 @@ impl FollowRedirects {
     /// Builds a new redirect-aware send coroutine. `request` must
     /// already carry its body bytes.
     pub fn new(request: HttpRequest) -> Self {
-        trace!("send WebDAV request to {} (redirect-aware)", request.url);
-
         Self {
             state: State::Send(Http11Send::new(request)),
         }
@@ -112,7 +108,7 @@ impl WebdavCoroutine for FollowRedirects {
     type Return = Result<SendOk<Vec<u8>>, FollowRedirectsError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("follow redirects: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Send(send) => {
                 let out = match send.resume(arg) {
@@ -151,12 +147,4 @@ impl WebdavCoroutine for FollowRedirects {
 #[derive(Debug)]
 enum State {
     Send(Http11Send),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }

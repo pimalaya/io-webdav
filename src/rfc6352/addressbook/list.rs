@@ -44,8 +44,6 @@
 //! println!("{} addressbooks", addressbooks.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeSet, string::ToString};
 
 use log::trace;
@@ -85,7 +83,7 @@ impl WebdavCoroutine for ListAddressbooks {
     type Return = Result<BTreeSet<Addressbook>, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("list-addressbooks: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Propfind(propfind) => {
                 let multistatus = webdav_try!(propfind, arg);
@@ -124,12 +122,4 @@ fn from_entry(entry: &ResponseEntry) -> Option<Addressbook> {
 #[derive(Debug)]
 enum State {
     Propfind(Propfind),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Propfind(_) => f.write_str("propfind"),
-        }
-    }
 }

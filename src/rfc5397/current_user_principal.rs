@@ -1,9 +1,11 @@
 //! `current-user-principal` discovery (RFC 5397).
 //!
-//! Runs a `PROPFIND` against `/` with the `<DAV:current-user-principal>`
-//! property request and surfaces the discovered principal URL. Yields
-//! [`WantsRedirect`] since the entry path is usually `/` and servers
-//! often redirect to the actual DAV root.
+//! Runs a `PROPFIND` against the base URL with the
+//! `<DAV:current-user-principal>` property request and surfaces the
+//! discovered principal URL. The base URL must point at a DAV resource
+//! (the server root for servers that serve DAV at `/`, or the DAV
+//! context path such as `/dav/` otherwise). Yields [`WantsRedirect`]
+//! when the server redirects to the actual DAV root.
 //!
 //! [`WantsRedirect`]: crate::rfc4918::coroutine::WebdavRedirectYield::WantsRedirect
 //!
@@ -51,8 +53,6 @@
 //! println!("{principal:?}");
 //! ```
 
-use core::fmt;
-
 use alloc::string::String;
 
 use log::trace;
@@ -86,10 +86,11 @@ pub struct CurrentUserPrincipal {
 }
 
 impl CurrentUserPrincipal {
-    /// Builds a new `current-user-principal` coroutine targeting `/`
-    /// against `base_url`.
+    /// Builds a new `current-user-principal` coroutine targeting
+    /// `base_url`'s own path.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str) -> Self {
-        let request = WebdavRequest::propfind(base_url, auth, user_agent, "/")
+        let request = WebdavRequest::propfind(base_url, auth, user_agent, "")
+            .depth(0)
             .content_type_xml()
             .body(propfind_body(&[CURRENT_USER_PRINCIPAL]));
 
@@ -105,7 +106,7 @@ impl WebdavCoroutine for CurrentUserPrincipal {
     type Return = Result<Option<Url>, FollowRedirectsError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("current-user-principal: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
@@ -124,12 +125,4 @@ impl WebdavCoroutine for CurrentUserPrincipal {
 #[derive(Debug)]
 enum State {
     Send(FollowRedirects),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }

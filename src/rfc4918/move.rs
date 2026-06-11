@@ -45,8 +45,6 @@
 //! }
 //! ```
 
-use core::fmt;
-
 use alloc::vec::Vec;
 
 use log::trace;
@@ -92,7 +90,7 @@ impl WebdavCoroutine for Move {
     type Return = Result<SendOk<Vec<u8>>, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("move: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Send(send) => send.resume(arg),
         }
@@ -102,12 +100,4 @@ impl WebdavCoroutine for Move {
 #[derive(Debug)]
 enum State {
     Send(SendRaw),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }

@@ -42,8 +42,6 @@
 //! }
 //! ```
 
-use core::fmt;
-
 use log::trace;
 use url::Url;
 
@@ -88,7 +86,7 @@ impl WebdavCoroutine for Proppatch {
     type Return = Result<(), SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("proppatch: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Send(send) => {
                 webdav_try!(send, arg);
@@ -101,12 +99,4 @@ impl WebdavCoroutine for Proppatch {
 #[derive(Debug)]
 enum State {
     Send(SendRaw),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }

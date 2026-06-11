@@ -1,4 +1,4 @@
-//! `create-calendar` coroutine: extended `MKCOL` (RFC 5689) against
+//! `create-calendar` coroutine: `MKCALENDAR` (RFC 4791 §5.3.1) against
 //! the calendar home-set URL.
 //!
 //! # Example
@@ -46,8 +46,6 @@
 //! }
 //! ```
 
-use core::fmt;
-
 use log::trace;
 use url::Url;
 
@@ -55,9 +53,14 @@ use crate::{
     coroutine::*,
     rfc4791::calendar::{
         types::Calendar,
-        utils::{CALENDAR, join_path, property_set},
+        utils::{join_path, mkcalendar_body, property_set},
     },
-    rfc4918::{WebdavAuth, mkcol::Mkcol, send::SendError},
+    rfc4918::{
+        WebdavAuth,
+        request::WebdavRequest,
+        send::{SendError, SendRaw},
+    },
+    webdav_try,
 };
 
 /// Coroutine that creates a calendar collection.
@@ -78,9 +81,11 @@ impl CreateCalendar {
     ) -> Self {
         let path = join_path(home_set_path, &calendar.id);
         let set = property_set(calendar);
-        let mkcol = Mkcol::new(base_url, auth, user_agent, &path, &[CALENDAR], &set);
+        let request = WebdavRequest::new(base_url, auth, user_agent, "MKCALENDAR", &path)
+            .content_type_xml()
+            .body(mkcalendar_body(&set));
         Self {
-            state: State::Mkcol(mkcol),
+            state: State::Send(SendRaw::new(request)),
         }
     }
 }
@@ -90,22 +95,17 @@ impl WebdavCoroutine for CreateCalendar {
     type Return = Result<(), SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("create-calendar: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
-            State::Mkcol(mkcol) => mkcol.resume(arg),
+            State::Send(send) => {
+                webdav_try!(send, arg);
+                WebdavCoroutineState::Complete(Ok(()))
+            }
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Mkcol(Mkcol),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Mkcol(_) => f.write_str("mkcol"),
-        }
-    }
+    Send(SendRaw),
 }

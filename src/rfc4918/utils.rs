@@ -18,11 +18,9 @@ use alloc::{
     vec::Vec,
 };
 
-use base64::{Engine, prelude::BASE64_STANDARD};
 use io_http::rfc9110::response::HttpResponse;
 use log::trace;
 use quick_xml::{Reader, escape::unescape, events::Event};
-use secrecy::ExposeSecret;
 use url::Url;
 
 use crate::rfc4918::types::{
@@ -51,6 +49,12 @@ pub const RESOURCETYPE: Property = Property {
 pub const GETETAG: Property = Property {
     ns: DAV,
     local: "getetag",
+};
+
+/// `DAV:propertyupdate` PROPPATCH request root (RFC 4918 §9.2).
+const PROPERTYUPDATE: Property = Property {
+    ns: DAV,
+    local: "propertyupdate",
 };
 
 /// Emits the `xmlns` declarations for the given namespaces (deduped by
@@ -105,13 +109,25 @@ pub fn propfind_body(props: &[Property]) -> Vec<u8> {
 /// Builds a `PROPPATCH` request body (RFC 4918 §9.2) setting each
 /// `(property, value)` pair.
 pub fn proppatch_body(set: &[(Property, &str)]) -> Vec<u8> {
+    prop_set_body(PROPERTYUPDATE, set)
+}
+
+/// Builds a `<root><set><prop>...</prop></set></root>` body setting each
+/// `(property, value)` pair, rooted at `root`. Backs both
+/// [`proppatch_body`] (`DAV:propertyupdate`) and CalDAV `MKCALENDAR`
+/// (`C:mkcalendar`, RFC 4791 §5.3.1).
+pub fn prop_set_body(root: Property, set: &[(Property, &str)]) -> Vec<u8> {
     let props: Vec<Property> = set.iter().map(|(prop, _)| *prop).collect();
-    let decls = xmlns_decls(&namespaces(&[], &props));
-    let mut body = format!("{XML_DECL}<propertyupdate{decls}><set><prop>");
+    let mut nss = namespaces(&[], &props);
+    nss.push(root.ns);
+    let decls = xmlns_decls(&nss);
+    let open = qualified(root.ns, root.local);
+
+    let mut body = format!("{XML_DECL}<{open}{decls}><set><prop>");
     for (prop, value) in set {
         body.push_str(&value_element(*prop, value));
     }
-    body.push_str("</prop></set></propertyupdate>");
+    body.push_str(&format!("</prop></set></{open}>"));
     body.into_bytes()
 }
 
@@ -281,12 +297,8 @@ pub fn parse_multistatus(xml: &str) -> Multistatus {
 pub fn emit_header(auth: &WebdavAuth) -> Option<String> {
     match auth {
         WebdavAuth::None => None,
-        WebdavAuth::Basic { username, password } => {
-            let password = password.expose_secret();
-            let digest = BASE64_STANDARD.encode(format!("{username}:{password}"));
-            Some(format!("Basic {digest}"))
-        }
-        WebdavAuth::Bearer { token } => Some(format!("Bearer {}", token.expose_secret())),
+        WebdavAuth::Basic(credentials) => Some(credentials.to_authorization()),
+        WebdavAuth::Bearer(token) => Some(token.to_authorization()),
     }
 }
 
@@ -382,9 +394,9 @@ fn local_name(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{string::ToString, vec};
+    use alloc::string::ToString;
 
-    use secrecy::SecretString;
+    use io_http::{rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic};
 
     use crate::rfc4918::{
         types::{Namespace, Property, WebdavAuth},
@@ -420,6 +432,29 @@ mod tests {
         let xml = core::str::from_utf8(&body).unwrap();
         assert!(xml.contains("<resourcetype><collection/><C:calendar/></resourcetype>"));
         assert!(xml.contains("<displayname>Personal &amp; co</displayname>"));
+    }
+
+    #[test]
+    fn proppatch_body_wraps_values_in_propertyupdate() {
+        let body = proppatch_body(&[(DISPLAYNAME, "Renamed")]);
+        let xml = core::str::from_utf8(&body).unwrap();
+        assert!(xml.contains("<propertyupdate xmlns=\"DAV:\">"));
+        assert!(xml.contains("<set><prop><displayname>Renamed</displayname></prop></set>"));
+        assert!(xml.ends_with("</propertyupdate>"));
+    }
+
+    #[test]
+    fn prop_set_body_roots_at_the_given_element() {
+        const MKCALENDAR: Property = Property {
+            ns: CALDAV,
+            local: "mkcalendar",
+        };
+        let body = prop_set_body(MKCALENDAR, &[(DISPLAYNAME, "Work")]);
+        let xml = core::str::from_utf8(&body).unwrap();
+        assert!(xml.contains("<C:mkcalendar "));
+        assert!(xml.contains("xmlns:C=\"urn:ietf:params:xml:ns:caldav\""));
+        assert!(xml.contains("<set><prop><displayname>Work</displayname></prop></set>"));
+        assert!(xml.ends_with("</C:mkcalendar>"));
     }
 
     #[test]
@@ -487,19 +522,14 @@ mod tests {
 
     #[test]
     fn basic_encodes_credentials() {
-        let auth = WebdavAuth::Basic {
-            username: "alice".into(),
-            password: SecretString::from("secret".to_string()),
-        };
+        let auth = WebdavAuth::Basic(HttpAuthBasic::new("alice", "secret"));
         // NOTE: base64("alice:secret") = "YWxpY2U6c2VjcmV0"
         assert_eq!(emit_header(&auth).unwrap(), "Basic YWxpY2U6c2VjcmV0");
     }
 
     #[test]
     fn bearer_prepends_scheme() {
-        let auth = WebdavAuth::Bearer {
-            token: SecretString::from("xyz".to_string()),
-        };
+        let auth = WebdavAuth::Bearer(HttpAuthBearer::new("xyz"));
         assert_eq!(emit_header(&auth).unwrap(), "Bearer xyz");
     }
 

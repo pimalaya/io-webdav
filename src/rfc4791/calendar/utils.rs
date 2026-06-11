@@ -5,7 +5,7 @@ use alloc::{format, string::String, vec::Vec};
 
 use crate::{
     rfc4791::calendar::types::Calendar,
-    rfc4918::{DISPLAYNAME, Namespace, Property, RESOURCETYPE, report_query_body},
+    rfc4918::{DISPLAYNAME, Namespace, Property, RESOURCETYPE, prop_set_body, report_query_body},
 };
 
 /// CalDAV namespace (RFC 4791 §4).
@@ -64,6 +64,11 @@ pub const CALENDAR_QUERY: Property = Property {
     ns: CALDAV,
     local: "calendar-query",
 };
+/// `C:mkcalendar` MKCALENDAR request root (RFC 4791 §5.3.1).
+pub const MKCALENDAR: Property = Property {
+    ns: CALDAV,
+    local: "mkcalendar",
+};
 
 /// Properties requested when listing calendars.
 pub const LIST_PROPS: &[Property] = &[
@@ -83,8 +88,16 @@ pub fn join_path(home: &str, id: &str) -> String {
     format!("{home}/{id}/")
 }
 
+/// Builds a CalDAV `MKCALENDAR` request body (RFC 4791 §5.3.1) setting
+/// the given properties. CalDAV servers require this dedicated method
+/// for calendars rather than the extended `MKCOL` used for plain
+/// collections.
+pub fn mkcalendar_body(set: &[(Property, &str)]) -> Vec<u8> {
+    prop_set_body(MKCALENDAR, set)
+}
+
 /// The present display name / color / description of `calendar` as
-/// `PROPPATCH` / `MKCOL` set pairs.
+/// `PROPPATCH` / `MKCALENDAR` set pairs.
 pub fn property_set(calendar: &Calendar) -> Vec<(Property, &str)> {
     let mut set = Vec::new();
     if let Some(name) = &calendar.display_name {

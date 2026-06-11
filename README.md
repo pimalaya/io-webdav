@@ -79,14 +79,11 @@ use io_webdav::{
 };
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls_platform_verifier::ConfigVerifierExt;
-use secrecy::SecretString;
+use io_http::rfc7617::basic::HttpAuthBasic;
 use url::Url;
 
 let base_url = Url::parse("https://dav.example.org/").unwrap();
-let auth = WebdavAuth::Basic {
-    username: "alice".into(),
-    password: SecretString::from("secret"),
-};
+let auth = WebdavAuth::Basic(HttpAuthBasic::new("alice", "secret"));
 
 let config = ClientConfig::with_platform_verifier().unwrap();
 let server_name = base_url.host_str().unwrap().to_string().try_into().unwrap();
@@ -136,14 +133,11 @@ use std::{net::TcpStream, sync::Arc};
 use io_webdav::{client::WebdavClientStd, rfc4918::WebdavAuth};
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls_platform_verifier::ConfigVerifierExt;
-use secrecy::SecretString;
+use io_http::rfc7617::basic::HttpAuthBasic;
 use url::Url;
 
 let base_url = Url::parse("https://dav.example.org/").unwrap();
-let auth = WebdavAuth::Basic {
-    username: "alice".into(),
-    password: SecretString::from("secret"),
-};
+let auth = WebdavAuth::Basic(HttpAuthBasic::new("alice", "secret"));
 
 let config = ClientConfig::with_platform_verifier().unwrap();
 let server_name = base_url.host_str().unwrap().to_string().try_into().unwrap();
@@ -170,14 +164,11 @@ io-webdav = "0.0.1" # rustls-ring is enabled by default
 ```rust,no_run
 use io_webdav::{client::WebdavClientStd, rfc4918::WebdavAuth};
 use pimalaya_stream::tls::Tls;
-use secrecy::SecretString;
+use io_http::rfc7617::basic::HttpAuthBasic;
 use url::Url;
 
 let base_url = Url::parse("https://dav.example.org/").unwrap();
-let auth = WebdavAuth::Basic {
-    username: "alice".into(),
-    password: SecretString::from("secret"),
-};
+let auth = WebdavAuth::Basic(HttpAuthBasic::new("alice", "secret"));
 let tls = Tls::default();
 
 let mut client = WebdavClientStd::connect(&base_url, &tls, auth).unwrap();

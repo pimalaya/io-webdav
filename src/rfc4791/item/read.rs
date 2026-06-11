@@ -45,8 +45,6 @@
 //! println!("{} bytes, etag {:?}", item.data.len(), item.etag);
 //! ```
 
-use core::fmt;
-
 use log::trace;
 use url::Url;
 
@@ -89,7 +87,7 @@ impl WebdavCoroutine for ReadItem {
     type Return = Result<ItemBody, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("read-item: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Get(get) => {
                 let SendOk { response, body, .. } = webdav_try!(get, arg);
@@ -103,12 +101,4 @@ impl WebdavCoroutine for ReadItem {
 #[derive(Debug)]
 enum State {
     Get(Get),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Get(_) => f.write_str("get"),
-        }
-    }
 }

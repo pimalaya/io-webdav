@@ -43,8 +43,6 @@
 //! println!("{} calendars", calendars.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeSet, string::ToString};
 
 use log::trace;
@@ -86,7 +84,7 @@ impl WebdavCoroutine for ListCalendars {
     type Return = Result<BTreeSet<Calendar>, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("list-calendars: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Propfind(propfind) => {
                 let multistatus = webdav_try!(propfind, arg);
@@ -127,12 +125,4 @@ fn from_entry(entry: &ResponseEntry) -> Option<Calendar> {
 #[derive(Debug)]
 enum State {
     Propfind(Propfind),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Propfind(_) => f.write_str("propfind"),
-        }
-    }
 }

@@ -12,15 +12,15 @@ use alloc::{
     vec::{self, Vec},
 };
 
-use secrecy::SecretString;
+use io_http::{rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic};
 
 /// Authentication scheme used by the WebDAV client.
 ///
 /// Covers the three modes the CalDAV/CardDAV deployments handle in
-/// practice: no auth, HTTP Basic (RFC 7617) and HTTP Bearer (RFC 6750).
-/// Higher-level coroutines never observe the credential directly; they
-/// only see the pre-formatted header value from
-/// [`emit_header`](crate::rfc4918::emit_header).
+/// practice: no auth, HTTP Basic (RFC 7617) and HTTP Bearer (RFC 6750),
+/// reusing the io-http credential types. Higher-level coroutines never
+/// observe the credential directly; they only see the pre-formatted
+/// header value from [`emit_header`](crate::rfc4918::emit_header).
 #[derive(Clone, Debug, Default)]
 pub enum WebdavAuth {
     /// No authentication; no `Authorization` header is emitted.
@@ -28,13 +28,10 @@ pub enum WebdavAuth {
     None,
 
     /// HTTP Basic authentication (RFC 7617).
-    Basic {
-        username: String,
-        password: SecretString,
-    },
+    Basic(HttpAuthBasic),
 
     /// HTTP Bearer authentication (RFC 6750).
-    Bearer { token: SecretString },
+    Bearer(HttpAuthBearer),
 }
 
 /// An XML namespace: its URI plus the preferred prefix used when

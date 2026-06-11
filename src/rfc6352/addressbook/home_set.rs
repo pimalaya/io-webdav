@@ -48,8 +48,6 @@
 //! println!("{home_set:?}");
 //! ```
 
-use core::fmt;
-
 use alloc::string::String;
 
 use log::trace;
@@ -81,6 +79,7 @@ impl AddressbookHomeSet {
     /// Builds a new `addressbook-home-set` discovery coroutine.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, principal_path: &str) -> Self {
         let request = WebdavRequest::propfind(base_url, auth, user_agent, principal_path)
+            .depth(0)
             .content_type_xml()
             .body(propfind_body(&[ADDRESSBOOK_HOME_SET]));
 
@@ -96,7 +95,7 @@ impl WebdavCoroutine for AddressbookHomeSet {
     type Return = Result<Option<Url>, FollowRedirectsError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("addressbook-home-set: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
@@ -115,12 +114,4 @@ impl WebdavCoroutine for AddressbookHomeSet {
 #[derive(Debug)]
 enum State {
     Send(FollowRedirects),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }

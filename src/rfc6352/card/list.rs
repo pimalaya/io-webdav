@@ -46,8 +46,6 @@
 //! println!("{} cards", cards.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeSet, string::ToString};
 
 use log::trace;
@@ -98,7 +96,7 @@ impl WebdavCoroutine for ListCards {
     type Return = Result<BTreeSet<CardEntry>, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("list-cards: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Report(report) => {
                 let multistatus = webdav_try!(report, arg);
@@ -136,12 +134,4 @@ fn from_entry(entry: &ResponseEntry) -> Option<CardEntry> {
 #[derive(Debug)]
 enum State {
     Report(Report),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Report(_) => f.write_str("report"),
-        }
-    }
 }

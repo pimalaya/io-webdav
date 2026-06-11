@@ -50,8 +50,6 @@
 //! println!("{} bytes, keep-alive: {}", ok.body.len(), ok.keep_alive);
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec::Vec};
 
 use io_http::{
@@ -99,8 +97,6 @@ impl SendRaw {
     /// Builds a new `SendRaw` coroutine. `request` must already carry
     /// its body bytes (via [`crate::rfc4918::request::WebdavRequest::body`]).
     pub fn new(request: HttpRequest) -> Self {
-        trace!("send WebDAV request to {}", request.url);
-
         Self {
             state: State::Send(Http11Send::new(request)),
         }
@@ -112,7 +108,7 @@ impl WebdavCoroutine for SendRaw {
     type Return = Result<SendOk<Vec<u8>>, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
-        trace!("send: {}", self.state);
+        trace!("sending request");
         match &mut self.state {
             State::Send(send) => {
                 let out = match send.resume(arg) {
@@ -157,12 +153,4 @@ impl WebdavCoroutine for SendRaw {
 #[derive(Debug)]
 enum State {
     Send(Http11Send),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }
