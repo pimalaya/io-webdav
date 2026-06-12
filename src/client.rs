@@ -11,8 +11,9 @@
 //! and handles `https://` URLs end-to-end via
 //! [`pimalaya_stream::std::stream::StreamStd`].
 //!
-//! Discovery flows top-down: [`well_known_caldav`] / [`well_known_carddav`]
-//! resolve the DAV root; [`current_user_principal`] resolves the principal URL;
+//! Discovery flows top-down from the configured [`base_url`] (the DAV
+//! context root, resolved by pimconf's RFC 6764 discovery upstream):
+//! [`current_user_principal`] resolves the principal URL;
 //! [`calendar_home_set`] / [`addressbook_home_set`] resolve the per-RFC
 //! home-set URL. Each step caches its result; higher-level methods return
 //! [`MissingPrincipal`] / [`MissingCalendarHomeSet`] /
@@ -28,8 +29,6 @@
 //! [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
 //! [`new`]: WebdavClientStd::new
 //! [`connect`]: WebdavClientStd::connect
-//! [`well_known_caldav`]: WebdavClientStd::well_known_caldav
-//! [`well_known_carddav`]: WebdavClientStd::well_known_carddav
 //! [`current_user_principal`]: WebdavClientStd::current_user_principal
 //! [`MissingPrincipal`]: WebdavClientStdError::MissingPrincipal
 //! [`MissingCalendarHomeSet`]: WebdavClientStdError::MissingCalendarHomeSet
@@ -47,7 +46,6 @@ use alloc::{
 
 use std::io::{self, Read, Write};
 
-use log::trace;
 #[cfg(any(
     feature = "rustls-aws",
     feature = "rustls-ring",
@@ -84,7 +82,6 @@ use crate::{
             delete::DeleteCard, list::ListCards, read::ReadCard, update::UpdateCard,
         },
     },
-    rfc6764::well_known::{WellKnown, WellKnownError, WellKnownKind},
 };
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
@@ -98,8 +95,6 @@ pub enum WebdavClientStdError {
     Send(#[from] SendError),
     #[error(transparent)]
     FollowRedirects(#[from] FollowRedirectsError),
-    #[error(transparent)]
-    WellKnown(#[from] WellKnownError),
 
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -345,28 +340,7 @@ impl WebdavClientStd {
         }
     }
 
-    // ---- Discovery (RFC 6764 + RFC 5397 + per-RFC home-set) -------------
-
-    /// Runs RFC 6764 `.well-known/caldav` discovery and returns the
-    /// redirect target URL. Does not mutate [`base_url`]; the caller
-    /// decides whether to rebuild the client against the new authority.
-    ///
-    /// [`base_url`]: WebdavClientStd::base_url
-    pub fn well_known_caldav(&mut self) -> Result<Url, WebdavClientStdError> {
-        self.run_well_known(WellKnownKind::Caldav)
-    }
-
-    /// Runs RFC 6764 `.well-known/carddav` discovery.
-    pub fn well_known_carddav(&mut self) -> Result<Url, WebdavClientStdError> {
-        self.run_well_known(WellKnownKind::Carddav)
-    }
-
-    fn run_well_known(&mut self, kind: WellKnownKind) -> Result<Url, WebdavClientStdError> {
-        trace!("resolve well-known {kind:?}");
-        let coroutine = WellKnown::new(&self.base_url, &self.auth, &self.user_agent, kind);
-        let out = self.run(coroutine)?;
-        Ok(out.url)
-    }
+    // ---- Discovery (RFC 5397 + per-RFC home-set) ------------------------
 
     /// Discovers the current user principal URL (RFC 5397) and caches
     /// it in [`principal_url`]. Subsequent calls return the cached
