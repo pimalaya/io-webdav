@@ -6,6 +6,12 @@
 //! discovery + list subset that providers without `MKCALENDAR` support
 //! (e.g. Google) still satisfy.
 //!
+//! Providers that forbid collection creation (iCloud rejects both
+//! `MKCALENDAR` and `MKCOL` with 403, exposing only the collections it
+//! provisions) get [`caldav_items`] / [`carddav_cards`]: item / card
+//! CRUD inside a caller-named existing collection, with no collection
+//! create or delete.
+//!
 //! A fresh stream is opened before every request, so the flows do not
 //! depend on the server honouring HTTP keep-alive across operations.
 //!
@@ -242,6 +248,87 @@ pub fn caldav_readonly(base_url: &str, auth: WebdavAuth) {
     );
 }
 
+/// CalDAV item CRUD inside the existing calendar `calendar_id`, for
+/// providers that reject `MKCALENDAR` (e.g. iCloud): discover, confirm
+/// the calendar is present, then create/list/read/update/delete an
+/// event. The collection itself is never created nor deleted.
+pub fn caldav_items(base_url: &str, auth: WebdavAuth, calendar_id: &str) {
+    let _ = env_logger::try_init();
+    let base = Url::parse(base_url).expect("parse base URL");
+    let mut client = WebdavClientStd::new(connect(&base), auth, base.clone());
+
+    // ── DISCOVERY ─────────────────────────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let principal = client
+        .current_user_principal()
+        .expect("current-user-principal discovery");
+    assert!(!principal.path().is_empty(), "empty principal path");
+
+    client.set_stream(connect(&base));
+    let home = client
+        .calendar_home_set()
+        .expect("calendar-home-set discovery");
+    assert!(!home.path().is_empty(), "empty calendar home-set path");
+
+    // ── PROPFIND list (confirm the target calendar exists) ──────────────────────
+
+    client.set_stream(connect(&base));
+    let calendars = client.list_calendars().expect("list calendars");
+    assert!(
+        calendars.iter().any(|c| c.id == calendar_id),
+        "target calendar {calendar_id} missing from home-set"
+    );
+
+    let item_id = format!("event-{}", unix_millis());
+
+    // ── PUT create event ────────────────────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let created = client
+        .create_item(
+            calendar_id,
+            &item_id,
+            build_ics(&item_id, "io-webdav event").into_bytes(),
+        )
+        .expect("create item");
+    assert_eq!(created.id, item_id, "create item id mismatch");
+
+    // ── REPORT list items (verify present) ──────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let items = client.list_items(calendar_id, "").expect("list items");
+    assert!(
+        items.iter().any(|i| i.id == item_id),
+        "created event {item_id} missing from REPORT"
+    );
+
+    // ── GET read item ───────────────────────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let body = client.read_item(calendar_id, &item_id).expect("read item");
+    assert!(!body.data.is_empty(), "read item returned empty body");
+
+    // ── PUT update item ─────────────────────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    client
+        .update_item(
+            calendar_id,
+            &item_id,
+            build_ics(&item_id, "io-webdav event (updated)").into_bytes(),
+            body.etag.as_deref(),
+        )
+        .expect("update item");
+
+    // ── CLEANUP: delete the item only ───────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    client
+        .delete_item(calendar_id, &item_id, None)
+        .expect("delete item");
+}
+
 /// Full CardDAV CRUD flow against the DAV root at `base_url`.
 pub fn carddav(base_url: &str, auth: WebdavAuth) {
     let _ = env_logger::try_init();
@@ -338,6 +425,90 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
     client
         .delete_addressbook(&book_id)
         .expect("delete addressbook");
+}
+
+/// CardDAV card CRUD inside the existing addressbook `addressbook_id`,
+/// for providers that reject `MKCOL` (e.g. iCloud, which exposes a
+/// single fixed `card` addressbook): discover, confirm the addressbook
+/// is present, then create/list/read/update/delete a vCard. The
+/// collection itself is never created nor deleted.
+pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
+    let _ = env_logger::try_init();
+    let base = Url::parse(base_url).expect("parse base URL");
+    let mut client = WebdavClientStd::new(connect(&base), auth, base.clone());
+
+    // ── DISCOVERY ─────────────────────────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let principal = client
+        .current_user_principal()
+        .expect("current-user-principal discovery");
+    assert!(!principal.path().is_empty(), "empty principal path");
+
+    client.set_stream(connect(&base));
+    let home = client
+        .addressbook_home_set()
+        .expect("addressbook-home-set discovery");
+    assert!(!home.path().is_empty(), "empty addressbook home-set path");
+
+    // ── PROPFIND list (confirm the target addressbook exists) ───────────────────
+
+    client.set_stream(connect(&base));
+    let addressbooks = client.list_addressbooks().expect("list addressbooks");
+    assert!(
+        addressbooks.iter().any(|b| b.id == addressbook_id),
+        "target addressbook {addressbook_id} missing from home-set"
+    );
+
+    let card_id = format!("card-{}", unix_millis());
+
+    // ── PUT create card ─────────────────────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let created = client
+        .create_card(
+            addressbook_id,
+            &card_id,
+            build_vcf(&card_id, "io-webdav Test").into_bytes(),
+        )
+        .expect("create card");
+    assert_eq!(created.id, card_id, "create card id mismatch");
+
+    // ── REPORT list cards (verify present) ──────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let cards = client.list_cards(addressbook_id).expect("list cards");
+    assert!(
+        cards.iter().any(|c| c.id == card_id),
+        "created card {card_id} missing from REPORT"
+    );
+
+    // ── GET read card ───────────────────────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let body = client
+        .read_card(addressbook_id, &card_id)
+        .expect("read card");
+    assert!(!body.data.is_empty(), "read card returned empty body");
+
+    // ── PUT update card ─────────────────────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    client
+        .update_card(
+            addressbook_id,
+            &card_id,
+            build_vcf(&card_id, "io-webdav Test (updated)").into_bytes(),
+            body.etag.as_deref(),
+        )
+        .expect("update card");
+
+    // ── CLEANUP: delete the card only ───────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    client
+        .delete_card(addressbook_id, &card_id, None)
+        .expect("delete card");
 }
 
 /// Builds a minimal single-event iCalendar object (CRLF line endings,
