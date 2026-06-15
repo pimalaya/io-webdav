@@ -44,7 +44,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use io_http::{rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic};
+use io_http::{
+    coroutine::{HttpCoroutine, HttpCoroutineState, HttpYield},
+    rfc6750::bearer::HttpAuthBearer,
+    rfc7617::basic::HttpAuthBasic,
+    rfc8615::well_known::Http11WellKnown,
+};
 use io_webdav::{
     client::WebdavClientStd, rfc4791::calendar::Calendar, rfc4918::WebdavAuth,
     rfc6352::addressbook::Addressbook,
@@ -246,6 +251,78 @@ pub fn caldav_readonly(base_url: &str, auth: WebdavAuth) {
         !calendars.is_empty(),
         "expected at least one calendar in the home-set"
     );
+}
+
+/// Read-only CardDAV flow for providers without `MKCOL` support (e.g.
+/// Google): discover the home-set and list addressbooks.
+pub fn carddav_readonly(base_url: &str, auth: WebdavAuth) {
+    let _ = env_logger::try_init();
+    let base = Url::parse(base_url).expect("parse base URL");
+    let mut client = WebdavClientStd::new(connect(&base), auth, base.clone());
+
+    client.set_stream(connect(&base));
+    let principal = client
+        .current_user_principal()
+        .expect("current-user-principal discovery");
+    assert!(!principal.path().is_empty(), "empty principal path");
+
+    client.set_stream(connect(&base));
+    let home = client
+        .addressbook_home_set()
+        .expect("addressbook-home-set discovery");
+    assert!(!home.path().is_empty(), "empty addressbook home-set path");
+
+    client.set_stream(connect(&base));
+    let addressbooks = client.list_addressbooks().expect("list addressbooks");
+    assert!(
+        !addressbooks.is_empty(),
+        "expected at least one addressbook in the home-set"
+    );
+}
+
+/// Resolves Google's CardDAV context root by issuing an authenticated
+/// PROPFIND to `https://www.googleapis.com/.well-known/carddav` and
+/// returning the `Location` it 301-redirects to.
+///
+/// Google's `.well-known` only redirects for an authenticated PROPFIND;
+/// a plain GET (or an unauthenticated request) 404s. So this reuses the
+/// HTTP well-known request builder, swaps the method to PROPFIND, and
+/// adds the OAuth2 bearer.
+pub fn google_carddav_base(token: &str) -> Url {
+    let origin = "https://www.googleapis.com/";
+
+    let mut request =
+        Http11WellKnown::prepare_request(origin, "carddav").expect("prepare well-known request");
+    request.method = "PROPFIND".into();
+    let request = request
+        .header(
+            "Authorization",
+            HttpAuthBearer::new(token).to_authorization(),
+        )
+        .header("Depth", "0");
+
+    let mut stream = connect(&Url::parse(origin).expect("parse well-known origin"));
+    let mut coroutine = Http11WellKnown::new(request);
+    let mut buf = [0u8; 8 * 1024];
+    let mut arg: Option<&[u8]> = None;
+
+    let output = loop {
+        match coroutine.resume(arg.take()) {
+            HttpCoroutineState::Complete(Ok(output)) => break output,
+            HttpCoroutineState::Complete(Err(err)) => panic!("well-known PROPFIND failed: {err}"),
+            HttpCoroutineState::Yielded(HttpYield::WantsWrite(bytes)) => {
+                stream.write_all(&bytes).expect("write well-known request");
+            }
+            HttpCoroutineState::Yielded(HttpYield::WantsRead) => {
+                let n = stream.read(&mut buf).expect("read well-known response");
+                arg = Some(&buf[..n]);
+            }
+        }
+    };
+
+    output
+        .redirect_url
+        .expect("well-known should 301 to a context root")
 }
 
 /// CalDAV item CRUD inside the existing calendar `calendar_id`, for

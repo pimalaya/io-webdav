@@ -82,7 +82,15 @@ pub fn property_set(addressbook: &Addressbook) -> Vec<(Property, &str)> {
     set
 }
 
-/// Builds a CardDAV `addressbook-query` REPORT body requesting `props`.
+/// Builds a CardDAV `addressbook-query` REPORT body requesting `props`,
+/// with a match-all filter.
+///
+/// RFC 6352 §8.6 requires the `C:filter` element; an empty `allof`
+/// filter matches every card (an empty conjunction is true). Strict
+/// servers (Google) reject a missing filter with HTTP 400 and treat an
+/// empty `anyof` (the schema default) as matching nothing, so `allof`
+/// is the portable match-all form.
 pub fn addressbook_query_body(props: &[Property]) -> Vec<u8> {
-    report_query_body(ADDRESSBOOK_QUERY, &[CARDDAV], props, "")
+    let filter = "<C:filter test=\"allof\"></C:filter>";
+    report_query_body(ADDRESSBOOK_QUERY, &[CARDDAV], props, filter)
 }
