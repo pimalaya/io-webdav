@@ -52,13 +52,11 @@ use crate::{
     coroutine::*,
     rfc4791::calendar::{
         types::Calendar,
-        utils::{
-            CALENDAR, CALENDAR_COLOR, CALENDAR_DESCRIPTION, CALENDAR_TIMEZONE, GETCTAG, LIST_PROPS,
-        },
+        utils::{CALENDAR, CALENDAR_COLOR, CALENDAR_DESCRIPTION, CALENDAR_TIMEZONE, LIST_PROPS},
     },
     rfc4918::{
-        DISPLAYNAME, RESOURCETYPE, ResponseEntry, WebdavAuth, propfind::Propfind, send::SendError,
-        trace_unrecognized,
+        DISPLAYNAME, GETCTAG, RESOURCETYPE, ResponseEntry, WebdavAuth, propfind::Propfind,
+        send::SendError, trace_unrecognized,
     },
     webdav_try,
 };

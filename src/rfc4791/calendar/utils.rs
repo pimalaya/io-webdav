@@ -5,18 +5,15 @@ use alloc::{format, string::String, vec::Vec};
 
 use crate::{
     rfc4791::calendar::types::Calendar,
-    rfc4918::{DISPLAYNAME, Namespace, Property, RESOURCETYPE, prop_set_body, report_query_body},
+    rfc4918::{
+        DISPLAYNAME, GETCTAG, Namespace, Property, RESOURCETYPE, prop_set_body, report_query_body,
+    },
 };
 
 /// CalDAV namespace (RFC 4791 §4).
 pub const CALDAV: Namespace = Namespace {
     uri: "urn:ietf:params:xml:ns:caldav",
     prefix: "C",
-};
-/// CalendarServer extension namespace (ctag).
-pub const CALENDARSERVER: Namespace = Namespace {
-    uri: "http://calendarserver.org/ns/",
-    prefix: "CS",
 };
 /// inf-it extension namespace (calendar color).
 pub const INFIT: Namespace = Namespace {
@@ -53,11 +50,6 @@ pub const CALENDAR_DATA: Property = Property {
 pub const CALENDAR_COLOR: Property = Property {
     ns: INFIT,
     local: "calendar-color",
-};
-/// `CS:getctag` (CalendarServer extension).
-pub const GETCTAG: Property = Property {
-    ns: CALENDARSERVER,
-    local: "getctag",
 };
 /// `C:calendar-query` REPORT root (RFC 4791 §7.8).
 pub const CALENDAR_QUERY: Property = Property {

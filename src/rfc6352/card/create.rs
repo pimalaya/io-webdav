@@ -56,6 +56,7 @@
 use core::mem;
 
 use alloc::{
+    format,
     string::{String, ToString},
     vec::Vec,
 };
@@ -92,7 +93,7 @@ impl CreateCard {
         id: &str,
         vcard: Vec<u8>,
     ) -> Self {
-        let path = join_path(addressbook_path, id);
+        let path = join_path(addressbook_path, &format!("{id}.vcf"));
         let put = Put::new(PutArgs {
             base_url,
             auth,

@@ -32,6 +32,15 @@ pub const DAV: Namespace = Namespace {
     uri: "DAV:",
     prefix: "",
 };
+/// CalendarServer extension namespace (ctag); protocol-neutral, used by
+/// both CalDAV and CardDAV servers.
+pub const CALENDARSERVER: Namespace = Namespace {
+    uri: "http://calendarserver.org/ns/",
+    prefix: "CS",
+};
+
+/// Standard XML declaration prepended to every request body.
+pub const XML_DECL: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
 
 // --- generic DAV property vocabulary
 
@@ -49,6 +58,17 @@ pub const RESOURCETYPE: Property = Property {
 pub const GETETAG: Property = Property {
     ns: DAV,
     local: "getetag",
+};
+/// `DAV:sync-token` (RFC 6578 §4), the collection checkpoint property.
+pub const SYNC_TOKEN: Property = Property {
+    ns: DAV,
+    local: "sync-token",
+};
+/// `CS:getctag` (CalendarServer extension); bumped on every change to
+/// the collection.
+pub const GETCTAG: Property = Property {
+    ns: CALENDARSERVER,
+    local: "getctag",
 };
 
 /// `DAV:propertyupdate` PROPPATCH request root (RFC 4918 §9.2).
@@ -177,12 +197,15 @@ pub fn report_query_body(
 /// Parses a `multistatus` body into vocabulary-agnostic entries.
 ///
 /// Matching is by local name (namespace prefixes are ignored), and only
-/// properties under 2xx `propstat`s are kept. Malformed input yields
-/// whatever was parsed before the error.
+/// properties under 2xx `propstat`s are kept. Responses without any 2xx
+/// propstat still survive as entries with empty props, carrying their
+/// response-level status (`sync-collection` removal and truncation
+/// rows). Malformed input yields whatever was parsed before the error.
 pub fn parse_multistatus(xml: &str) -> Multistatus {
     let mut reader = Reader::from_str(xml);
 
     let mut responses: Vec<ResponseEntry> = Vec::new();
+    let mut sync_token: Option<String> = None;
     // (local name, accumulated descendant text, direct child names)
     let mut stack: Vec<(String, String, Vec<String>)> = Vec::new();
     let mut response: Option<ResponseEntry> = None;
@@ -263,7 +286,18 @@ pub fn parse_multistatus(xml: &str) -> Multistatus {
                         propstat_ok = None;
                     }
                     "status" if parent == Some("propstat") => {
-                        propstat_ok = Some(text.contains(" 2"));
+                        propstat_ok = Some(status_code(&text).is_some_and(|code| code / 100 == 2));
+                    }
+                    "status" if parent == Some("response") => {
+                        if let Some(entry) = response.as_mut() {
+                            entry.status = status_code(&text);
+                        }
+                    }
+                    "sync-token" if parent == Some("multistatus") => {
+                        let text = text.trim();
+                        if !text.is_empty() {
+                            sync_token = Some(text.to_string());
+                        }
                     }
                     "href" if parent == Some("response") => {
                         if let Some(entry) = response.as_mut() {
@@ -287,7 +321,10 @@ pub fn parse_multistatus(xml: &str) -> Multistatus {
         }
     }
 
-    Multistatus { responses }
+    Multistatus {
+        responses,
+        sync_token,
+    }
 }
 
 // --- HTTP plumbing
@@ -360,7 +397,11 @@ pub fn trace_unrecognized(entry: &ResponseEntry, known: &[Property]) {
 
 // --- private helpers
 
-const XML_DECL: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
+/// Extracts the numeric code out of an HTTP status line
+/// (e.g. `HTTP/1.1 404 Not Found`).
+fn status_code(text: &str) -> Option<u16> {
+    text.split_whitespace().nth(1)?.parse().ok()
+}
 
 /// Collects `DAV:` plus `extra` plus every property namespace.
 fn namespaces(extra: &[Namespace], props: &[Property]) -> Vec<Namespace> {
@@ -490,6 +531,48 @@ mod tests {
 
         // 404 propstat is ignored
         assert_eq!(ms.responses[1].text(DISPLAYNAME), None);
+    }
+
+    #[test]
+    fn parse_multistatus_reads_sync_collection_rows() {
+        let xml = r#"<?xml version="1.0"?>
+        <d:multistatus xmlns:d="DAV:">
+          <d:response>
+            <d:href>/dav/addressbooks/contacts/changed.vcf</d:href>
+            <d:propstat>
+              <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status>
+            </d:propstat>
+          </d:response>
+          <d:response>
+            <d:href>/dav/addressbooks/contacts/removed.vcf</d:href>
+            <d:status>HTTP/1.1 404 Not Found</d:status>
+          </d:response>
+          <d:response>
+            <d:href>/dav/addressbooks/contacts/</d:href>
+            <d:status>HTTP/1.1 507 Insufficient Storage</d:status>
+          </d:response>
+          <d:sync-token>http://example.com/ns/sync/1234</d:sync-token>
+        </d:multistatus>"#;
+
+        let ms = parse_multistatus(xml);
+        assert_eq!(
+            ms.sync_token.as_deref(),
+            Some("http://example.com/ns/sync/1234")
+        );
+        assert_eq!(ms.responses.len(), 3);
+
+        let changed = &ms.responses[0];
+        assert_eq!(changed.status, None);
+        assert_eq!(changed.text(GETETAG), Some("\"etag-1\""));
+
+        let removed = &ms.responses[1];
+        assert_eq!(removed.status, Some(404));
+        assert!(removed.props.is_empty());
+
+        let truncated = &ms.responses[2];
+        assert_eq!(truncated.status, Some(507));
+        assert!(truncated.props.is_empty());
     }
 
     #[test]

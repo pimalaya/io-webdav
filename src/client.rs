@@ -68,8 +68,8 @@ use crate::{
         },
     },
     rfc4918::{
-        WebdavAuth, coroutine::WebdavRedirectYield, follow_redirects::FollowRedirectsError,
-        send::SendError,
+        GETETAG, WebdavAuth, coroutine::WebdavRedirectYield,
+        follow_redirects::FollowRedirectsError, send::SendError,
     },
     rfc5397::current_user_principal::CurrentUserPrincipal,
     rfc6352::{
@@ -78,10 +78,12 @@ use crate::{
             home_set::AddressbookHomeSet, list::ListAddressbooks, update::UpdateAddressbook,
         },
         card::{
-            CardBody, CardEntry, CreateCardOk, UpdateCardOk, create::CreateCard,
-            delete::DeleteCard, list::ListCards, read::ReadCard, update::UpdateCard,
+            CardBody, CardEntry, CardRef, CreateCardOk, UpdateCardOk, create::CreateCard,
+            delete::DeleteCard, enumerate::EnumCards, list::ListCards, multiget::MultigetCards,
+            read::ReadCard, update::UpdateCard,
         },
     },
+    rfc6578::sync_collection::{SyncCollection, SyncCollectionError, SyncDelta},
 };
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
@@ -95,6 +97,8 @@ pub enum WebdavClientStdError {
     Send(#[from] SendError),
     #[error(transparent)]
     FollowRedirects(#[from] FollowRedirectsError),
+    #[error(transparent)]
+    SyncCollection(#[from] SyncCollectionError),
 
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -655,6 +659,50 @@ impl WebdavClientStd {
     ) -> Result<BTreeSet<CardEntry>, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
         let coroutine = ListCards::new(&self.base_url, &self.auth, &self.user_agent, &path);
+        self.run(coroutine)
+    }
+
+    /// Enumerates card references (id plus ETag, no bodies) inside
+    /// `addressbook_id`.
+    pub fn enum_cards(
+        &mut self,
+        addressbook_id: &str,
+    ) -> Result<BTreeSet<CardRef>, WebdavClientStdError> {
+        let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
+        let coroutine = EnumCards::new(&self.base_url, &self.auth, &self.user_agent, &path);
+        self.run(coroutine)
+    }
+
+    /// Batch-fetches cards by id inside `addressbook_id` in a single
+    /// round-trip.
+    pub fn multiget_cards(
+        &mut self,
+        addressbook_id: &str,
+        ids: &[&str],
+    ) -> Result<Vec<CardEntry>, WebdavClientStdError> {
+        let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
+        let coroutine =
+            MultigetCards::new(&self.base_url, &self.auth, &self.user_agent, &path, ids);
+        self.run(coroutine)
+    }
+
+    /// Runs an incremental `sync-collection` REPORT (RFC 6578) against
+    /// `addressbook_id`, requesting ETags only. Pass [`None`] as
+    /// `sync_token` for an initial sync.
+    pub fn sync_cards(
+        &mut self,
+        addressbook_id: &str,
+        sync_token: Option<&str>,
+    ) -> Result<SyncDelta, WebdavClientStdError> {
+        let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
+        let coroutine = SyncCollection::new(
+            &self.base_url,
+            &self.auth,
+            &self.user_agent,
+            &path,
+            sync_token,
+            &[GETETAG],
+        );
         self.run(coroutine)
     }
 

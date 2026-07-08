@@ -4,7 +4,10 @@
 use alloc::{format, string::String, vec::Vec};
 
 use crate::{
-    rfc4918::{DISPLAYNAME, Namespace, Property, RESOURCETYPE, report_query_body},
+    rfc4918::{
+        DISPLAYNAME, GETCTAG, Namespace, Property, RESOURCETYPE, SYNC_TOKEN, escape_text,
+        report_query_body,
+    },
     rfc6352::addressbook::types::Addressbook,
 };
 
@@ -49,6 +52,11 @@ pub const ADDRESSBOOK_QUERY: Property = Property {
     ns: CARDDAV,
     local: "addressbook-query",
 };
+/// `C:addressbook-multiget` REPORT root (RFC 6352 §8.7).
+pub const ADDRESSBOOK_MULTIGET: Property = Property {
+    ns: CARDDAV,
+    local: "addressbook-multiget",
+};
 
 /// Properties requested when listing addressbooks.
 pub const LIST_PROPS: &[Property] = &[
@@ -56,6 +64,8 @@ pub const LIST_PROPS: &[Property] = &[
     DISPLAYNAME,
     ADDRESSBOOK_DESCRIPTION,
     ADDRESSBOOK_COLOR,
+    GETCTAG,
+    SYNC_TOKEN,
 ];
 
 /// Joins a home-set path with an addressbook id into a collection path
@@ -93,4 +103,14 @@ pub fn property_set(addressbook: &Addressbook) -> Vec<(Property, &str)> {
 pub fn addressbook_query_body(props: &[Property]) -> Vec<u8> {
     let filter = "<C:filter test=\"allof\"></C:filter>";
     report_query_body(ADDRESSBOOK_QUERY, &[CARDDAV], props, filter)
+}
+
+/// Builds a CardDAV `addressbook-multiget` REPORT body (RFC 6352 §8.7)
+/// requesting `props` for each given href.
+pub fn addressbook_multiget_body(hrefs: &[String], props: &[Property]) -> Vec<u8> {
+    let mut fragment = String::new();
+    for href in hrefs {
+        fragment.push_str(&format!("<href>{}</href>", escape_text(href)));
+    }
+    report_query_body(ADDRESSBOOK_MULTIGET, &[CARDDAV], props, &fragment)
 }

@@ -1,4 +1,4 @@
-//! `delete-card` coroutine: `DELETE` a card by id.
+//! `delete-card` coroutine: `DELETE` a card by its resource name.
 //!
 //! Supports the optional `If-Match` precondition so callers can gate
 //! the deletion on the last-known ETag (RFC 9110 §13.1.1).
@@ -71,16 +71,17 @@ pub struct DeleteCard {
 }
 
 impl DeleteCard {
-    /// Builds a new `delete-card` coroutine.
+    /// Builds a new `delete-card` coroutine. `card_uri` is the resource
+    /// name as the server returned it (`CardRef::uri`).
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         addressbook_path: &str,
-        card_id: &str,
+        card_uri: &str,
         if_match: Option<&str>,
     ) -> Self {
-        let path = join_path(addressbook_path, card_id);
+        let path = join_path(addressbook_path, card_uri);
         Self {
             state: State::Delete(Delete::new(base_url, auth, user_agent, &path, if_match)),
         }

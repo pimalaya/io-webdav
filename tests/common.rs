@@ -29,7 +29,11 @@
 //!   → DELETE collection   (cleanup)
 //! ```
 //!
-//! The full CardDAV flow mirrors it for addressbooks and vCards.
+//! The full CardDAV flow mirrors it for addressbooks and vCards, and
+//! additionally exercises the sync read-side: etag-only enumeration,
+//! `addressbook-multiget` batch fetch, and an initial plus incremental
+//! `sync-collection` REPORT (RFC 6578) that must report the deleted
+//! card as vanished.
 //!
 //! Each integration test compiles this module on its own and only
 //! exercises a subset of these helpers, so the rest end up flagged as
@@ -473,6 +477,38 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
         "created card {card_id} missing from REPORT"
     );
 
+    // ── REPORT enum card refs (etag-only spine) ─────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let refs = client.enum_cards(&book_id).expect("enum cards");
+    assert!(
+        refs.iter().any(|r| r.id == card_id),
+        "created card {card_id} missing from etag-only enumeration"
+    );
+
+    // ── REPORT multiget (batch bodies) ──────────────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let fetched = client
+        .multiget_cards(&book_id, &[card_id.as_str()])
+        .expect("multiget cards");
+    assert!(
+        fetched
+            .iter()
+            .any(|c| c.id == card_id && !c.data.is_empty()),
+        "multiget returned no body for card {card_id}"
+    );
+
+    // ── REPORT sync-collection (initial sync) ───────────────────────────────────
+
+    client.set_stream(connect(&base));
+    let initial = client.sync_cards(&book_id, None).expect("initial sync");
+    assert!(
+        initial.changed.iter().any(|c| c.href.contains(&card_id)),
+        "created card {card_id} missing from initial sync"
+    );
+    let sync_token = initial.sync_token.expect("initial sync returned no token");
+
     // ── GET read card ───────────────────────────────────────────────────────────
 
     client.set_stream(connect(&base));
@@ -497,6 +533,17 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
     client
         .delete_card(&book_id, &card_id, None)
         .expect("delete card");
+
+    // ── REPORT sync-collection (incremental sync reports the removal) ───────────
+
+    client.set_stream(connect(&base));
+    let delta = client
+        .sync_cards(&book_id, Some(&sync_token))
+        .expect("incremental sync");
+    assert!(
+        delta.vanished.iter().any(|href| href.contains(&card_id)),
+        "deleted card {card_id} missing from incremental sync removals"
+    );
 
     client.set_stream(connect(&base));
     client

@@ -1,8 +1,10 @@
-//! `list-cards` coroutine: REPORT `addressbook-query` against an
-//! addressbook collection.
+//! `multiget-cards` coroutine: REPORT `addressbook-multiget` against an
+//! addressbook collection (RFC 6352 §8.7).
 //!
-//! Stays byte-oriented: the vCard payload is returned as raw bytes
-//! and parsed by io-addressbook.
+//! Fetches a batch of card bodies by resource name in a single
+//! round-trip, instead
+//! of one GET per card. Stays byte-oriented: the vCard payload is
+//! returned as raw bytes.
 //!
 //! # Example
 //!
@@ -15,7 +17,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::card::list::ListCards,
+//!     rfc6352::card::multiget::MultigetCards,
 //! };
 //! use url::Url;
 //!
@@ -25,8 +27,13 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine =
-//!     ListCards::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/contacts/");
+//! let mut coroutine = MultigetCards::new(
+//!     &base_url,
+//!     &auth,
+//!     "io-webdav",
+//!     "/dav/addressbooks/contacts/",
+//!     &["alice", "bob"],
+//! );
 //! let mut arg = None;
 //!
 //! let cards = loop {
@@ -46,7 +53,7 @@
 //! println!("{} cards", cards.len());
 //! ```
 
-use alloc::collections::BTreeSet;
+use alloc::{string::String, vec::Vec};
 
 use log::trace;
 use url::Url;
@@ -55,41 +62,49 @@ use crate::{
     coroutine::*,
     rfc4918::{WebdavAuth, report::Report, send::SendError},
     rfc6352::{
-        addressbook::addressbook_query_body,
+        addressbook::addressbook_multiget_body,
         card::{
             types::CardEntry,
-            utils::{CARD_PROPS, card_from_entry},
+            utils::{CARD_PROPS, card_from_entry, join_path},
         },
     },
     webdav_try,
 };
 
-/// Coroutine that lists cards inside an addressbook via REPORT
-/// `addressbook-query`.
+/// Coroutine that batch-fetches cards by resource name via REPORT
+/// `addressbook-multiget`.
 #[derive(Debug)]
-pub struct ListCards {
+pub struct MultigetCards {
     state: State,
 }
 
-impl ListCards {
-    /// Builds a new `list-cards` coroutine.
+impl MultigetCards {
+    /// Builds a new `multiget-cards` coroutine fetching each card of
+    /// `uris` (resource names as the server returned them) inside
+    /// `addressbook_path`. The `Depth` header is pinned to 0: RFC 6352
+    /// §8.7 only defines the report for that value.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         addressbook_path: &str,
+        uris: &[&str],
     ) -> Self {
-        let body = addressbook_query_body(CARD_PROPS);
-        let report = Report::new(base_url, auth, user_agent, addressbook_path, 1, body);
+        let hrefs: Vec<String> = uris
+            .iter()
+            .map(|uri| join_path(addressbook_path, uri))
+            .collect();
+        let body = addressbook_multiget_body(&hrefs, CARD_PROPS);
+        let report = Report::new(base_url, auth, user_agent, addressbook_path, 0, body);
         Self {
             state: State::Report(report),
         }
     }
 }
 
-impl WebdavCoroutine for ListCards {
+impl WebdavCoroutine for MultigetCards {
     type Yield = WebdavYield;
-    type Return = Result<BTreeSet<CardEntry>, SendError>;
+    type Return = Result<Vec<CardEntry>, SendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");

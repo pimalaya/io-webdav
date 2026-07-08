@@ -51,7 +51,7 @@
 //!     }
 //! };
 //!
-//! println!("updated {} (etag {:?})", updated.id, updated.etag);
+//! println!("updated {} (etag {:?})", updated.uri, updated.etag);
 //! ```
 
 use core::mem;
@@ -79,22 +79,23 @@ use crate::{
 /// Coroutine that updates a card.
 #[derive(Debug)]
 pub struct UpdateCard {
-    id: String,
+    uri: String,
     state: State,
 }
 
 impl UpdateCard {
-    /// Builds a new `update-card` coroutine.
+    /// Builds a new `update-card` coroutine. `uri` is the resource name
+    /// as the server returned it (`CardEntry::uri`).
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         addressbook_path: &str,
-        id: &str,
+        uri: &str,
         vcard: Vec<u8>,
         if_match: Option<&str>,
     ) -> Self {
-        let path = join_path(addressbook_path, id);
+        let path = join_path(addressbook_path, uri);
         let put = Put::new(PutArgs {
             base_url,
             auth,
@@ -106,7 +107,7 @@ impl UpdateCard {
             if_none_match: None,
         });
         Self {
-            id: id.to_string(),
+            uri: uri.to_string(),
             state: State::Put(put),
         }
     }
@@ -122,8 +123,8 @@ impl WebdavCoroutine for UpdateCard {
             State::Put(put) => {
                 let SendOk { response, .. } = webdav_try!(put, arg);
                 let etag = read_etag(&response);
-                let id = mem::take(&mut self.id);
-                WebdavCoroutineState::Complete(Ok(UpdateCardOk { id, etag }))
+                let uri = mem::take(&mut self.uri);
+                WebdavCoroutineState::Complete(Ok(UpdateCardOk { uri, etag }))
             }
         }
     }

@@ -31,6 +31,7 @@ This library is composed of 3 feature-gated layers:
   - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
 - **CalDAV** calendars and items
 - **CardDAV** addressbooks and cards
+- **Incremental sync**: `sync-collection` REPORT (RFC 6578), `addressbook-multiget` batch fetch, ETag-only card enumeration, ctag and sync-token checkpoints
 - **HTTP Auth mechanisms**: `BASIC`, `BEARER`
 
 > [!TIP]
@@ -44,12 +45,14 @@ This library is composed of 3 feature-gated layers:
 | [4791] | CalDAV: calendar collections and calendar object resources (items)                                                    |
 | [5397] | WebDAV current principal: `current-user-principal` discovery                                                          |
 | [6352] | CardDAV: addressbook collections and address object resources (cards)                                                 |
+| [6578] | Collection synchronization: `sync-collection` REPORT, sync tokens                                                     |
 | [6764] | Service discovery: `.well-known/caldav` and `.well-known/carddav` bootstrap                                           |
 
 [4918]: https://www.rfc-editor.org/rfc/rfc4918
 [4791]: https://www.rfc-editor.org/rfc/rfc4791
 [5397]: https://www.rfc-editor.org/rfc/rfc5397
 [6352]: https://www.rfc-editor.org/rfc/rfc6352
+[6578]: https://www.rfc-editor.org/rfc/rfc6578
 [6764]: https://www.rfc-editor.org/rfc/rfc6764
 
 ## Usage

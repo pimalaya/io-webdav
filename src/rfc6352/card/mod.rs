@@ -2,7 +2,9 @@
 
 pub mod create;
 pub mod delete;
+pub mod enumerate;
 pub mod list;
+pub mod multiget;
 pub mod read;
 mod types;
 pub mod update;

@@ -70,7 +70,12 @@ pub struct Property {
 /// (RFC 4918 §14.16).
 #[derive(Clone, Debug, Default)]
 pub struct Multistatus {
+    /// The parsed `<response>` entries.
     pub responses: Vec<ResponseEntry>,
+
+    /// The top-level `DAV:sync-token` returned by a `sync-collection`
+    /// REPORT (RFC 6578 §6.2); [`None`] outside sync responses.
+    pub sync_token: Option<String>,
 }
 
 impl IntoIterator for Multistatus {
@@ -88,6 +93,11 @@ impl IntoIterator for Multistatus {
 pub struct ResponseEntry {
     /// The `<href>` text, as returned by the server.
     pub href: String,
+    /// The response-level `<status>` code, when present. Carries the
+    /// 404 of a `sync-collection` removal row (RFC 6578 §3.4) or the
+    /// 507 of a truncation row (RFC 6578 §3.6); [`None`] on ordinary
+    /// propstat-only responses.
+    pub status: Option<u16>,
     /// Properties gathered from every 2xx `<propstat>` of this response.
     pub props: Vec<PropItem>,
 }

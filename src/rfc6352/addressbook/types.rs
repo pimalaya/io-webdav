@@ -21,4 +21,12 @@ pub struct Addressbook {
     /// Display color (custom inf-it.com extension, widely supported by
     /// CardDAV clients).
     pub color: Option<String>,
+
+    /// Collection change tag (CalendarServer ctag extension); bumped on
+    /// every change to the addressbook.
+    pub ctag: Option<String>,
+
+    /// Collection sync token (RFC 6578 §4), the checkpoint fed back to
+    /// a `sync-collection` REPORT.
+    pub sync_token: Option<String>,
 }

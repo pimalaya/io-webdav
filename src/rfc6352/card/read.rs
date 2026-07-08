@@ -1,4 +1,4 @@
-//! `read-card` coroutine: GET a card by id.
+//! `read-card` coroutine: GET a card by its resource name.
 //!
 //! Stays byte-oriented: returns raw vCard bytes plus the response's
 //! ETag so io-addressbook can run calcard upstream.
@@ -67,15 +67,16 @@ pub struct ReadCard {
 }
 
 impl ReadCard {
-    /// Builds a new `read-card` coroutine.
+    /// Builds a new `read-card` coroutine. `card_uri` is the resource
+    /// name as the server returned it (`CardEntry::uri`).
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         addressbook_path: &str,
-        card_id: &str,
+        card_uri: &str,
     ) -> Self {
-        let path = join_path(addressbook_path, card_id);
+        let path = join_path(addressbook_path, card_uri);
         Self {
             state: State::Get(Get::new(base_url, auth, user_agent, &path)),
         }

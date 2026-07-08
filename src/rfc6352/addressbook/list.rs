@@ -52,8 +52,8 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        DISPLAYNAME, RESOURCETYPE, ResponseEntry, WebdavAuth, propfind::Propfind, send::SendError,
-        trace_unrecognized,
+        DISPLAYNAME, GETCTAG, RESOURCETYPE, ResponseEntry, SYNC_TOKEN, WebdavAuth,
+        propfind::Propfind, send::SendError, trace_unrecognized,
     },
     rfc6352::addressbook::{
         types::Addressbook,
@@ -116,6 +116,8 @@ fn from_entry(entry: &ResponseEntry) -> Option<Addressbook> {
         display_name: entry.text(DISPLAYNAME).map(ToString::to_string),
         description: entry.text(ADDRESSBOOK_DESCRIPTION).map(ToString::to_string),
         color: entry.text(ADDRESSBOOK_COLOR).map(ToString::to_string),
+        ctag: entry.text(GETCTAG).map(ToString::to_string),
+        sync_token: entry.text(SYNC_TOKEN).map(ToString::to_string),
     })
 }
 
