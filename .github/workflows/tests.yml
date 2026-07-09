@@ -8,6 +8,28 @@ jobs:
     uses: pimalaya/nix/.github/workflows/tests.yml@master
     secrets: inherit
 
+  coverage:
+    name: coverage -> codecov
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The LLVM engine (accurate on method chains and generics) needs the
+          # llvm-tools component.
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-tarpaulin
+      - name: Measure coverage (cobertura.xml)
+        # Default features (rustls-ring) already activate every feature-gated
+        # source line; the other TLS backends only swap the implementation.
+        run: cargo tarpaulin --engine llvm --out Xml
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: cobertura.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
   fastmail-tests:
     runs-on: ubuntu-latest
     steps:

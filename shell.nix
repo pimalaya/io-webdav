@@ -7,7 +7,11 @@
 }:
 
 let
-  inherit (pkgs) cargo-deny;
+  inherit (pkgs)
+    cargo-deny
+    cargo-llvm-cov
+    cargo-tarpaulin
+    ;
 
   shell = pimalaya.mkShell {
     inherit
@@ -22,5 +26,7 @@ in
 shell.overrideAttrs (prev: {
   buildInputs = (prev.buildInputs or [ ]) ++ [
     cargo-deny
+    cargo-llvm-cov
+    cargo-tarpaulin
   ];
 })

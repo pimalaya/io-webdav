@@ -1,7 +1,14 @@
-//! Shared helpers for provider integration tests.
+//! Shared helpers for the integration tests.
 //!
-//! Each test drives [`WebdavClientStd`] against a live CalDAV / CardDAV
-//! server. Call [`caldav`] for a full calendar CRUD flow, [`carddav`]
+//! Two families live here. The scripted-coroutine helpers
+//! ([`http_response`] plus the `expect_*` steps) let the offline suites
+//! (rfc4918, rfc4791, rfc5397, rfc6352, rfc6578, client) resume any
+//! I/O-free coroutine against canned HTTP response bytes, following the
+//! io-imap canonical layout. The provider helpers below them run live
+//! CalDAV / CardDAV flows.
+//!
+//! Each provider test drives [`WebdavClientStd`] against a live CalDAV
+//! / CardDAV server. Call [`caldav`] for a full calendar CRUD flow, [`carddav`]
 //! for a full addressbook CRUD flow, or [`caldav_readonly`] for the
 //! discovery + list subset that providers without `MKCALENDAR` support
 //! (e.g. Google) still satisfy.
@@ -41,6 +48,8 @@
 
 #![allow(dead_code)]
 
+use core::fmt::Debug;
+
 use std::{
     io::{Read, Result as IoResult, Write},
     net::TcpStream,
@@ -55,12 +64,151 @@ use io_http::{
     rfc8615::well_known::Http11WellKnown,
 };
 use io_webdav::{
-    client::WebdavClientStd, rfc4791::calendar::Calendar, rfc4918::WebdavAuth,
-    rfc6352::addressbook::Addressbook,
+    client::WebdavClientStd, coroutine::*, rfc4791::calendar::Calendar, rfc4918::WebdavAuth,
+    rfc4918::coroutine::*, rfc6352::addressbook::Addressbook,
 };
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};
 use rustls_platform_verifier::ConfigVerifierExt;
 use url::Url;
+
+// --- scripted-coroutine helpers ---------------------------------------
+
+/// Serializes an HTTP/1.1 response: the given status line, the extra
+/// headers, a correct `Content-Length` and the body.
+pub fn http_response(status: &str, extra: &[(&str, &str)], body: &str) -> Vec<u8> {
+    let mut out = format!("HTTP/1.1 {status}\r\n");
+    for (name, value) in extra {
+        out.push_str(&format!("{name}: {value}\r\n"));
+    }
+    out.push_str(&format!("Content-Length: {}\r\n\r\n{body}", body.len()));
+    out.into_bytes()
+}
+
+/// Shortcut for a 207 Multi-Status [`http_response`] carrying `xml`.
+pub fn multistatus_response(xml: &str) -> Vec<u8> {
+    http_response("207 Multi-Status", &[], xml)
+}
+
+/// Resumes a standard-shape coroutine and returns the written bytes.
+pub fn expect_wants_write<C, R>(cor: &mut C, arg: Option<&[u8]>) -> Vec<u8>
+where
+    C: WebdavCoroutine<Yield = WebdavYield, Return = R>,
+    R: Debug,
+{
+    match cor.resume(arg) {
+        WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => bytes,
+        state => panic!("expected WantsWrite, got {state:?}"),
+    }
+}
+
+/// Resumes a standard-shape coroutine, expecting a read request.
+pub fn expect_wants_read<C, R>(cor: &mut C)
+where
+    C: WebdavCoroutine<Yield = WebdavYield, Return = R>,
+    R: Debug,
+{
+    match cor.resume(None) {
+        WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => {}
+        state => panic!("expected WantsRead, got {state:?}"),
+    }
+}
+
+/// Feeds `reply` to a standard-shape coroutine and returns its terminal
+/// value.
+pub fn expect_complete<C, R>(cor: &mut C, reply: &[u8]) -> R
+where
+    C: WebdavCoroutine<Yield = WebdavYield, Return = R>,
+    R: Debug,
+{
+    match cor.resume(Some(reply)) {
+        WebdavCoroutineState::Complete(ret) => ret,
+        state => panic!("expected Complete, got {state:?}"),
+    }
+}
+
+/// Runs the canonical write/read/reply sequence against a standard-shape
+/// coroutine: returns the written request bytes (lowercased for
+/// case-insensitive assertions) plus the terminal value.
+pub fn expect_exchange<C, R>(cor: &mut C, reply: &[u8]) -> (String, R)
+where
+    C: WebdavCoroutine<Yield = WebdavYield, Return = R>,
+    R: Debug,
+{
+    let bytes = expect_wants_write(cor, None);
+    let request = String::from_utf8_lossy(&bytes).to_lowercase();
+    expect_wants_read(cor);
+    (request, expect_complete(cor, reply))
+}
+
+/// Resumes a redirect-shape coroutine and returns the written bytes.
+pub fn expect_redirect_wants_write<C, R>(cor: &mut C, arg: Option<&[u8]>) -> Vec<u8>
+where
+    C: WebdavCoroutine<Yield = WebdavRedirectYield, Return = R>,
+    R: Debug,
+{
+    match cor.resume(arg) {
+        WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsWrite(bytes)) => bytes,
+        state => panic!("expected WantsWrite, got {state:?}"),
+    }
+}
+
+/// Resumes a redirect-shape coroutine, expecting a read request.
+pub fn expect_redirect_wants_read<C, R>(cor: &mut C)
+where
+    C: WebdavCoroutine<Yield = WebdavRedirectYield, Return = R>,
+    R: Debug,
+{
+    match cor.resume(None) {
+        WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRead) => {}
+        state => panic!("expected WantsRead, got {state:?}"),
+    }
+}
+
+/// Feeds `reply` to a redirect-shape coroutine and returns its terminal
+/// value.
+pub fn expect_redirect_complete<C, R>(cor: &mut C, reply: &[u8]) -> R
+where
+    C: WebdavCoroutine<Yield = WebdavRedirectYield, Return = R>,
+    R: Debug,
+{
+    match cor.resume(Some(reply)) {
+        WebdavCoroutineState::Complete(ret) => ret,
+        state => panic!("expected Complete, got {state:?}"),
+    }
+}
+
+/// Runs the canonical write/read/reply sequence against a redirect-shape
+/// coroutine: returns the written request bytes (lowercased) plus the
+/// terminal value.
+pub fn expect_redirect_exchange<C, R>(cor: &mut C, reply: &[u8]) -> (String, R)
+where
+    C: WebdavCoroutine<Yield = WebdavRedirectYield, Return = R>,
+    R: Debug,
+{
+    let bytes = expect_redirect_wants_write(cor, None);
+    let request = String::from_utf8_lossy(&bytes).to_lowercase();
+    expect_redirect_wants_read(cor);
+    (request, expect_redirect_complete(cor, reply))
+}
+
+/// Feeds `reply` to a redirect-shape coroutine and returns the surfaced
+/// redirect (target URL, keep-alive flag, same-origin flag).
+pub fn expect_wants_redirect<C, R>(cor: &mut C, reply: &[u8]) -> (Url, bool, bool)
+where
+    C: WebdavCoroutine<Yield = WebdavRedirectYield, Return = R>,
+    R: Debug,
+{
+    match cor.resume(Some(reply)) {
+        WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRedirect {
+            url,
+            keep_alive,
+            same_origin,
+        }) => (url, keep_alive, same_origin),
+        state => panic!("expected WantsRedirect, got {state:?}"),
+    }
+}
+
+// --- live provider helpers ---------------------------------------------
 
 /// A stream that is either a plain TCP connection or a TLS-wrapped one.
 enum WebdavStream {

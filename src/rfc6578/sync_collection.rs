@@ -181,13 +181,14 @@ pub fn sync_collection_body(sync_token: Option<&str>, props: &[Property]) -> Vec
     let decls = xmlns_decls(&nss);
 
     let token = match sync_token {
-        Some(token) => format!("<sync-token>{}</sync-token>", escape_text(token)),
-        None => String::from("<sync-token/>"),
+        Some(token) => format!("<D:sync-token>{}</D:sync-token>", escape_text(token)),
+        None => String::from("<D:sync-token/>"),
     };
 
-    let mut body = format!("{XML_DECL}<sync-collection{decls}>{token}<sync-level>1</sync-level>");
+    let mut body =
+        format!("{XML_DECL}<D:sync-collection{decls}>{token}<D:sync-level>1</D:sync-level>");
     body.push_str(&prop_block(props));
-    body.push_str("</sync-collection>");
+    body.push_str("</D:sync-collection>");
     body.into_bytes()
 }
 
@@ -239,17 +240,17 @@ mod tests {
     fn body_carries_empty_token_on_initial_sync() {
         let body = sync_collection_body(None, &[GETETAG]);
         let xml = core::str::from_utf8(&body).unwrap();
-        assert!(xml.contains("<sync-collection xmlns=\"DAV:\">"));
-        assert!(xml.contains("<sync-token/><sync-level>1</sync-level>"));
-        assert!(xml.contains("<prop><getetag/></prop>"));
-        assert!(xml.ends_with("</sync-collection>"));
+        assert!(xml.contains("<D:sync-collection xmlns:D=\"DAV:\">"));
+        assert!(xml.contains("<D:sync-token/><D:sync-level>1</D:sync-level>"));
+        assert!(xml.contains("<D:prop><D:getetag/></D:prop>"));
+        assert!(xml.ends_with("</D:sync-collection>"));
     }
 
     #[test]
     fn body_carries_the_given_token() {
         let body = sync_collection_body(Some("http://example.com/ns/sync/1234"), &[GETETAG]);
         let xml = core::str::from_utf8(&body).unwrap();
-        assert!(xml.contains("<sync-token>http://example.com/ns/sync/1234</sync-token>"));
+        assert!(xml.contains("<D:sync-token>http://example.com/ns/sync/1234</D:sync-token>"));
     }
 
     #[test]

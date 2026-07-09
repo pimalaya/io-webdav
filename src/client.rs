@@ -2,8 +2,8 @@
 //!
 //! Holds a single boxed stream (any blocking `Read + Write` impl) plus the
 //! [`WebdavAuth`] credential, the user-facing pub options ([`base_url`],
-//! [`follow_redirects`], [`max_redirects`], [`user_agent`]) and the discovery
-//! caches ([`principal_url`], [`calendar_home_set`], [`addressbook_home_set`]).
+//! [`user_agent`]) and the discovery caches ([`principal_url`],
+//! [`calendar_home_set`], [`addressbook_home_set`]).
 //!
 //! The bare [`new`] constructor takes a pre-connected stream; callers handle
 //! TCP and TLS themselves. With one of the TLS feature flags enabled
@@ -21,8 +21,6 @@
 //! `MissingSession`).
 //!
 //! [`base_url`]: WebdavClientStd::base_url
-//! [`follow_redirects`]: WebdavClientStd::follow_redirects
-//! [`max_redirects`]: WebdavClientStd::max_redirects
 //! [`user_agent`]: WebdavClientStd::user_agent
 //! [`principal_url`]: WebdavClientStd::principal_url
 //! [`calendar_home_set`]: WebdavClientStd::calendar_home_set
@@ -125,10 +123,8 @@ pub enum WebdavClientStdError {
     #[error("WebDAV URL `{0}` has unsupported scheme `{1}` (expected `http` or `https`)")]
     UrlUnsupportedScheme(String, String),
 
-    #[error("WebDAV server redirected during a non-redirectable operation")]
-    UnexpectedRedirect,
-    #[error("Exceeded the maximum number of redirects ({0})")]
-    TooManyRedirects(u8),
+    #[error("WebDAV server redirected to `{0}` during a non-redirectable operation")]
+    UnexpectedRedirect(Url),
 
     #[error("WebDAV client missing principal URL; call `current_user_principal` first")]
     MissingPrincipal,
@@ -150,14 +146,6 @@ pub struct WebdavClientStd {
     /// Base URL prepended to every request path.
     pub base_url: Url,
 
-    /// Whether to transparently follow 3xx redirects during discovery
-    /// (defaults to `true`).
-    pub follow_redirects: bool,
-
-    /// Maximum number of redirects to follow before bailing with
-    /// [`WebdavClientStdError::TooManyRedirects`].
-    pub max_redirects: u8,
-
     /// `User-Agent` header value.
     pub user_agent: String,
 
@@ -175,8 +163,6 @@ impl fmt::Debug for WebdavClientStd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WebdavClientStd")
             .field("base_url", &self.base_url.as_str())
-            .field("follow_redirects", &self.follow_redirects)
-            .field("max_redirects", &self.max_redirects)
             .field("user_agent", &self.user_agent)
             .field(
                 "principal_url",
@@ -206,8 +192,6 @@ impl WebdavClientStd {
             stream: Box::new(stream),
             auth,
             base_url,
-            follow_redirects: true,
-            max_redirects: 5,
             user_agent: DEFAULT_USER_AGENT.to_string(),
             principal_url: None,
             calendar_home_set: None,
@@ -229,8 +213,6 @@ impl WebdavClientStd {
             stream: Box::new(stream),
             auth,
             base_url,
-            follow_redirects: true,
-            max_redirects: 5,
             user_agent: DEFAULT_USER_AGENT.to_string(),
             principal_url,
             calendar_home_set,
@@ -287,39 +269,37 @@ impl WebdavClientStd {
         let mut buf = [0u8; READ_BUFFER_SIZE];
         let mut arg: Option<&[u8]> = None;
 
-        loop {
+        let ret = loop {
             match coroutine.resume(arg.take()) {
-                WebdavCoroutineState::Complete(Ok(out)) => return Ok(out),
-                WebdavCoroutineState::Complete(Err(err)) => return Err(err.into()),
-                WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => {
-                    let n = self.stream.read(&mut buf)?;
-                    arg = Some(&buf[..n]);
-                }
-                WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
-                    self.stream.write_all(&bytes)?;
+                WebdavCoroutineState::Complete(ret) => break ret,
+                WebdavCoroutineState::Yielded(yielded) => {
+                    let n = pump(&mut *self.stream, &mut buf, yielded)?;
+                    arg = n.map(|n| &buf[..n]);
                 }
             }
-        }
+        };
+
+        ret.map_err(Into::into)
     }
 
     /// Runs a redirect-aware discovery coroutine (`Yield =
-    /// WebdavRedirectYield`, `Return = Option<Url>`). A 3xx is surfaced as
-    /// [`UnexpectedRedirect`] (or [`TooManyRedirects`] past [`max_redirects`])
-    /// rather than followed.
+    /// WebdavRedirectYield`, `Return = Option<Url>`). A 3xx is surfaced
+    /// as [`UnexpectedRedirect`] rather than followed: this client owns
+    /// a single connected stream, so only the caller (who owns
+    /// connection creation) can reconnect to the target and retry, e.g.
+    /// via [`set_stream`] (mirrors io-http's `HttpClientStd`).
     ///
     /// [`UnexpectedRedirect`]: WebdavClientStdError::UnexpectedRedirect
-    /// [`TooManyRedirects`]: WebdavClientStdError::TooManyRedirects
-    /// [`max_redirects`]: WebdavClientStd::max_redirects
-    fn run_redirect<C>(&mut self, mut coroutine: C) -> Result<Option<Url>, WebdavClientStdError>
-    where
-        C: WebdavCoroutine<
-                Yield = WebdavRedirectYield,
-                Return = Result<Option<Url>, FollowRedirectsError>,
-            >,
-    {
+    /// [`set_stream`]: WebdavClientStd::set_stream
+    fn run_redirect(
+        &mut self,
+        coroutine: &mut dyn WebdavCoroutine<
+            Yield = WebdavRedirectYield,
+            Return = Result<Option<Url>, FollowRedirectsError>,
+        >,
+    ) -> Result<Option<Url>, WebdavClientStdError> {
         let mut buf = [0u8; READ_BUFFER_SIZE];
         let mut arg: Option<&[u8]> = None;
-        let mut redirects = 0u8;
 
         loop {
             match coroutine.resume(arg.take()) {
@@ -333,12 +313,10 @@ impl WebdavClientStd {
                     self.stream.write_all(&bytes)?;
                     arg = None;
                 }
-                WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRedirect { .. }) => {
-                    redirects += 1;
-                    if redirects > self.max_redirects {
-                        return Err(WebdavClientStdError::TooManyRedirects(self.max_redirects));
-                    }
-                    return Err(WebdavClientStdError::UnexpectedRedirect);
+                WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRedirect {
+                    url, ..
+                }) => {
+                    return Err(WebdavClientStdError::UnexpectedRedirect(url));
                 }
             }
         }
@@ -356,8 +334,8 @@ impl WebdavClientStd {
             return Ok(url.clone());
         }
 
-        let coroutine = CurrentUserPrincipal::new(&self.base_url, &self.auth, &self.user_agent);
-        let url = self.run_redirect(coroutine)?;
+        let mut coroutine = CurrentUserPrincipal::new(&self.base_url, &self.auth, &self.user_agent);
+        let url = self.run_redirect(&mut coroutine)?;
         let url = url.ok_or(WebdavClientStdError::MissingPrincipal)?;
 
         self.principal_url = Some(url.clone());
@@ -380,8 +358,9 @@ impl WebdavClientStd {
         let principal = self.current_user_principal()?;
         let path = principal.path().to_string();
 
-        let coroutine = CalendarHomeSet::new(&self.base_url, &self.auth, &self.user_agent, &path);
-        let url = self.run_redirect(coroutine)?;
+        let mut coroutine =
+            CalendarHomeSet::new(&self.base_url, &self.auth, &self.user_agent, &path);
+        let url = self.run_redirect(&mut coroutine)?;
         let url = url.ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
 
         self.calendar_home_set = Some(url.clone());
@@ -565,9 +544,9 @@ impl WebdavClientStd {
         let principal = self.current_user_principal()?;
         let path = principal.path().to_string();
 
-        let coroutine =
+        let mut coroutine =
             AddressbookHomeSet::new(&self.base_url, &self.auth, &self.user_agent, &path);
-        let url = self.run_redirect(coroutine)?;
+        let url = self.run_redirect(&mut coroutine)?;
         let url = url.ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
 
         self.addressbook_home_set = Some(url.clone());
@@ -774,6 +753,22 @@ impl WebdavClientStd {
             if_match,
         );
         self.run(coroutine).map(|_| ())
+    }
+}
+
+/// Runs one standard I/O yield against the stream: writes the bytes, or
+/// reads a chunk into `buf` and returns its length.
+fn pump(
+    stream: &mut dyn WebdavStream,
+    buf: &mut [u8],
+    yielded: WebdavYield,
+) -> Result<Option<usize>, io::Error> {
+    match yielded {
+        WebdavYield::WantsRead => Ok(Some(stream.read(buf)?)),
+        WebdavYield::WantsWrite(bytes) => {
+            stream.write_all(&bytes)?;
+            Ok(None)
+        }
     }
 }
 

@@ -20,17 +20,23 @@ use alloc::{
 
 use io_http::rfc9110::response::HttpResponse;
 use log::trace;
-use quick_xml::{Reader, escape::unescape, events::Event};
+use quick_xml::{Reader, events::Event};
 use url::Url;
 
 use crate::rfc4918::types::{
     Multistatus, Namespace, PropItem, Property, ResponseEntry, WebdavAuth,
 };
 
-/// WebDAV namespace (RFC 4918), the XML default namespace.
+/// WebDAV namespace (RFC 4918), emitted with the `D` prefix the RFC
+/// examples use. Never the default namespace: strict servers (iCloud,
+/// Google) reject bodies mixing a prefixed CardDAV root with
+/// default-namespace DAV children (their addressbook-multiget answers
+/// HTTP 400), while the all-prefixed form every interoperable client
+/// sends passes everywhere. The literal `D:` in the body generators
+/// assumes this prefix.
 pub const DAV: Namespace = Namespace {
     uri: "DAV:",
-    prefix: "",
+    prefix: "D",
 };
 /// CalendarServer extension namespace (ctag); protocol-neutral, used by
 /// both CalDAV and CardDAV servers.
@@ -107,22 +113,22 @@ pub fn escape_text(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// Emits a `<prop>` block listing each property as an empty element.
+/// Emits a `D:prop` block listing each property as an empty element.
 pub fn prop_block(props: &[Property]) -> String {
-    let mut out = String::from("<prop>");
+    let mut out = String::from("<D:prop>");
     for prop in props {
         out.push_str(&empty_element(*prop));
     }
-    out.push_str("</prop>");
+    out.push_str("</D:prop>");
     out
 }
 
 /// Builds a `PROPFIND` request body (RFC 4918 §9.1) requesting `props`.
 pub fn propfind_body(props: &[Property]) -> Vec<u8> {
     let decls = xmlns_decls(&namespaces(&[], props));
-    let mut body = format!("{XML_DECL}<propfind{decls}>");
+    let mut body = format!("{XML_DECL}<D:propfind{decls}>");
     body.push_str(&prop_block(props));
-    body.push_str("</propfind>");
+    body.push_str("</D:propfind>");
     body.into_bytes()
 }
 
@@ -143,11 +149,11 @@ pub fn prop_set_body(root: Property, set: &[(Property, &str)]) -> Vec<u8> {
     let decls = xmlns_decls(&nss);
     let open = qualified(root.ns, root.local);
 
-    let mut body = format!("{XML_DECL}<{open}{decls}><set><prop>");
+    let mut body = format!("{XML_DECL}<{open}{decls}><D:set><D:prop>");
     for (prop, value) in set {
         body.push_str(&value_element(*prop, value));
     }
-    body.push_str(&format!("</prop></set></{open}>"));
+    body.push_str(&format!("</D:prop></D:set></{open}>"));
     body.into_bytes()
 }
 
@@ -159,15 +165,16 @@ pub fn mkcol_body(resource_types: &[Property], set: &[(Property, &str)]) -> Vec<
     props.extend(set.iter().map(|(prop, _)| *prop));
     let decls = xmlns_decls(&namespaces(&[], &props));
 
-    let mut body = format!("{XML_DECL}<mkcol{decls}><set><prop><resourcetype><collection/>");
+    let mut body =
+        format!("{XML_DECL}<D:mkcol{decls}><D:set><D:prop><D:resourcetype><D:collection/>");
     for resource_type in resource_types {
         body.push_str(&empty_element(*resource_type));
     }
-    body.push_str("</resourcetype>");
+    body.push_str("</D:resourcetype>");
     for (prop, value) in set {
         body.push_str(&value_element(*prop, value));
     }
-    body.push_str("</prop></set></mkcol>");
+    body.push_str("</D:prop></D:set></D:mkcol>");
     body.into_bytes()
 }
 
@@ -200,7 +207,9 @@ pub fn report_query_body(
 /// properties under 2xx `propstat`s are kept. Responses without any 2xx
 /// propstat still survive as entries with empty props, carrying their
 /// response-level status (`sync-collection` removal and truncation
-/// rows). Malformed input yields whatever was parsed before the error.
+/// rows). Predefined and numeric character references are resolved;
+/// unknown entity references are kept verbatim. Malformed input yields
+/// whatever was parsed before the error.
 pub fn parse_multistatus(xml: &str) -> Multistatus {
     let mut reader = Reader::from_str(xml);
 
@@ -243,12 +252,29 @@ pub fn parse_multistatus(xml: &str) -> Multistatus {
             }
             Ok(Event::Text(t)) => {
                 if let Ok(decoded) = t.decode() {
-                    let text = match unescape(&decoded) {
-                        Ok(text) => text,
-                        Err(_) => decoded.clone(),
-                    };
                     if let Some((_, buf, _)) = stack.last_mut() {
-                        buf.push_str(&text);
+                        buf.push_str(&decoded);
+                    }
+                }
+            }
+            Ok(Event::GeneralRef(r)) => {
+                if let Some((_, buf, _)) = stack.last_mut() {
+                    if let Ok(Some(ch)) = r.resolve_char_ref() {
+                        buf.push(ch);
+                    } else if let Ok(name) = r.decode() {
+                        match name.as_ref() {
+                            "amp" => buf.push('&'),
+                            "lt" => buf.push('<'),
+                            "gt" => buf.push('>'),
+                            "quot" => buf.push('"'),
+                            "apos" => buf.push('\''),
+                            name => {
+                                // NOTE: unknown entity, kept verbatim.
+                                buf.push('&');
+                                buf.push_str(name);
+                                buf.push(';');
+                            }
+                        }
                     }
                 }
             }
@@ -261,59 +287,59 @@ pub fn parse_multistatus(xml: &str) -> Multistatus {
                 }
             }
             Ok(Event::End(_)) => {
-                let Some((name, text, children)) = stack.pop() else {
-                    continue;
-                };
-                let parent = stack.last().map(|(n, _, _)| n.clone());
-                if let Some((_, parent_text, _)) = stack.last_mut() {
-                    parent_text.push_str(&text);
-                }
-                let parent = parent.as_deref();
+                if let Some((name, text, children)) = stack.pop() {
+                    let parent = stack.last().map(|(n, _, _)| n.clone());
+                    if let Some((_, parent_text, _)) = stack.last_mut() {
+                        parent_text.push_str(&text);
+                    }
+                    let parent = parent.as_deref();
 
-                match name.as_str() {
-                    "response" => {
-                        if let Some(entry) = response.take() {
-                            responses.push(entry);
+                    match name.as_str() {
+                        "response" => {
+                            if let Some(entry) = response.take() {
+                                responses.push(entry);
+                            }
                         }
-                    }
-                    "propstat" => {
-                        if propstat_ok == Some(true) {
+                        "propstat" => {
+                            if propstat_ok == Some(true) {
+                                if let Some(entry) = response.as_mut() {
+                                    entry.props.append(&mut propstat_props);
+                                }
+                            }
+                            propstat_props.clear();
+                            propstat_ok = None;
+                        }
+                        "status" if parent == Some("propstat") => {
+                            propstat_ok =
+                                Some(status_code(&text).is_some_and(|code| code / 100 == 2));
+                        }
+                        "status" if parent == Some("response") => {
                             if let Some(entry) = response.as_mut() {
-                                entry.props.append(&mut propstat_props);
+                                entry.status = status_code(&text);
                             }
                         }
-                        propstat_props.clear();
-                        propstat_ok = None;
-                    }
-                    "status" if parent == Some("propstat") => {
-                        propstat_ok = Some(status_code(&text).is_some_and(|code| code / 100 == 2));
-                    }
-                    "status" if parent == Some("response") => {
-                        if let Some(entry) = response.as_mut() {
-                            entry.status = status_code(&text);
-                        }
-                    }
-                    "sync-token" if parent == Some("multistatus") => {
-                        let text = text.trim();
-                        if !text.is_empty() {
-                            sync_token = Some(text.to_string());
-                        }
-                    }
-                    "href" if parent == Some("response") => {
-                        if let Some(entry) = response.as_mut() {
-                            if entry.href.is_empty() {
-                                entry.href = text.trim().to_string();
+                        "sync-token" if parent == Some("multistatus") => {
+                            let text = text.trim();
+                            if !text.is_empty() {
+                                sync_token = Some(text.to_string());
                             }
                         }
+                        "href" if parent == Some("response") => {
+                            if let Some(entry) = response.as_mut() {
+                                if entry.href.is_empty() {
+                                    entry.href = text.trim().to_string();
+                                }
+                            }
+                        }
+                        _ if parent == Some("prop") => {
+                            propstat_props.push(PropItem {
+                                local: name,
+                                text,
+                                children,
+                            });
+                        }
+                        _ => {}
                     }
-                    _ if parent == Some("prop") => {
-                        propstat_props.push(PropItem {
-                            local: name,
-                            text,
-                            children,
-                        });
-                    }
-                    _ => {}
                 }
             }
             Ok(Event::Eof) | Err(_) => break,
@@ -461,9 +487,9 @@ mod tests {
     fn propfind_body_lists_props_with_namespaces() {
         let body = propfind_body(&[DISPLAYNAME, CALENDAR_DATA]);
         let xml = core::str::from_utf8(&body).unwrap();
-        assert!(xml.contains("xmlns=\"DAV:\""));
+        assert!(xml.contains("xmlns:D=\"DAV:\""));
         assert!(xml.contains("xmlns:C=\"urn:ietf:params:xml:ns:caldav\""));
-        assert!(xml.contains("<displayname/>"));
+        assert!(xml.contains("<D:displayname/>"));
         assert!(xml.contains("<C:calendar-data/>"));
     }
 
@@ -471,17 +497,19 @@ mod tests {
     fn mkcol_body_carries_resourcetype_and_values() {
         let body = mkcol_body(&[CALENDAR], &[(DISPLAYNAME, "Personal & co")]);
         let xml = core::str::from_utf8(&body).unwrap();
-        assert!(xml.contains("<resourcetype><collection/><C:calendar/></resourcetype>"));
-        assert!(xml.contains("<displayname>Personal &amp; co</displayname>"));
+        assert!(xml.contains("<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>"));
+        assert!(xml.contains("<D:displayname>Personal &amp; co</D:displayname>"));
     }
 
     #[test]
     fn proppatch_body_wraps_values_in_propertyupdate() {
         let body = proppatch_body(&[(DISPLAYNAME, "Renamed")]);
         let xml = core::str::from_utf8(&body).unwrap();
-        assert!(xml.contains("<propertyupdate xmlns=\"DAV:\">"));
-        assert!(xml.contains("<set><prop><displayname>Renamed</displayname></prop></set>"));
-        assert!(xml.ends_with("</propertyupdate>"));
+        assert!(xml.contains("<D:propertyupdate xmlns:D=\"DAV:\">"));
+        assert!(
+            xml.contains("<D:set><D:prop><D:displayname>Renamed</D:displayname></D:prop></D:set>")
+        );
+        assert!(xml.ends_with("</D:propertyupdate>"));
     }
 
     #[test]
@@ -494,7 +522,9 @@ mod tests {
         let xml = core::str::from_utf8(&body).unwrap();
         assert!(xml.contains("<C:mkcalendar "));
         assert!(xml.contains("xmlns:C=\"urn:ietf:params:xml:ns:caldav\""));
-        assert!(xml.contains("<set><prop><displayname>Work</displayname></prop></set>"));
+        assert!(
+            xml.contains("<D:set><D:prop><D:displayname>Work</D:displayname></D:prop></D:set>")
+        );
         assert!(xml.ends_with("</C:mkcalendar>"));
     }
 
@@ -617,15 +647,15 @@ mod tests {
     }
 
     #[test]
-    fn getetag_uses_default_namespace() {
-        assert_eq!(empty_or(GETETAG), "<getetag/>");
+    fn getetag_uses_the_dav_prefix() {
+        assert_eq!(empty_or(GETETAG), "<D:getetag/>");
     }
 
     fn empty_or(prop: Property) -> String {
         let body = propfind_body(&[prop]);
         let xml = core::str::from_utf8(&body).unwrap().to_string();
-        let start = xml.find("<prop>").unwrap() + "<prop>".len();
-        let end = xml.find("</prop>").unwrap();
+        let start = xml.find("<D:prop>").unwrap() + "<D:prop>".len();
+        let end = xml.find("</D:prop>").unwrap();
         xml[start..end].to_string()
     }
 }

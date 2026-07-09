@@ -110,7 +110,7 @@ pub fn addressbook_query_body(props: &[Property]) -> Vec<u8> {
 pub fn addressbook_multiget_body(hrefs: &[String], props: &[Property]) -> Vec<u8> {
     let mut fragment = String::new();
     for href in hrefs {
-        fragment.push_str(&format!("<href>{}</href>", escape_text(href)));
+        fragment.push_str(&format!("<D:href>{}</D:href>", escape_text(href)));
     }
     report_query_body(ADDRESSBOOK_MULTIGET, &[CARDDAV], props, &fragment)
 }
