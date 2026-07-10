@@ -118,6 +118,9 @@ pub enum SyncCollectionError {
 #[derive(Debug)]
 pub struct SyncCollection {
     state: State,
+    /// The collection path, without a trailing slash, so its own
+    /// self-entry can be told apart from member resources.
+    collection: String,
 }
 
 impl SyncCollection {
@@ -138,6 +141,7 @@ impl SyncCollection {
         let report = Report::new(base_url, auth, user_agent, path, 0, body);
         Self {
             state: State::Report(report),
+            collection: path.trim_end_matches('/').to_string(),
         }
     }
 }
@@ -166,7 +170,8 @@ impl WebdavCoroutine for SyncCollection {
                     WebdavCoroutineState::Complete(Ok(multistatus)) => multistatus,
                 };
 
-                WebdavCoroutineState::Complete(Ok(from_multistatus(multistatus)))
+                let delta = from_multistatus(multistatus, &self.collection);
+                WebdavCoroutineState::Complete(Ok(delta))
             }
         }
     }
@@ -194,7 +199,10 @@ pub fn sync_collection_body(sync_token: Option<&str>, props: &[Property]) -> Vec
 
 /// Sorts the multistatus rows into a [`SyncDelta`]: 404 rows are
 /// removals, a 507 row flags truncation, everything else is a change.
-fn from_multistatus(multistatus: Multistatus) -> SyncDelta {
+/// `collection` is the request-target path (trailing slash trimmed), so
+/// the collection's own self-entry can be dropped rather than mistaken
+/// for a member resource.
+fn from_multistatus(multistatus: Multistatus, collection: &str) -> SyncDelta {
     let mut delta = SyncDelta {
         sync_token: multistatus.sync_token,
         ..Default::default()
@@ -209,6 +217,14 @@ fn from_multistatus(multistatus: Multistatus) -> SyncDelta {
                     "skip sync-collection row {} with status {status}",
                     entry.href
                 );
+            }
+            // Skip the collection self-entry: some servers (iCloud) echo
+            // the collection itself in the sync report, as its own path
+            // (with or without a trailing slash). It is not a member
+            // resource and would otherwise enter the spine as a bogus
+            // card named after the collection.
+            _ if entry.href.trim_end_matches('/') == collection.trim_end_matches('/') => {
+                trace!("skip sync-collection self-entry {}", entry.href);
             }
             _ => {
                 let etag = entry
@@ -275,7 +291,7 @@ mod tests {
           <d:sync-token>http://example.com/ns/sync/1234</d:sync-token>
         </d:multistatus>"#;
 
-        let delta = from_multistatus(parse_multistatus(xml));
+        let delta = from_multistatus(parse_multistatus(xml), "/dav/addressbooks/contacts");
 
         assert_eq!(delta.changed.len(), 1);
         assert_eq!(
@@ -289,5 +305,34 @@ mod tests {
             Some("http://example.com/ns/sync/1234")
         );
         assert!(delta.truncated);
+    }
+
+    #[test]
+    fn delta_skips_the_collection_self_entry() {
+        // iCloud echoes the addressbook collection itself in the initial
+        // sync report, as its own path with no trailing slash; it must
+        // not enter the spine as a bogus card named after the collection.
+        let xml = r#"<?xml version="1.0"?>
+        <d:multistatus xmlns:d="DAV:">
+          <d:response>
+            <d:href>/17170244959/carddavhome/card</d:href>
+            <d:propstat>
+              <d:prop><d:getetag>"coll-etag"</d:getetag></d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status>
+            </d:propstat>
+          </d:response>
+          <d:response>
+            <d:href>/17170244959/carddavhome/card/5d18175a.vcf</d:href>
+            <d:propstat>
+              <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status>
+            </d:propstat>
+          </d:response>
+        </d:multistatus>"#;
+
+        let delta = from_multistatus(parse_multistatus(xml), "/17170244959/carddavhome/card/");
+
+        assert_eq!(delta.changed.len(), 1);
+        assert_eq!(delta.changed[0].href, "/17170244959/carddavhome/card/5d18175a.vcf");
     }
 }

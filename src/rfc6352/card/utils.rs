@@ -25,6 +25,12 @@ pub fn join_path(addressbook: &str, uri: &str) -> String {
 /// Maps a multistatus response entry carrying [`CARD_PROPS`] to a
 /// [`CardEntry`] (id, uri, etag, raw vCard bytes).
 pub(crate) fn card_from_entry(entry: &ResponseEntry) -> Option<CardEntry> {
+    // A collection self-entry (its href ends in a slash) is never a
+    // card; iCloud echoes the addressbook itself in the multistatus.
+    if entry.href.ends_with('/') {
+        return None;
+    }
+
     let uri = entry.id();
     let id = uri.trim_end_matches(".vcf");
     if id.is_empty() {

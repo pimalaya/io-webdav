@@ -105,6 +105,14 @@ impl WebdavCoroutine for EnumCards {
 }
 
 fn from_entry(entry: &ResponseEntry) -> Option<CardRef> {
+    // Skip the collection self-entry: an address object resource never
+    // ends in a slash, but some servers (iCloud) echo the addressbook
+    // itself in the query response, which would otherwise enter the
+    // spine as a bogus card named after the collection.
+    if entry.href.ends_with('/') {
+        return None;
+    }
+
     let uri = entry.id();
     let id = uri.trim_end_matches(".vcf");
     if id.is_empty() {

@@ -300,6 +300,36 @@ fn enum_cards_returns_etag_only_references() {
 }
 
 #[test]
+fn enum_cards_skips_the_collection_self_entry() {
+    // iCloud echoes the addressbook collection itself (its href ends in
+    // a slash) in the addressbook-query response; it must not enter the
+    // spine as a bogus card named after the collection.
+    let mut enumerate = EnumCards::new(&base(), &WebdavAuth::None, UA, "/17170244959/carddavhome/card/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/17170244959/carddavhome/card/</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"coll-etag"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/17170244959/carddavhome/card/5d18175a.vcf</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_request, ret) = expect_exchange(&mut enumerate, &multistatus_response(xml));
+
+    let refs = ret.unwrap();
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs.first().unwrap().id, "5d18175a");
+}
+
+#[test]
 fn multiget_cards_requests_each_href() {
     let mut multiget = MultigetCards::new(
         &base(),
