@@ -333,6 +333,9 @@ mod tests {
         let delta = from_multistatus(parse_multistatus(xml), "/17170244959/carddavhome/card/");
 
         assert_eq!(delta.changed.len(), 1);
-        assert_eq!(delta.changed[0].href, "/17170244959/carddavhome/card/5d18175a.vcf");
+        assert_eq!(
+            delta.changed[0].href,
+            "/17170244959/carddavhome/card/5d18175a.vcf"
+        );
     }
 }

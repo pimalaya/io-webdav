@@ -304,7 +304,12 @@ fn enum_cards_skips_the_collection_self_entry() {
     // iCloud echoes the addressbook collection itself (its href ends in
     // a slash) in the addressbook-query response; it must not enter the
     // spine as a bogus card named after the collection.
-    let mut enumerate = EnumCards::new(&base(), &WebdavAuth::None, UA, "/17170244959/carddavhome/card/");
+    let mut enumerate = EnumCards::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/17170244959/carddavhome/card/",
+    );
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
         <d:href>/17170244959/carddavhome/card/</d:href>
