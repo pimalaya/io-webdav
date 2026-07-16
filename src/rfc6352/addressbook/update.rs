@@ -52,10 +52,7 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{WebdavAuth, proppatch::Proppatch, send::SendError},
-    rfc6352::addressbook::{
-        types::Addressbook,
-        utils::{join_path, property_set},
-    },
+    rfc6352::addressbook::{Addressbook, join_path, property_set},
 };
 
 /// Coroutine that updates an addressbook collection's properties.

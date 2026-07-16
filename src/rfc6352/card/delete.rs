@@ -61,7 +61,7 @@ use crate::{
         delete::Delete,
         send::{SendError, SendOk},
     },
-    rfc6352::card::utils::join_path,
+    rfc6352::card::join_path,
 };
 
 /// Coroutine that deletes a card.

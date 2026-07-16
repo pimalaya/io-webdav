@@ -55,7 +55,7 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{GETETAG, Property, ResponseEntry, WebdavAuth, report::Report, send::SendError},
-    rfc6352::{addressbook::addressbook_query_body, card::types::CardRef},
+    rfc6352::{addressbook::addressbook_query_body, card::CardRef},
     webdav_try,
 };
 

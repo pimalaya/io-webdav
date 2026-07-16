@@ -5,7 +5,7 @@
 //! [`WebdavRedirectYield::WantsRedirect`] so the client can rebuild its
 //! connection and restart the operation against the new target URL. The
 //! success body is returned raw; callers parse it with
-//! [`parse_multistatus`](crate::rfc4918::parse_multistatus).
+//! `parse_multistatus`.
 //!
 //! [`WebdavRedirectYield::WantsRedirect`]: crate::rfc4918::coroutine::WebdavRedirectYield::WantsRedirect
 //!
@@ -78,9 +78,11 @@ use crate::{
 /// Failure causes during a redirect-aware WebDAV send.
 #[derive(Debug, Error)]
 pub enum FollowRedirectsError {
+    /// The server returned a non-2xx, non-redirect HTTP status.
     #[error("WebDAV server returned HTTP {0}: {1}")]
     HttpStatus(u16, String),
 
+    /// The underlying HTTP/1.1 send failed.
     #[error(transparent)]
     Send(#[from] Http11SendError),
 }

@@ -51,17 +51,18 @@
 //! println!("{} items", items.len());
 //! ```
 
-use alloc::{collections::BTreeSet, string::ToString};
+use alloc::{
+    collections::BTreeSet,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use log::trace;
 use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::{
-        calendar::{CALENDAR_DATA, calendar_query_body},
-        item::types::ItemEntry,
-    },
+    rfc4791::calendar::{CALENDAR_DATA, calendar_query_body},
     rfc4918::{
         GETETAG, WebdavAuth,
         report::Report,
@@ -145,4 +146,19 @@ fn from_entry(entry: &ResponseEntry) -> Option<ItemEntry> {
 #[derive(Debug)]
 enum State {
     Report(Report),
+}
+
+/// Raw calendar item entry returned by
+/// [`ListItems`].
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ItemEntry {
+    /// Item identifier (last path segment of the href, with `.ics`
+    /// stripped).
+    pub id: String,
+
+    /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
+    pub etag: Option<String>,
+
+    /// Raw iCalendar bytes (`calendar-data`).
+    pub data: Vec<u8>,
 }

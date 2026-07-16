@@ -48,10 +48,9 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        proppatch_body,
+        Property, WebdavAuth, proppatch_body,
         request::WebdavRequest,
         send::{SendError, SendRaw},
-        types::{Property, WebdavAuth},
     },
     webdav_try,
 };

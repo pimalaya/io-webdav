@@ -52,10 +52,7 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{WebdavAuth, mkcol::Mkcol, send::SendError},
-    rfc6352::addressbook::{
-        types::Addressbook,
-        utils::{ADDRESSBOOK, join_path, property_set},
-    },
+    rfc6352::addressbook::{ADDRESSBOOK, Addressbook, join_path, property_set},
 };
 
 /// Coroutine that creates an addressbook collection.

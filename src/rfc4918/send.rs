@@ -1,7 +1,7 @@
 //! Base coroutine every higher-level WebDAV coroutine delegates to:
 //! runs an HTTP/1.1 exchange and returns the raw response body. Higher
 //! layers parse the multistatus with
-//! [`parse_multistatus`](crate::rfc4918::parse_multistatus) or keep the
+//! `parse_multistatus` or keep the
 //! bytes as-is (`GET` / `PUT` of an iCal/vCard resource).
 //!
 //! All I/O is hoisted: the coroutine yields [`WebdavYield`] and the
@@ -69,19 +69,25 @@ use crate::coroutine::*;
 /// Successful terminal output of a WebDAV send coroutine.
 #[derive(Debug)]
 pub struct SendOk<T> {
+    /// The HTTP response head (status line and headers).
     pub response: HttpResponse,
+    /// Whether the server allows reusing the connection.
     pub keep_alive: bool,
+    /// The coroutine-specific parsed body.
     pub body: T,
 }
 
 /// Failure causes during a WebDAV send.
 #[derive(Debug, Error)]
 pub enum SendError {
+    /// The server returned a non-2xx HTTP status.
     #[error("WebDAV server returned HTTP {0}: {1}")]
     HttpStatus(u16, String),
+    /// The server returned a redirect where none was expected.
     #[error("WebDAV server returned unexpected redirect")]
     UnexpectedRedirect,
 
+    /// The underlying HTTP/1.1 send failed.
     #[error(transparent)]
     Send(#[from] Http11SendError),
 }

@@ -56,8 +56,7 @@ use crate::{
         propfind::Propfind, send::SendError, trace_unrecognized,
     },
     rfc6352::addressbook::{
-        types::Addressbook,
-        utils::{ADDRESSBOOK, ADDRESSBOOK_COLOR, ADDRESSBOOK_DESCRIPTION, LIST_PROPS},
+        ADDRESSBOOK, ADDRESSBOOK_COLOR, ADDRESSBOOK_DESCRIPTION, Addressbook, LIST_PROPS,
     },
     webdav_try,
 };

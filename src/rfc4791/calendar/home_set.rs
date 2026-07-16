@@ -55,7 +55,7 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::calendar::utils::CALENDAR_HOME_SET,
+    rfc4791::calendar::CALENDAR_HOME_SET,
     rfc4918::{
         WebdavAuth,
         coroutine::WebdavRedirectYield,

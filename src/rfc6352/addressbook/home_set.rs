@@ -63,7 +63,7 @@ use crate::{
         request::WebdavRequest,
         resolve_href,
     },
-    rfc6352::addressbook::utils::ADDRESSBOOK_HOME_SET,
+    rfc6352::addressbook::ADDRESSBOOK_HOME_SET,
     webdav_try,
 };
 

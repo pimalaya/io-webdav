@@ -50,10 +50,9 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        mkcol_body,
+        Property, WebdavAuth, mkcol_body,
         request::WebdavRequest,
         send::{SendError, SendRaw},
-        types::{Property, WebdavAuth},
     },
     webdav_try,
 };

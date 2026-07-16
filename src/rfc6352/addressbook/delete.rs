@@ -53,7 +53,7 @@ use crate::{
         delete::Delete,
         send::{SendError, SendOk},
     },
-    rfc6352::addressbook::utils::join_path,
+    rfc6352::addressbook::join_path,
 };
 
 /// Coroutine that deletes an addressbook collection.

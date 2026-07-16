@@ -51,10 +51,7 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::calendar::{
-        types::Calendar,
-        utils::{join_path, property_set},
-    },
+    rfc4791::calendar::{Calendar, join_path, property_set},
     rfc4918::{WebdavAuth, proppatch::Proppatch, send::SendError},
 };
 

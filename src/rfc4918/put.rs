@@ -81,11 +81,17 @@ use crate::{
 /// precondition fields without juggling positional `None`s.
 #[derive(Clone, Debug)]
 pub struct PutArgs<'a> {
+    /// Base URL the request path is resolved against.
     pub base_url: &'a Url,
+    /// Authentication scheme for the `Authorization` header.
     pub auth: &'a WebdavAuth,
+    /// Value emitted as the `User-Agent` header.
     pub user_agent: &'a str,
+    /// Resource path to PUT to, relative to `base_url`.
     pub path: &'a str,
+    /// MIME type emitted as the `Content-Type` header.
     pub content_type: &'a str,
+    /// Raw request body bytes.
     pub body: Vec<u8>,
     /// Optional `If-Match` ETag (RFC 9110 §13.1.1).
     pub if_match: Option<&'a str>,

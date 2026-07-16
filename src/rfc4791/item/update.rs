@@ -66,7 +66,7 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::item::{types::UpdateItemOk, utils::join_path},
+    rfc4791::item::join_path,
     rfc4918::{
         WebdavAuth,
         put::{Put, PutArgs},
@@ -132,4 +132,14 @@ impl WebdavCoroutine for UpdateItem {
 #[derive(Debug)]
 enum State {
     Put(Put),
+}
+
+/// Outcome of a successful
+/// [`UpdateItem`] resume.
+#[derive(Clone, Debug)]
+pub struct UpdateItemOk {
+    /// Item identifier (as supplied by the caller).
+    pub id: String,
+    /// Updated entity tag returned by the server, when present.
+    pub etag: Option<String>,
 }

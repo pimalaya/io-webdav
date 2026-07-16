@@ -61,8 +61,11 @@ use crate::{
             list::ListCalendars, update::UpdateCalendar,
         },
         item::{
-            CreateItemOk, ItemBody, ItemEntry, UpdateItemOk, create::CreateItem,
-            delete::DeleteItem, list::ListItems, read::ReadItem, update::UpdateItem,
+            create::{CreateItem, CreateItemOk},
+            delete::DeleteItem,
+            list::{ItemEntry, ListItems},
+            read::{ItemBody, ReadItem},
+            update::{UpdateItem, UpdateItemOk},
         },
     },
     rfc4918::{
@@ -76,9 +79,14 @@ use crate::{
             home_set::AddressbookHomeSet, list::ListAddressbooks, update::UpdateAddressbook,
         },
         card::{
-            CardBody, CardEntry, CardRef, CreateCardOk, UpdateCardOk, create::CreateCard,
-            delete::DeleteCard, enumerate::EnumCards, list::ListCards, multiget::MultigetCards,
-            read::ReadCard, update::UpdateCard,
+            CardEntry, CardRef,
+            create::{CreateCard, CreateCardOk},
+            delete::DeleteCard,
+            enumerate::EnumCards,
+            list::ListCards,
+            multiget::MultigetCards,
+            read::{CardBody, ReadCard},
+            update::{UpdateCard, UpdateCardOk},
         },
     },
     rfc6578::sync_collection::{SyncCollection, SyncCollectionError, SyncDelta},
@@ -91,16 +99,21 @@ const DEFAULT_USER_AGENT: &str = concat!("io-webdav/", env!("CARGO_PKG_VERSION")
 /// Errors returned by [`WebdavClientStd`].
 #[derive(Debug, Error)]
 pub enum WebdavClientStdError {
+    /// A WebDAV request failed while being sent.
     #[error(transparent)]
     Send(#[from] SendError),
+    /// A redirect-aware WebDAV send failed.
     #[error(transparent)]
     FollowRedirects(#[from] FollowRedirectsError),
+    /// A `sync-collection` REPORT failed.
     #[error(transparent)]
     SyncCollection(#[from] SyncCollectionError),
 
+    /// An underlying I/O operation failed.
     #[error(transparent)]
     Io(#[from] io::Error),
 
+    /// TLS negotiation or the underlying TLS stack failed.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
@@ -108,6 +121,7 @@ pub enum WebdavClientStdError {
     ))]
     #[error(transparent)]
     Tls(#[from] anyhow::Error),
+    /// The target WebDAV URL carries no host.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
@@ -115,6 +129,7 @@ pub enum WebdavClientStdError {
     ))]
     #[error("WebDAV URL `{0}` has no host")]
     UrlMissingHost(String),
+    /// The target WebDAV URL uses a scheme other than `http` or `https`.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
@@ -123,13 +138,21 @@ pub enum WebdavClientStdError {
     #[error("WebDAV URL `{0}` has unsupported scheme `{1}` (expected `http` or `https`)")]
     UrlUnsupportedScheme(String, String),
 
+    /// The server redirected during an operation that must not follow
+    /// redirects.
     #[error("WebDAV server redirected to `{0}` during a non-redirectable operation")]
     UnexpectedRedirect(Url),
 
+    /// The client has no principal URL yet; `current_user_principal`
+    /// must run first.
     #[error("WebDAV client missing principal URL; call `current_user_principal` first")]
     MissingPrincipal,
+    /// The client has no calendar home-set yet; `calendar_home_set` must
+    /// run first.
     #[error("WebDAV client missing calendar home-set; call `calendar_home_set` first")]
     MissingCalendarHomeSet,
+    /// The client has no addressbook home-set yet; `addressbook_home_set`
+    /// must run first.
     #[error("WebDAV client missing addressbook home-set; call `addressbook_home_set` first")]
     MissingAddressbookHomeSet,
 }

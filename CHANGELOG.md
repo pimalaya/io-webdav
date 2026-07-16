@@ -7,33 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.1] - Unreleased
 
-### Fixed
-
-- Resolved entity references in the multistatus parser.
-
-  quick-xml emits `&amp;`-style references as standalone `GeneralRef` events, which the parser silently dropped: a `displayname` of `A &amp; B` parsed as `A  B`. Predefined (`amp`, `lt`, `gt`, `quot`, `apos`) and numeric character references now resolve to their character; unknown entities are kept verbatim.
-- Every request body now emits the DAV namespace with the `D` prefix (the form the RFC examples use and every interoperable client sends) instead of declaring it as the XML default namespace. Strict servers (iCloud, Google) answer HTTP 400 to an addressbook-multiget whose CardDAV-prefixed root carries default-namespace DAV children, while lenient ones (fastmail, posteo) accepted both; the all-prefixed form passes everywhere.
-- Addressed existing cards by their server-returned resource name instead of reconstructing `<id>.vcf`.
-
-  `CardEntry` and `CardRef` now carry `uri`, the raw last path segment of the href, next to the display `id` (uri with `.vcf` stripped); `ReadCard`, `UpdateCard`, `DeleteCard` and `MultigetCards` take that uri verbatim (`UpdateCardOk.id` renamed to `uri`), and `join_path` no longer appends `.vcf`. Servers are not required to suffix `.vcf` (SabreDAV-hosted cards created by webmail clients often have none), so the reconstruction PUT a nonexistent path and every `If-Match` update failed with a spurious 412. Creation still names new resources `<id>.vcf` inside `CreateCard`.
-
-### Changed
-
-- Carried the redirect target URL in `WebdavClientStdError::UnexpectedRedirect`, so callers can see where the server pointed.
-- Removed the dead `follow_redirects` and `max_redirects` client options along with `WebdavClientStdError::TooManyRedirects`.
-
-  The client never followed redirects (the flag was read by nobody, and the counter reset on every operation so the limit could only trip at zero); redirect resolution lives in io-http's send coroutine, and this client owns a single connected stream, so only the caller can reconnect to the target and retry (via `set_stream`), exactly like io-http's `HttpClientStd`.
-
 ### Added
 
-- Initial release: WebDAV (RFC 4918), CalDAV (RFC 4791) and CardDAV (RFC 6352) coroutines + std client.
-- Added offline test suites (tests/rfc4918, rfc4791, rfc5397, rfc6352, rfc6578, client) resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage; coverage is measured with cargo-tarpaulin (LLVM engine) locally and in CI, uploaded to Codecov.
-- Exposed `WebdavClientStd::stream` (and the `WebdavStream` trait) so higher-level crates can pump their own `WebdavCoroutine`s against the connected stream while reusing the client's discovery cache (mirrors io-jmap's public stream).
-- Added the top-level `sync-token` and the response-level `status` to the multistatus parser, so `sync-collection` removal (404) and truncation (507) rows survive as entries (RFC 6578).
-- Added the ctag and sync-token checkpoint properties to `ListAddressbooks` and the `Addressbook` type (mirrors the calendar ctag mapping).
-- Added the `SyncCollection` coroutine (RFC 6578 `sync-collection` REPORT) returning a `SyncDelta` (changed, vanished, next token, truncated flag), with a dedicated `InvalidSyncToken` error for full-enumeration fallback.
-- Added the `MultigetCards` coroutine (RFC 6352 §8.7 `addressbook-multiget` REPORT) batch-fetching card bodies by id in one round-trip.
-- Added the `EnumCards` coroutine enumerating card references (`CardRef`: id plus ETag, no body) via an ETag-only `addressbook-query`.
-- Added the `enum_cards`, `multiget_cards` and `sync_cards` client methods.
+- Added the I/O-free `WebdavCoroutine` and the `webdav_try!` macro (the coroutine equivalent of `?`).
+
+  The trait pairs a `Yield` and a `Return` associated type with a two-variant `WebdavCoroutineState`. Standard coroutines pick the shared `WebdavYield` (`WantsRead` / `WantsWrite`); the redirect-capable discovery coroutines declare their own `WebdavRedirectYield`, adding a `WantsRedirect { url, keep_alive, same_origin }` variant that surfaces a 3xx to the caller instead of following it.
+
+- Added I/O-free WebDAV core coroutines following RFC 4918: `PROPFIND`, `PROPPATCH`, `MKCOL`, `COPY`, `MOVE`, `DELETE`, `GET`, `PUT`, `OPTIONS` and `REPORT`, the low-level send coroutine, the `WebdavAuth` modes (Basic, Bearer) and a multistatus parser resolving entity references and carrying the top-level sync-token and response-level status rows (RFC 6578).
+
+- Added I/O-free CalDAV coroutines following RFC 4791: calendar collection list, create, update and delete, calendar object resource (item) read, create, update and delete, and calendar home-set discovery.
+
+- Added I/O-free CardDAV coroutines following RFC 6352: address book collection list, create, update and delete, contact card read, create, update and delete, `addressbook-multiget` batch fetch, ETag-only enumeration, and address book home-set discovery.
+
+  Cards are addressed by their server-returned resource name rather than a reconstructed `<id>.vcf`, so servers that do not suffix `.vcf` no longer trip spurious `If-Match` 412s.
+
+- Added the I/O-free current-user-principal discovery coroutine following RFC 5397.
+
+- Added the collection synchronization coroutine following RFC 6578: a `sync-collection` REPORT returning changed and vanished rows, the next sync token and a truncation flag, with a dedicated invalid-sync-token error driving the full-enumeration fallback.
+
+- Added the `client` cargo feature enabling the std-blocking `WebdavClientStd`.
+
+  A light client wrapping any `Read + Write` stream and exposing one method per WebDAV operation plus the cached discovery flow (current-user-principal to calendar / address book home set); `connect` opens `http://` / `https://` URLs itself under one of the TLS features (`rustls-ring` default, `rustls-aws`, `native-tls`). The client owns a single connected stream and never follows redirects: it surfaces the target URL in `WebdavClientStdError::UnexpectedRedirect` so the caller can reconnect via `set_stream`. `WebdavClientStd::stream` (and the `WebdavStream` trait) let higher-level crates pump their own coroutines against the connected stream while reusing the discovery cache.
+
+- Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
 [0.0.1]: https://github.com/pimalaya/io-webdav/releases/tag/v0.0.1

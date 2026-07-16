@@ -7,7 +7,7 @@
 //! every CalDAV/CardDAV coroutine touches.
 //!
 //! Builds on [`url::Url::join`] for path composition via
-//! [`crate::rfc4918::resolve`].
+//! `resolve`.
 
 use alloc::{
     format,
@@ -19,7 +19,7 @@ use io_http::rfc9110::request::HttpRequest;
 use log::trace;
 use url::Url;
 
-use crate::rfc4918::{WebdavAuth, utils::*};
+use crate::rfc4918::{WebdavAuth, emit_header, resolve};
 
 /// Fluent builder for a WebDAV HTTP request.
 #[derive(Clone, Debug)]

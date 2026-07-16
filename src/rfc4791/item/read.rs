@@ -45,12 +45,14 @@
 //! println!("{} bytes, etag {:?}", item.data.len(), item.etag);
 //! ```
 
+use alloc::{string::String, vec::Vec};
+
 use log::trace;
 use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::item::{types::ItemBody, utils::join_path},
+    rfc4791::item::join_path,
     rfc4918::{
         WebdavAuth,
         get::Get,
@@ -101,4 +103,14 @@ impl WebdavCoroutine for ReadItem {
 #[derive(Debug)]
 enum State {
     Get(Get),
+}
+
+/// Item body plus optional ETag returned by
+/// [`ReadItem`].
+#[derive(Clone, Debug)]
+pub struct ItemBody {
+    /// Raw iCalendar bytes.
+    pub data: Vec<u8>,
+    /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
+    pub etag: Option<String>,
 }

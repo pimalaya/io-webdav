@@ -106,9 +106,11 @@ pub struct SyncChange {
 /// Failure causes during a `sync-collection` REPORT.
 #[derive(Debug, Error)]
 pub enum SyncCollectionError {
+    /// The server rejected the sync token; a full enumeration is needed.
     #[error("WebDAV server rejected the sync token; run a full enumeration")]
     InvalidSyncToken,
 
+    /// The underlying WebDAV send failed.
     #[error(transparent)]
     Send(#[from] SendError),
 }

@@ -45,6 +45,8 @@
 //! println!("{} bytes, etag {:?}", card.data.len(), card.etag);
 //! ```
 
+use alloc::{string::String, vec::Vec};
+
 use log::trace;
 use url::Url;
 
@@ -56,7 +58,7 @@ use crate::{
         read_etag,
         send::{SendError, SendOk},
     },
-    rfc6352::card::{types::CardBody, utils::join_path},
+    rfc6352::card::join_path,
     webdav_try,
 };
 
@@ -102,4 +104,14 @@ impl WebdavCoroutine for ReadCard {
 #[derive(Debug)]
 enum State {
     Get(Get),
+}
+
+/// Card body plus optional ETag returned by
+/// [`ReadCard`].
+#[derive(Clone, Debug)]
+pub struct CardBody {
+    /// Raw vCard bytes.
+    pub data: Vec<u8>,
+    /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
+    pub etag: Option<String>,
 }

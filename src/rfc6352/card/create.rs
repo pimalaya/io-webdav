@@ -72,7 +72,7 @@ use crate::{
         read_etag,
         send::{SendError, SendOk},
     },
-    rfc6352::card::{types::CreateCardOk, utils::join_path},
+    rfc6352::card::join_path,
     webdav_try,
 };
 
@@ -131,4 +131,14 @@ impl WebdavCoroutine for CreateCard {
 #[derive(Debug)]
 enum State {
     Put(Put),
+}
+
+/// Outcome of a successful
+/// [`CreateCard`] resume.
+#[derive(Clone, Debug)]
+pub struct CreateCardOk {
+    /// Card identifier (as supplied by the caller).
+    pub id: String,
+    /// Entity tag returned by the server, when present.
+    pub etag: Option<String>,
 }

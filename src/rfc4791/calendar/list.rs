@@ -51,8 +51,7 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4791::calendar::{
-        types::Calendar,
-        utils::{CALENDAR, CALENDAR_COLOR, CALENDAR_DESCRIPTION, CALENDAR_TIMEZONE, LIST_PROPS},
+        CALENDAR, CALENDAR_COLOR, CALENDAR_DESCRIPTION, CALENDAR_TIMEZONE, Calendar, LIST_PROPS,
     },
     rfc4918::{
         DISPLAYNAME, GETCTAG, RESOURCETYPE, ResponseEntry, WebdavAuth, propfind::Propfind,

@@ -56,7 +56,7 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::item::utils::join_path,
+    rfc4791::item::join_path,
     rfc4918::{
         WebdavAuth,
         delete::Delete,

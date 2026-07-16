@@ -56,10 +56,7 @@ use crate::{
     rfc4918::{WebdavAuth, report::Report, send::SendError},
     rfc6352::{
         addressbook::addressbook_query_body,
-        card::{
-            types::CardEntry,
-            utils::{CARD_PROPS, card_from_entry},
-        },
+        card::{CARD_PROPS, CardEntry, card_from_entry},
     },
     webdav_try,
 };

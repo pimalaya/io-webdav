@@ -1,15 +1,50 @@
-//! CardDAV addressbook vocabulary (RFC 6352 §5, §6) plus the
-//! request-body helpers shared across the addressbook/card coroutines.
+//! CardDAV addressbook collections (RFC 6352 §5).
+//!
+//! Holds the shared [`Addressbook`] type, the CardDAV property
+//! vocabulary, and the crate-internal request-body helpers reused across
+//! the addressbook coroutines. Each coroutine (create, delete, home_set,
+//! list, update) is its own submodule.
+
+pub mod create;
+pub mod delete;
+pub mod home_set;
+pub mod list;
+pub mod update;
 
 use alloc::{format, string::String, vec::Vec};
 
-use crate::{
-    rfc4918::{
-        DISPLAYNAME, GETCTAG, Namespace, Property, RESOURCETYPE, SYNC_TOKEN, escape_text,
-        report_query_body,
-    },
-    rfc6352::addressbook::types::Addressbook,
+use serde::{Deserialize, Serialize};
+
+use crate::rfc4918::{
+    DISPLAYNAME, GETCTAG, Namespace, Property, RESOURCETYPE, SYNC_TOKEN, escape_text,
+    report_query_body,
 };
+
+/// A CardDAV addressbook collection (RFC 6352 §5).
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
+pub struct Addressbook {
+    /// Addressbook identifier; the last non-empty path segment of the
+    /// addressbook collection URL.
+    pub id: String,
+
+    /// Human-readable display name (DAV:displayname).
+    pub display_name: Option<String>,
+
+    /// Free-form description (RFC 6352 §6.2.1).
+    pub description: Option<String>,
+
+    /// Display color (custom inf-it.com extension, widely supported by
+    /// CardDAV clients).
+    pub color: Option<String>,
+
+    /// Collection change tag (CalendarServer ctag extension); bumped on
+    /// every change to the addressbook.
+    pub ctag: Option<String>,
+
+    /// Collection sync token (RFC 6578 §4), the checkpoint fed back to
+    /// a `sync-collection` REPORT.
+    pub sync_token: Option<String>,
+}
 
 /// CardDAV namespace (RFC 6352 §4).
 pub const CARDDAV: Namespace = Namespace {

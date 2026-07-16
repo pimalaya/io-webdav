@@ -55,10 +55,9 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        parse_multistatus, propfind_body,
+        Multistatus, Property, WebdavAuth, parse_multistatus, propfind_body,
         request::WebdavRequest,
         send::{SendError, SendRaw},
-        types::{Multistatus, Property, WebdavAuth},
     },
     webdav_try,
 };
