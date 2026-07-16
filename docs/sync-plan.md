@@ -41,7 +41,7 @@ Files: src/rfc6352/card/.
 
 ## Conventions and checks
 
-Follow the existing io-webdav style: one coroutine per file with a doc example, shared types in types.rs, no_std with the client feature gated. After each task run cargo fmt, clippy and test through the flake:
+Follow the existing io-webdav style: one coroutine per file with a doc example, shared types in the subdomain's own module, no_std with the client feature gated. After each task run cargo fmt, clippy and test through the flake:
 
 ```sh
 nix develop --command cargo fmt
@@ -50,3 +50,9 @@ nix develop --command cargo test
 ```
 
 Update CHANGELOG.md (keepachangelog format, past-tense bullets) and the README feature list as coroutines land.
+
+## Landed
+
+All five tasks shipped (2026-07-05): the multistatus parser reads the top-level sync-token and the response-level status rows, addressbooks carry sync_token and ctag, the sync-collection REPORT (SyncCollection / SyncDelta) and the addressbook-multiget batch fetch (MultigetCards) coroutines exist, and ETag-only enumeration (EnumCards returning CardRef rows) is in place.
+
+The file layout this plan references (types.rs, utils.rs) was retired on 2026-07-16: each subdomain's shared types and vocabulary now live in its own sibling module (rfc4918.rs, rfc4791/calendar.rs, rfc6352/addressbook.rs, rfc6352/card.rs) with the coroutine submodules beside it, and every single-coroutine result type moved into its coroutine file, aligning io-webdav with the Pimalaya types-placement guideline (no types.rs catch-all, no doc-inlined re-export flatten). SYNC_TOKEN, GETCTAG and CALENDARSERVER landed as generic DAV vocabulary in rfc4918 rather than being hoisted from a calendar utils module.

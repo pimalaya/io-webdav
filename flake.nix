@@ -1,9 +1,8 @@
 {
-  description = "WebDAV client library, written in Rust";
+  description = "WebDAV client library for Rust";
 
   inputs = {
     nixpkgs = {
-      # until crates.io fix fully backported
       url = "github:nixos/nixpkgs/nixos-25.11";
     };
     fenix = {
