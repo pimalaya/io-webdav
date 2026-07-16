@@ -620,10 +620,15 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
 
     client.set_stream(connect(&base));
     let cards = client.list_cards(&book_id).expect("list cards");
-    assert!(
-        cards.iter().any(|c| c.id == card_id),
-        "created card {card_id} missing from REPORT"
-    );
+    // Existing cards are addressed by their server-returned resource name,
+    // not the display id: CreateCard appended `.vcf`, so the server stored
+    // the card under `<card_id>.vcf` (servers are free to pick any name).
+    let card_uri = cards
+        .iter()
+        .find(|c| c.id == card_id)
+        .unwrap_or_else(|| panic!("created card {card_id} missing from REPORT"))
+        .uri
+        .clone();
 
     // ── REPORT enum card refs (etag-only spine) ─────────────────────────────────
 
@@ -638,7 +643,7 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
 
     client.set_stream(connect(&base));
     let fetched = client
-        .multiget_cards(&book_id, &[card_id.as_str()])
+        .multiget_cards(&book_id, &[card_uri.as_str()])
         .expect("multiget cards");
     assert!(
         fetched
@@ -660,7 +665,7 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
     // ── GET read card ───────────────────────────────────────────────────────────
 
     client.set_stream(connect(&base));
-    let body = client.read_card(&book_id, &card_id).expect("read card");
+    let body = client.read_card(&book_id, &card_uri).expect("read card");
     assert!(!body.data.is_empty(), "read card returned empty body");
 
     // ── PUT update card ─────────────────────────────────────────────────────────
@@ -669,7 +674,7 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
     client
         .update_card(
             &book_id,
-            &card_id,
+            &card_uri,
             build_vcf(&card_id, "io-webdav Test (updated)").into_bytes(),
             body.etag.as_deref(),
         )
@@ -679,7 +684,7 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
 
     client.set_stream(connect(&base));
     client
-        .delete_card(&book_id, &card_id, None)
+        .delete_card(&book_id, &card_uri, None)
         .expect("delete card");
 
     // ── REPORT sync-collection (incremental sync reports the removal) ───────────
@@ -750,16 +755,21 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
 
     client.set_stream(connect(&base));
     let cards = client.list_cards(addressbook_id).expect("list cards");
-    assert!(
-        cards.iter().any(|c| c.id == card_id),
-        "created card {card_id} missing from REPORT"
-    );
+    // Existing cards are addressed by their server-returned resource name,
+    // not the display id: CreateCard appended `.vcf`, so the server stored
+    // the card under `<card_id>.vcf` (servers are free to pick any name).
+    let card_uri = cards
+        .iter()
+        .find(|c| c.id == card_id)
+        .unwrap_or_else(|| panic!("created card {card_id} missing from REPORT"))
+        .uri
+        .clone();
 
     // ── GET read card ───────────────────────────────────────────────────────────
 
     client.set_stream(connect(&base));
     let body = client
-        .read_card(addressbook_id, &card_id)
+        .read_card(addressbook_id, &card_uri)
         .expect("read card");
     assert!(!body.data.is_empty(), "read card returned empty body");
 
@@ -769,7 +779,7 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
     client
         .update_card(
             addressbook_id,
-            &card_id,
+            &card_uri,
             build_vcf(&card_id, "io-webdav Test (updated)").into_bytes(),
             body.etag.as_deref(),
         )
@@ -779,7 +789,7 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
 
     client.set_stream(connect(&base));
     client
-        .delete_card(addressbook_id, &card_id, None)
+        .delete_card(addressbook_id, &card_uri, None)
         .expect("delete card");
 }
 
