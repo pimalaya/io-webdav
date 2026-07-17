@@ -1,5 +1,10 @@
 //! `create-card` coroutine: PUT raw vCard bytes against
-//! `<addressbook>/<id>.vcf`.
+//! `<addressbook>/<id>`.
+//!
+//! The `id` is the resource name, used verbatim — io-webdav never
+//! appends a file extension, so the caller owns the whole name
+//! (`alice.vcf`, `alice`, an opaque token). Whatever is created is
+//! exactly what read/update/delete address later.
 //!
 //! Uses `If-None-Match: *` so the server rejects the PUT when a
 //! resource with the same id already exists.
@@ -56,7 +61,6 @@
 use core::mem;
 
 use alloc::{
-    format,
     string::{String, ToString},
     vec::Vec,
 };
@@ -93,7 +97,7 @@ impl CreateCard {
         id: &str,
         vcard: Vec<u8>,
     ) -> Self {
-        let path = join_path(addressbook_path, &format!("{id}.vcf"));
+        let path = join_path(addressbook_path, id);
         let put = Put::new(PutArgs {
             base_url,
             auth,
@@ -137,7 +141,8 @@ enum State {
 /// [`CreateCard`] resume.
 #[derive(Clone, Debug)]
 pub struct CreateCardOk {
-    /// Card identifier (as supplied by the caller).
+    /// Card resource id (the resource name supplied by the caller, used
+    /// verbatim).
     pub id: String,
     /// Entity tag returned by the server, when present.
     pub etag: Option<String>,

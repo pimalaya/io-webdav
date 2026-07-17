@@ -113,15 +113,13 @@ fn from_entry(entry: &ResponseEntry) -> Option<CardRef> {
         return None;
     }
 
-    let uri = entry.id();
-    let id = uri.trim_end_matches(".vcf");
+    let id = entry.id();
     if id.is_empty() {
         return None;
     }
 
     Some(CardRef {
         id: id.to_string(),
-        uri: uri.to_string(),
         etag: entry
             .text(GETETAG)
             .map(|raw| raw.trim_matches('"').to_string()),

@@ -69,16 +69,17 @@ pub struct ReadCard {
 }
 
 impl ReadCard {
-    /// Builds a new `read-card` coroutine. `card_uri` is the resource
-    /// name as the server returned it (`CardEntry::uri`).
+    /// Builds a new `read-card` coroutine. `id` is the resource id
+    /// exactly as the server returned it (`CardEntry::id`), used
+    /// verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         addressbook_path: &str,
-        card_uri: &str,
+        id: &str,
     ) -> Self {
-        let path = join_path(addressbook_path, card_uri);
+        let path = join_path(addressbook_path, id);
         Self {
             state: State::Get(Get::new(base_url, auth, user_agent, &path)),
         }

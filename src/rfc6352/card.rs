@@ -29,13 +29,12 @@ use crate::{
 /// [`EnumCards`](crate::rfc6352::card::enumerate::EnumCards).
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CardRef {
-    /// Display identifier: [`uri`](Self::uri) with any `.vcf` stripped.
+    /// Resource id: the last path segment of the card's href, exactly
+    /// as the server returned it. It is the addressing key of the read,
+    /// update and delete coroutines. io-webdav never adds nor strips a
+    /// file extension, so whatever name the server gives the resource
+    /// (`alice.vcf`, `alice`, an opaque token) round-trips unchanged.
     pub id: String,
-
-    /// Resource name (last path segment of the href), exactly as the
-    /// server returned it; the addressing key of the read, update and
-    /// delete coroutines. Servers are not required to suffix `.vcf`.
-    pub uri: String,
 
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
@@ -45,13 +44,9 @@ pub struct CardRef {
 /// [`ListCards`](crate::rfc6352::card::list::ListCards).
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CardEntry {
-    /// Display identifier: [`uri`](Self::uri) with any `.vcf` stripped.
+    /// Resource id: the last path segment of the card's href, exactly
+    /// as the server returned it (see [`CardRef::id`]).
     pub id: String,
-
-    /// Resource name (last path segment of the href), exactly as the
-    /// server returned it; the addressing key of the read, update and
-    /// delete coroutines. Servers are not required to suffix `.vcf`.
-    pub uri: String,
 
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
@@ -63,19 +58,19 @@ pub struct CardEntry {
 /// Properties requested when listing or batch-fetching card bodies.
 pub(crate) const CARD_PROPS: &[Property] = &[GETETAG, ADDRESS_DATA];
 
-/// Joins an addressbook collection path with a card resource name into
-/// the card resource path. The name is used verbatim: for existing
-/// cards it must be the server's own (`CardEntry::uri` / `CardRef::uri`,
-/// not the display id), since servers are not required to suffix
-/// `.vcf`; only creation appends the extension, in `CreateCard`.
-pub fn join_path(addressbook: &str, uri: &str) -> String {
+/// Joins an addressbook collection path with a card resource id into the
+/// card resource path. The id is used verbatim: it must be a resource id
+/// exactly as the server returned it (`CardEntry::id` / `CardRef::id`).
+/// io-webdav never adds nor strips a file extension, so creation, read,
+/// update and delete all address the very same path.
+pub fn join_path(addressbook: &str, id: &str) -> String {
     let addressbook = addressbook.trim_end_matches('/');
-    let uri = uri.trim_start_matches('/');
-    format!("{addressbook}/{uri}")
+    let id = id.trim_start_matches('/');
+    format!("{addressbook}/{id}")
 }
 
 /// Maps a multistatus response entry carrying [`CARD_PROPS`] to a
-/// [`CardEntry`] (id, uri, etag, raw vCard bytes).
+/// [`CardEntry`] (id, etag, raw vCard bytes).
 pub(crate) fn card_from_entry(entry: &ResponseEntry) -> Option<CardEntry> {
     // A collection self-entry (its href ends in a slash) is never a
     // card; iCloud echoes the addressbook itself in the multistatus.
@@ -83,8 +78,7 @@ pub(crate) fn card_from_entry(entry: &ResponseEntry) -> Option<CardEntry> {
         return None;
     }
 
-    let uri = entry.id();
-    let id = uri.trim_end_matches(".vcf");
+    let id = entry.id();
     if id.is_empty() {
         return None;
     }
@@ -94,7 +88,6 @@ pub(crate) fn card_from_entry(entry: &ResponseEntry) -> Option<CardEntry> {
 
     Some(CardEntry {
         id: id.to_string(),
-        uri: uri.to_string(),
         etag: entry
             .text(GETETAG)
             .map(|raw| raw.trim_matches('"').to_string()),

@@ -598,10 +598,10 @@ fn card_methods_run_their_coroutines() {
     ]);
 
     let cards = client.list_cards("contacts").expect("list cards");
-    assert_eq!(cards.first().unwrap().id, "alice");
+    assert_eq!(cards.first().unwrap().id, "alice.vcf");
 
     let refs = client.enum_cards("contacts").expect("enum cards");
-    assert_eq!(refs.first().unwrap().uri, "alice.vcf");
+    assert_eq!(refs.first().unwrap().id, "alice.vcf");
 
     let fetched = client
         .multiget_cards("contacts", &["alice.vcf"])

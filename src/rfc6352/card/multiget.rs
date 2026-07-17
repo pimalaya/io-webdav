@@ -77,19 +77,19 @@ pub struct MultigetCards {
 
 impl MultigetCards {
     /// Builds a new `multiget-cards` coroutine fetching each card of
-    /// `uris` (resource names as the server returned them) inside
-    /// `addressbook_path`. The `Depth` header is pinned to 0: RFC 6352
-    /// §8.7 only defines the report for that value.
+    /// `ids` (resource ids as the server returned them, used verbatim)
+    /// inside `addressbook_path`. The `Depth` header is pinned to 0: RFC
+    /// 6352 §8.7 only defines the report for that value.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         addressbook_path: &str,
-        uris: &[&str],
+        ids: &[&str],
     ) -> Self {
-        let hrefs: Vec<String> = uris
+        let hrefs: Vec<String> = ids
             .iter()
-            .map(|uri| join_path(addressbook_path, uri))
+            .map(|id| join_path(addressbook_path, id))
             .collect();
         let body = addressbook_multiget_body(&hrefs, CARD_PROPS);
         let report = Report::new(base_url, auth, user_agent, addressbook_path, 0, body);

@@ -51,7 +51,7 @@
 //!     }
 //! };
 //!
-//! println!("updated {} (etag {:?})", updated.uri, updated.etag);
+//! println!("updated {} (etag {:?})", updated.id, updated.etag);
 //! ```
 
 use core::mem;
@@ -79,23 +79,24 @@ use crate::{
 /// Coroutine that updates a card.
 #[derive(Debug)]
 pub struct UpdateCard {
-    uri: String,
+    id: String,
     state: State,
 }
 
 impl UpdateCard {
-    /// Builds a new `update-card` coroutine. `uri` is the resource name
-    /// as the server returned it (`CardEntry::uri`).
+    /// Builds a new `update-card` coroutine. `id` is the resource id
+    /// exactly as the server returned it (`CardEntry::id`), used
+    /// verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         addressbook_path: &str,
-        uri: &str,
+        id: &str,
         vcard: Vec<u8>,
         if_match: Option<&str>,
     ) -> Self {
-        let path = join_path(addressbook_path, uri);
+        let path = join_path(addressbook_path, id);
         let put = Put::new(PutArgs {
             base_url,
             auth,
@@ -107,7 +108,7 @@ impl UpdateCard {
             if_none_match: None,
         });
         Self {
-            uri: uri.to_string(),
+            id: id.to_string(),
             state: State::Put(put),
         }
     }
@@ -123,8 +124,8 @@ impl WebdavCoroutine for UpdateCard {
             State::Put(put) => {
                 let SendOk { response, .. } = webdav_try!(put, arg);
                 let etag = read_etag(&response);
-                let uri = mem::take(&mut self.uri);
-                WebdavCoroutineState::Complete(Ok(UpdateCardOk { uri, etag }))
+                let id = mem::take(&mut self.id);
+                WebdavCoroutineState::Complete(Ok(UpdateCardOk { id, etag }))
             }
         }
     }
@@ -139,8 +140,9 @@ enum State {
 /// [`UpdateCard`] resume.
 #[derive(Clone, Debug)]
 pub struct UpdateCardOk {
-    /// Card resource name (as supplied by the caller).
-    pub uri: String,
+    /// Card resource id (the resource name supplied by the caller, used
+    /// verbatim).
+    pub id: String,
     /// Updated entity tag returned by the server, when present.
     pub etag: Option<String>,
 }

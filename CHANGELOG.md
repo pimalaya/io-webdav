@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Made a card's id the server's resource name verbatim. `CardRef` and `CardEntry` now carry a single `id` — the href's last path segment, exactly as the server returned it — replacing the previous `.vcf`-stripped `id` plus verbatim `uri` pair. `CreateCard` no longer appends a `.vcf` extension (the caller owns the whole resource name), and `UpdateCardOk.uri` is renamed to `id`. io-webdav never adds nor strips a file extension anywhere, so create, list, read, update and delete all address the very same path.
+
+  **Breaking**: consumers reading `CardEntry::uri` / `CardRef::uri` must switch to `id`; callers that relied on `CreateCard` appending `.vcf` must now pass the extension themselves (e.g. `create_card(book, "alice.vcf", …)`).
+
+### Fixed
+
+- Fixed `read`, `update` and `delete` card targeting the wrong resource on servers that suffix `.vcf` (Fastmail, iCloud, …). A consumer feeding a listed card's `id` back into read/update/delete built an extension-less path the server did not have, so reads 404'd and updates/deletes silently no-op'd on the real card. The id is now verbatim end-to-end, and a regression test lists a `.vcf` card then reads it back by its listed id.
+
 ## [0.1.0] - 2026-07-16
 
 ### Added

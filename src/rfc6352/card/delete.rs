@@ -71,17 +71,17 @@ pub struct DeleteCard {
 }
 
 impl DeleteCard {
-    /// Builds a new `delete-card` coroutine. `card_uri` is the resource
-    /// name as the server returned it (`CardRef::uri`).
+    /// Builds a new `delete-card` coroutine. `id` is the resource id
+    /// exactly as the server returned it (`CardRef::id`), used verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         addressbook_path: &str,
-        card_uri: &str,
+        id: &str,
         if_match: Option<&str>,
     ) -> Self {
-        let path = join_path(addressbook_path, card_uri);
+        let path = join_path(addressbook_path, id);
         Self {
             state: State::Delete(Delete::new(base_url, auth, user_agent, &path, if_match)),
         }

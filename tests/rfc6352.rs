@@ -239,13 +239,6 @@ END:VCARD</c:address-data>
       <d:status>HTTP/1.1 200 OK</d:status>
     </d:propstat>
   </d:response>
-  <d:response>
-    <d:href>/.vcf</d:href>
-    <d:propstat>
-      <d:prop><c:address-data>X</c:address-data></d:prop>
-      <d:status>HTTP/1.1 200 OK</d:status>
-    </d:propstat>
-  </d:response>
 </d:multistatus>"#;
 
 #[test]
@@ -256,15 +249,15 @@ fn list_cards_maps_address_data_entries() {
     assert!(request.contains("<c:address-data/>"));
 
     let cards = ret.unwrap();
-    // NOTE: the data-less entry and the empty-id href are skipped; the
-    // suffix-less resource name is kept verbatim.
+    // NOTE: the data-less entry is skipped; every id is the href's last
+    // segment verbatim — no `.vcf` is stripped, so `alice.vcf` stays
+    // `alice.vcf` and the suffix-less `bob` stays `bob`.
     assert_eq!(cards.len(), 2);
-    let alice = cards.iter().find(|card| card.id == "alice").unwrap();
-    assert_eq!(alice.uri, "alice.vcf");
+    let alice = cards.iter().find(|card| card.id == "alice.vcf").unwrap();
     assert_eq!(alice.etag.as_deref(), Some("etag-1"));
     assert!(alice.data.starts_with(b"BEGIN:VCARD"));
     let bob = cards.iter().find(|card| card.id == "bob").unwrap();
-    assert_eq!(bob.uri, "bob");
+    assert_eq!(bob.etag.as_deref(), Some("etag-2"));
 }
 
 #[test]
@@ -278,13 +271,6 @@ fn enum_cards_returns_etag_only_references() {
           <d:status>HTTP/1.1 200 OK</d:status>
         </d:propstat>
       </d:response>
-      <d:response>
-        <d:href>/.vcf</d:href>
-        <d:propstat>
-          <d:prop><d:getetag>"etag-2"</d:getetag></d:prop>
-          <d:status>HTTP/1.1 200 OK</d:status>
-        </d:propstat>
-      </d:response>
     </d:multistatus>"#;
 
     let (request, ret) = expect_exchange(&mut enumerate, &multistatus_response(xml));
@@ -294,8 +280,8 @@ fn enum_cards_returns_etag_only_references() {
     let refs = ret.unwrap();
     assert_eq!(refs.len(), 1);
     let alice = refs.first().unwrap();
-    assert_eq!(alice.id, "alice");
-    assert_eq!(alice.uri, "alice.vcf");
+    // the id is the href's last segment verbatim, `.vcf` included
+    assert_eq!(alice.id, "alice.vcf");
     assert_eq!(alice.etag.as_deref(), Some("etag-1"));
 }
 
@@ -331,7 +317,8 @@ fn enum_cards_skips_the_collection_self_entry() {
 
     let refs = ret.unwrap();
     assert_eq!(refs.len(), 1);
-    assert_eq!(refs.first().unwrap().id, "5d18175a");
+    // the id is the href's last segment verbatim, `.vcf` included
+    assert_eq!(refs.first().unwrap().id, "5d18175a.vcf");
 }
 
 #[test]
@@ -372,7 +359,10 @@ fn read_card_returns_body_and_etag() {
 }
 
 #[test]
-fn create_card_appends_the_vcf_suffix() {
+fn create_card_uses_the_id_verbatim() {
+    // The id is the resource name — io-webdav never appends `.vcf`, so a
+    // bare `alice` is PUT at `.../alice`, not `.../alice.vcf`. The caller
+    // owns the whole name and picks its own extension, if any.
     let mut create = CreateCard::new(
         &base(),
         &WebdavAuth::None,
@@ -383,7 +373,7 @@ fn create_card_appends_the_vcf_suffix() {
     );
     let reply = http_response("201 Created", &[("ETag", "\"etag-1\"")], "");
     let (request, ret) = expect_exchange(&mut create, &reply);
-    assert!(request.starts_with("put /dav/books/contacts/alice.vcf http/1.1\r\n"));
+    assert!(request.starts_with("put /dav/books/contacts/alice http/1.1\r\n"));
     assert!(request.contains("if-none-match: *\r\n"));
     assert!(request.contains("content-type: text/vcard; charset=utf-8\r\n"));
 
@@ -408,7 +398,7 @@ fn update_card_uses_the_resource_name_verbatim() {
     assert!(request.contains("if-match: \"etag-2\"\r\n"));
 
     let ok = ret.unwrap();
-    assert_eq!(ok.uri, "bob");
+    assert_eq!(ok.id, "bob");
     assert!(ok.etag.is_none());
 }
 
@@ -424,5 +414,30 @@ fn delete_card_targets_the_resource() {
     );
     let (request, ret) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
     assert!(request.starts_with("delete /dav/books/contacts/alice.vcf http/1.1\r\n"));
+    ret.unwrap();
+}
+
+#[test]
+fn a_listed_card_id_round_trips_through_read() {
+    // Regression: a consumer takes a card's listed id and reads it back.
+    // The id must address the very resource the server enumerated, with
+    // no extension added or stripped in between — the asymmetry that
+    // broke read/update/delete on `.vcf`-suffixing servers (the listed
+    // id was `.vcf`-stripped, but the GET path was not re-suffixed).
+    let mut list = ListCards::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
+    let (_request, ret) = expect_exchange(&mut list, &multistatus_response(CARDS_XML));
+    let cards = ret.unwrap();
+    let alice = cards.iter().find(|card| card.id == "alice.vcf").unwrap();
+
+    let mut read = ReadCard::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &alice.id,
+    );
+    let reply = http_response("200 OK", &[("ETag", "\"etag-1\"")], "BEGIN:VCARD");
+    let (request, ret) = expect_exchange(&mut read, &reply);
+    assert!(request.starts_with("get /dav/books/contacts/alice.vcf http/1.1\r\n"));
     ret.unwrap();
 }
