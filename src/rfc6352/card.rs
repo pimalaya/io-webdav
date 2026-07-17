@@ -29,11 +29,9 @@ use crate::{
 /// [`EnumCards`](crate::rfc6352::card::enumerate::EnumCards).
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CardRef {
-    /// Resource id: the last path segment of the card's href, exactly
-    /// as the server returned it. It is the addressing key of the read,
-    /// update and delete coroutines. io-webdav never adds nor strips a
-    /// file extension, so whatever name the server gives the resource
-    /// (`alice.vcf`, `alice`, an opaque token) round-trips unchanged.
+    /// Resource id: the card's href last path segment, exactly as the
+    /// server returned it, and the addressing key for read/update/delete.
+    /// io-webdav never adds nor strips a file extension.
     pub id: String,
 
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
@@ -58,11 +56,9 @@ pub struct CardEntry {
 /// Properties requested when listing or batch-fetching card bodies.
 pub(crate) const CARD_PROPS: &[Property] = &[GETETAG, ADDRESS_DATA];
 
-/// Joins an addressbook collection path with a card resource id into the
-/// card resource path. The id is used verbatim: it must be a resource id
-/// exactly as the server returned it (`CardEntry::id` / `CardRef::id`).
-/// io-webdav never adds nor strips a file extension, so creation, read,
-/// update and delete all address the very same path.
+/// Joins an addressbook collection path with a card resource id (a
+/// `CardEntry::id` / `CardRef::id`, used verbatim) into the card resource
+/// path. io-webdav never adds nor strips a file extension.
 pub fn join_path(addressbook: &str, id: &str) -> String {
     let addressbook = addressbook.trim_end_matches('/');
     let id = id.trim_start_matches('/');

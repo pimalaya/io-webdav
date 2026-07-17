@@ -371,6 +371,8 @@ fn create_card_uses_the_id_verbatim() {
         "alice",
         b"BEGIN:VCARD".to_vec(),
     );
+    // No `Location` in the reply → the returned id falls back to the
+    // caller's name.
     let reply = http_response("201 Created", &[("ETag", "\"etag-1\"")], "");
     let (request, ret) = expect_exchange(&mut create, &reply);
     assert!(request.starts_with("put /dav/books/contacts/alice http/1.1\r\n"));
@@ -379,6 +381,38 @@ fn create_card_uses_the_id_verbatim() {
 
     let ok = ret.unwrap();
     assert_eq!(ok.id, "alice");
+    assert_eq!(ok.etag.as_deref(), Some("etag-1"));
+}
+
+#[test]
+fn create_card_prefers_the_location_id_when_the_server_relocates() {
+    // A server may store the card under a name of its own and report it
+    // in `Location` (Google does): the returned id is then that name, not
+    // the caller's, while the PUT still targets the caller's name.
+    let mut create = CreateCard::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        "client-name.vcf",
+        b"BEGIN:VCARD".to_vec(),
+    );
+    let reply = http_response(
+        "201 Created",
+        &[
+            ("ETag", "\"etag-1\""),
+            (
+                "Location",
+                "https://dav.example.org/dav/books/contacts/server-9f8e7d",
+            ),
+        ],
+        "",
+    );
+    let (request, ret) = expect_exchange(&mut create, &reply);
+    assert!(request.starts_with("put /dav/books/contacts/client-name.vcf http/1.1\r\n"));
+
+    let ok = ret.unwrap();
+    assert_eq!(ok.id, "server-9f8e7d");
     assert_eq!(ok.etag.as_deref(), Some("etag-1"));
 }
 

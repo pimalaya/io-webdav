@@ -2,9 +2,10 @@
 //! `<addressbook>/<id>`.
 //!
 //! The `id` is the resource name, used verbatim — io-webdav never
-//! appends a file extension, so the caller owns the whole name
-//! (`alice.vcf`, `alice`, an opaque token). Whatever is created is
-//! exactly what read/update/delete address later.
+//! appends a file extension, so the caller owns the whole name. The
+//! returned [`CreateCardOk::id`] is the caller's name, or the server's
+//! own when it relocates the resource and reports it in a `Location`
+//! header; either way it is what read/update/delete address.
 //!
 //! Uses `If-None-Match: *` so the server rejects the PUT when a
 //! resource with the same id already exists.
@@ -125,7 +126,10 @@ impl WebdavCoroutine for CreateCard {
             State::Put(put) => {
                 let SendOk { response, .. } = webdav_try!(put, arg);
                 let etag = read_etag(&response);
-                let id = mem::take(&mut self.id);
+                let id = response
+                    .header("location")
+                    .and_then(id_from_location)
+                    .unwrap_or_else(|| mem::take(&mut self.id));
                 WebdavCoroutineState::Complete(Ok(CreateCardOk { id, etag }))
             }
         }
@@ -137,12 +141,26 @@ enum State {
     Put(Put),
 }
 
+/// Extracts a card's resource id from a `Location` header: its last path
+/// segment (query and fragment dropped), matching how a listed card's id
+/// is derived from its href. [`None`] for an empty segment.
+fn id_from_location(location: &str) -> Option<String> {
+    let path = location
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(location)
+        .trim_end_matches('/');
+    let segment = path.rsplit('/').next().unwrap_or_default();
+    (!segment.is_empty()).then(|| segment.to_string())
+}
+
 /// Outcome of a successful
 /// [`CreateCard`] resume.
 #[derive(Clone, Debug)]
 pub struct CreateCardOk {
-    /// Card resource id (the resource name supplied by the caller, used
-    /// verbatim).
+    /// Card resource id: the `Location` header's last path segment when
+    /// the server returns one (its own name for the resource), otherwise
+    /// the caller-supplied name, verbatim.
     pub id: String,
     /// Entity tag returned by the server, when present.
     pub etag: Option<String>,
