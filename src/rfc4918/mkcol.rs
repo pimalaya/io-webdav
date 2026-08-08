@@ -15,7 +15,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{DISPLAYNAME, WebdavAuth, mkcol::Mkcol},
+//!     rfc4918::{DISPLAYNAME, WebdavPropValue, WebdavAuth, mkcol::WebdavMkcol},
 //! };
 //! use url::Url;
 //!
@@ -25,8 +25,8 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine =
-//!     Mkcol::new(&base_url, &auth, "io-webdav", "/dav/collection/", &[], &[(DISPLAYNAME, "New")]);
+//! let set = [(DISPLAYNAME, WebdavPropValue::Text("New"))];
+//! let mut coroutine = WebdavMkcol::new(&base_url, &auth, "io-webdav", "/dav/collection/", &[], &set);
 //! let mut arg = None;
 //!
 //! loop {
@@ -50,20 +50,20 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        Property, WebdavAuth, mkcol_body,
+        WebdavAuth, WebdavPropValue, WebdavProperty, mkcol_body,
         request::WebdavRequest,
-        send::{SendError, SendRaw},
+        send::{WebdavSendError, WebdavSendRaw},
     },
     webdav_try,
 };
 
 /// Coroutine that runs an extended `MKCOL`.
 #[derive(Debug)]
-pub struct Mkcol {
+pub struct WebdavMkcol {
     state: State,
 }
 
-impl Mkcol {
+impl WebdavMkcol {
     /// Builds a new `MKCOL` coroutine creating a collection at `path`
     /// with the given extra `resource_types` and property values.
     pub fn new(
@@ -71,21 +71,21 @@ impl Mkcol {
         auth: &WebdavAuth,
         user_agent: &str,
         path: &str,
-        resource_types: &[Property],
-        set: &[(Property, &str)],
+        resource_types: &[WebdavProperty],
+        set: &[(WebdavProperty, WebdavPropValue<'_>)],
     ) -> Self {
         let request = WebdavRequest::mkcol(base_url, auth, user_agent, path)
             .content_type_xml()
             .body(mkcol_body(resource_types, set));
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Mkcol {
+impl WebdavCoroutine for WebdavMkcol {
     type Yield = WebdavYield;
-    type Return = Result<(), SendError>;
+    type Return = Result<(), WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -100,5 +100,5 @@ impl WebdavCoroutine for Mkcol {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

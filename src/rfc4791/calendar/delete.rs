@@ -11,7 +11,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::calendar::delete::DeleteCalendar,
+//!     rfc4791::calendar::delete::CaldavCalendarDelete,
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -23,7 +23,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     DeleteCalendar::new(&base_url, &auth, "io-webdav", "/dav/calendars/", "personal");
+//!     CaldavCalendarDelete::new(&base_url, &auth, "io-webdav", "/dav/calendars/", "personal");
 //! let mut arg = None;
 //!
 //! loop {
@@ -51,18 +51,18 @@ use crate::{
     rfc4791::calendar::join_path,
     rfc4918::{
         WebdavAuth,
-        delete::Delete,
-        send::{SendError, SendOk},
+        delete::WebdavDelete,
+        send::{WebdavSendError, WebdavSendOk},
     },
 };
 
 /// Coroutine that deletes a calendar collection.
 #[derive(Debug)]
-pub struct DeleteCalendar {
+pub struct CaldavCalendarDelete {
     state: State,
 }
 
-impl DeleteCalendar {
+impl CaldavCalendarDelete {
     /// Builds a new `delete-calendar` coroutine.
     pub fn new(
         base_url: &Url,
@@ -73,24 +73,24 @@ impl DeleteCalendar {
     ) -> Self {
         let path = join_path(home_set_path, calendar_id);
         Self {
-            state: State::Delete(Delete::new(base_url, auth, user_agent, &path, None)),
+            state: State::WebdavDelete(WebdavDelete::new(base_url, auth, user_agent, &path, None)),
         }
     }
 }
 
-impl WebdavCoroutine for DeleteCalendar {
+impl WebdavCoroutine for CaldavCalendarDelete {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Delete(delete) => delete.resume(arg),
+            State::WebdavDelete(delete) => delete.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Delete(Delete),
+    WebdavDelete(WebdavDelete),
 }

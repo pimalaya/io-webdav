@@ -7,7 +7,7 @@ Whether you are a human or an AI agent, read these in order before touching the 
 1. the [Pimalaya README](https://github.com/pimalaya) for what the project is and how its repositories stack;
 2. the [Pimalaya CONTRIBUTING](https://github.com/pimalaya/.github/blob/master/CONTRIBUTING.md) guide, which chains to the shared architecture and guidelines;
 3. the inline header documentation, starting with src/lib.rs: it is the architecture document of this crate;
-4. the docs/ folder for the development history and living plans.
+4. the cairn/ folder for the development history and living plans (the Cairn convention: spec/, changes/, log/).
 
 Everything below documents only what differs from the Pimalaya standards.
 
@@ -31,7 +31,7 @@ cargo test --test radicale -- --ignored
 cargo test --test stalwart -- --ignored
 ```
 
-The Radicale script runs the server in a container with a single htpasswd user over plain HTTP on port 5232; the Stalwart script provisions one domain and one user, serving DAV on port 8080.
+The Radicale script runs the server in a container with a single htpasswd user over plain HTTP on port 5232. The Stalwart script provisions one domain and one user, serving DAV on port 8080.
 
 Three run over HTTPS against a real account, each reading its credentials from the environment:
 

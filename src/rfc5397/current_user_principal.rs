@@ -20,7 +20,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState},
 //!     rfc4918::{WebdavAuth, coroutine::WebdavRedirectYield},
-//!     rfc5397::current_user_principal::CurrentUserPrincipal,
+//!     rfc5397::current_user_principal::WebdavCurrentUserPrincipal,
 //! };
 //! use url::Url;
 //!
@@ -30,7 +30,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = CurrentUserPrincipal::new(&base_url, &auth, "io-webdav");
+//! let mut coroutine = WebdavCurrentUserPrincipal::new(&base_url, &auth, "io-webdav");
 //! let mut arg = None;
 //!
 //! let principal = loop {
@@ -61,9 +61,9 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        DAV, Property, WebdavAuth,
+        DAV, WebdavAuth, WebdavProperty,
         coroutine::WebdavRedirectYield,
-        follow_redirects::{FollowRedirects, FollowRedirectsError},
+        follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
         parse_multistatus, propfind_body,
         request::WebdavRequest,
         resolve_href,
@@ -72,7 +72,7 @@ use crate::{
 };
 
 /// `DAV:current-user-principal` property (RFC 5397 §3).
-pub const CURRENT_USER_PRINCIPAL: Property = Property {
+pub const CURRENT_USER_PRINCIPAL: WebdavProperty = WebdavProperty {
     ns: DAV,
     local: "current-user-principal",
 };
@@ -80,12 +80,12 @@ pub const CURRENT_USER_PRINCIPAL: Property = Property {
 /// I/O-free coroutine that discovers the current user principal URL.
 /// Yields [`None`] when the server returned an empty multistatus.
 #[derive(Debug)]
-pub struct CurrentUserPrincipal {
+pub struct WebdavCurrentUserPrincipal {
     base_url: Url,
     state: State,
 }
 
-impl CurrentUserPrincipal {
+impl WebdavCurrentUserPrincipal {
     /// Builds a new `current-user-principal` coroutine targeting
     /// `base_url`'s own path.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str) -> Self {
@@ -96,14 +96,14 @@ impl CurrentUserPrincipal {
 
         Self {
             base_url: base_url.clone(),
-            state: State::Send(FollowRedirects::new(request)),
+            state: State::Send(WebdavFollowRedirects::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for CurrentUserPrincipal {
+impl WebdavCoroutine for WebdavCurrentUserPrincipal {
     type Yield = WebdavRedirectYield;
-    type Return = Result<Option<Url>, FollowRedirectsError>;
+    type Return = Result<Option<Url>, WebdavFollowRedirectsError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -124,5 +124,5 @@ impl WebdavCoroutine for CurrentUserPrincipal {
 
 #[derive(Debug)]
 enum State {
-    Send(FollowRedirects),
+    Send(WebdavFollowRedirects),
 }

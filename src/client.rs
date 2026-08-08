@@ -12,7 +12,7 @@
 //! [`pimalaya_stream::std::stream::StreamStd`].
 //!
 //! Discovery flows top-down from the configured [`base_url`] (the DAV
-//! context root, resolved by pimconf's RFC 6764 discovery upstream):
+//! context root, resolved by io-pim-discovery's RFC 6764 flow upstream):
 //! [`current_user_principal`] resolves the principal URL;
 //! [`calendar_home_set`] / [`addressbook_home_set`] resolve the per-RFC
 //! home-set URL. Each step caches its result; higher-level methods return
@@ -57,39 +57,44 @@ use crate::{
     coroutine::*,
     rfc4791::{
         calendar::{
-            Calendar, create::CreateCalendar, delete::DeleteCalendar, home_set::CalendarHomeSet,
-            list::ListCalendars, update::UpdateCalendar,
+            CaldavCalendar, create::CaldavCalendarCreate, delete::CaldavCalendarDelete,
+            home_set::CaldavCalendarHomeSet, list::CaldavCalendarList,
+            update::CaldavCalendarUpdate,
         },
         item::{
-            create::{CreateItem, CreateItemOk},
-            delete::DeleteItem,
-            list::{ItemEntry, ListItems},
-            read::{ItemBody, ReadItem},
-            update::{UpdateItem, UpdateItemOk},
+            CaldavItemEntry, CaldavItemRef,
+            create::{CaldavItemCreate, CaldavItemCreateOk},
+            delete::CaldavItemDelete,
+            enumerate::CaldavItemEnum,
+            list::CaldavItemList,
+            multiget::CaldavItemMultiget,
+            read::{CaldavItemBody, CaldavItemRead},
+            update::{CaldavItemUpdate, CaldavItemUpdateOk},
         },
     },
     rfc4918::{
         GETETAG, WebdavAuth, coroutine::WebdavRedirectYield,
-        follow_redirects::FollowRedirectsError, send::SendError,
+        follow_redirects::WebdavFollowRedirectsError, send::WebdavSendError,
     },
-    rfc5397::current_user_principal::CurrentUserPrincipal,
+    rfc5397::current_user_principal::WebdavCurrentUserPrincipal,
     rfc6352::{
         addressbook::{
-            Addressbook, create::CreateAddressbook, delete::DeleteAddressbook,
-            home_set::AddressbookHomeSet, list::ListAddressbooks, update::UpdateAddressbook,
+            CarddavAddressbook, create::CarddavAddressbookCreate, delete::CarddavAddressbookDelete,
+            home_set::CarddavAddressbookHomeSet, list::CarddavAddressbookList,
+            update::CarddavAddressbookUpdate,
         },
         card::{
-            CardEntry, CardRef,
-            create::{CreateCard, CreateCardOk},
-            delete::DeleteCard,
-            enumerate::EnumCards,
-            list::ListCards,
-            multiget::MultigetCards,
-            read::{CardBody, ReadCard},
-            update::{UpdateCard, UpdateCardOk},
+            CarddavCardEntry, CarddavCardRef,
+            create::{CarddavCardCreate, CarddavCardCreateOk},
+            delete::CarddavCardDelete,
+            enumerate::CarddavCardEnum,
+            list::CarddavCardList,
+            multiget::CarddavCardMultiget,
+            read::{CarddavCardBody, CarddavCardRead},
+            update::{CarddavCardUpdate, CarddavCardUpdateOk},
         },
     },
-    rfc6578::sync_collection::{SyncCollection, SyncCollectionError, SyncDelta},
+    rfc6578::sync_collection::{WebdavSyncCollection, WebdavSyncCollectionError, WebdavSyncDelta},
 };
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
@@ -101,18 +106,16 @@ const DEFAULT_USER_AGENT: &str = concat!("io-webdav/", env!("CARGO_PKG_VERSION")
 pub enum WebdavClientStdError {
     /// A WebDAV request failed while being sent.
     #[error(transparent)]
-    Send(#[from] SendError),
+    Send(#[from] WebdavSendError),
     /// A redirect-aware WebDAV send failed.
     #[error(transparent)]
-    FollowRedirects(#[from] FollowRedirectsError),
+    WebdavFollowRedirects(#[from] WebdavFollowRedirectsError),
     /// A `sync-collection` REPORT failed.
     #[error(transparent)]
-    SyncCollection(#[from] SyncCollectionError),
-
+    WebdavSyncCollection(#[from] WebdavSyncCollectionError),
     /// An underlying I/O operation failed.
     #[error(transparent)]
     Io(#[from] io::Error),
-
     /// TLS negotiation or the underlying TLS stack failed.
     #[cfg(any(
         feature = "rustls-aws",
@@ -137,12 +140,10 @@ pub enum WebdavClientStdError {
     ))]
     #[error("WebDAV URL `{0}` has unsupported scheme `{1}` (expected `http` or `https`)")]
     UrlUnsupportedScheme(String, String),
-
     /// The server redirected during an operation that must not follow
     /// redirects.
     #[error("WebDAV server redirected to `{0}` during a non-redirectable operation")]
     UnexpectedRedirect(Url),
-
     /// The client has no principal URL yet; `current_user_principal`
     /// must run first.
     #[error("WebDAV client missing principal URL; call `current_user_principal` first")]
@@ -163,21 +164,15 @@ pub struct WebdavClientStd {
     /// own [`WebdavCoroutine`]s through it (as io-jmap exposes its stream),
     /// reusing this client's discovery cache.
     pub stream: Box<dyn WebdavStream>,
-
     auth: WebdavAuth,
-
     /// Base URL prepended to every request path.
     pub base_url: Url,
-
     /// `User-Agent` header value.
     pub user_agent: String,
-
     /// Cached principal URL (RFC 5397).
     pub principal_url: Option<Url>,
-
     /// Cached CalDAV home-set URL (RFC 4791 §6.2.1).
     pub calendar_home_set: Option<Url>,
-
     /// Cached CardDAV home-set URL (RFC 6352 §7.1.1).
     pub addressbook_home_set: Option<Url>,
 }
@@ -318,7 +313,7 @@ impl WebdavClientStd {
         &mut self,
         coroutine: &mut dyn WebdavCoroutine<
             Yield = WebdavRedirectYield,
-            Return = Result<Option<Url>, FollowRedirectsError>,
+            Return = Result<Option<Url>, WebdavFollowRedirectsError>,
         >,
     ) -> Result<Option<Url>, WebdavClientStdError> {
         let mut buf = [0u8; READ_BUFFER_SIZE];
@@ -357,7 +352,8 @@ impl WebdavClientStd {
             return Ok(url.clone());
         }
 
-        let mut coroutine = CurrentUserPrincipal::new(&self.base_url, &self.auth, &self.user_agent);
+        let mut coroutine =
+            WebdavCurrentUserPrincipal::new(&self.base_url, &self.auth, &self.user_agent);
         let url = self.run_redirect(&mut coroutine)?;
         let url = url.ok_or(WebdavClientStdError::MissingPrincipal)?;
 
@@ -382,7 +378,7 @@ impl WebdavClientStd {
         let path = principal.path().to_string();
 
         let mut coroutine =
-            CalendarHomeSet::new(&self.base_url, &self.auth, &self.user_agent, &path);
+            CaldavCalendarHomeSet::new(&self.base_url, &self.auth, &self.user_agent, &path);
         let url = self.run_redirect(&mut coroutine)?;
         let url = url.ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
 
@@ -394,14 +390,15 @@ impl WebdavClientStd {
     /// [`calendar_home_set`].
     ///
     /// [`calendar_home_set`]: WebdavClientStd::calendar_home_set
-    pub fn list_calendars(&mut self) -> Result<BTreeSet<Calendar>, WebdavClientStdError> {
+    pub fn list_calendars(&mut self) -> Result<BTreeSet<CaldavCalendar>, WebdavClientStdError> {
         let home = self
             .calendar_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
         let path = home.path().to_string();
 
-        let coroutine = ListCalendars::new(&self.base_url, &self.auth, &self.user_agent, &path);
+        let coroutine =
+            CaldavCalendarList::new(&self.base_url, &self.auth, &self.user_agent, &path);
         self.run(coroutine)
     }
 
@@ -409,14 +406,17 @@ impl WebdavClientStd {
     /// [`calendar_home_set`].
     ///
     /// [`calendar_home_set`]: WebdavClientStd::calendar_home_set
-    pub fn create_calendar(&mut self, calendar: &Calendar) -> Result<(), WebdavClientStdError> {
+    pub fn create_calendar(
+        &mut self,
+        calendar: &CaldavCalendar,
+    ) -> Result<(), WebdavClientStdError> {
         let home = self
             .calendar_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
         let path = home.path().to_string();
 
-        let coroutine = CreateCalendar::new(
+        let coroutine = CaldavCalendarCreate::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -427,14 +427,17 @@ impl WebdavClientStd {
     }
 
     /// Updates a calendar collection's properties.
-    pub fn update_calendar(&mut self, calendar: &Calendar) -> Result<(), WebdavClientStdError> {
+    pub fn update_calendar(
+        &mut self,
+        calendar: &CaldavCalendar,
+    ) -> Result<(), WebdavClientStdError> {
         let home = self
             .calendar_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
         let path = home.path().to_string();
 
-        let coroutine = UpdateCalendar::new(
+        let coroutine = CaldavCalendarUpdate::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -452,7 +455,7 @@ impl WebdavClientStd {
             .ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
         let path = home.path().to_string();
 
-        let coroutine = DeleteCalendar::new(
+        let coroutine = CaldavCalendarDelete::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -470,14 +473,66 @@ impl WebdavClientStd {
         &mut self,
         calendar_id: &str,
         comp_filter: &str,
-    ) -> Result<BTreeSet<ItemEntry>, WebdavClientStdError> {
+    ) -> Result<BTreeSet<CaldavItemEntry>, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
-        let coroutine = ListItems::new(
+        let coroutine = CaldavItemList::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
             &path,
             comp_filter,
+        );
+        self.run(coroutine)
+    }
+
+    /// Enumerates item references (id plus ETag, no bodies) inside
+    /// `calendar_id`. `comp_filter` is the optional VCALENDAR child
+    /// filter; pass an empty string to enumerate every component type.
+    pub fn enum_items(
+        &mut self,
+        calendar_id: &str,
+        comp_filter: &str,
+    ) -> Result<BTreeSet<CaldavItemRef>, WebdavClientStdError> {
+        let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        let coroutine = CaldavItemEnum::new(
+            &self.base_url,
+            &self.auth,
+            &self.user_agent,
+            &path,
+            comp_filter,
+        );
+        self.run(coroutine)
+    }
+
+    /// Batch-fetches calendar items by id inside `calendar_id` in a
+    /// single round-trip.
+    pub fn multiget_items(
+        &mut self,
+        calendar_id: &str,
+        ids: &[&str],
+    ) -> Result<Vec<CaldavItemEntry>, WebdavClientStdError> {
+        let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        let coroutine =
+            CaldavItemMultiget::new(&self.base_url, &self.auth, &self.user_agent, &path, ids);
+        self.run(coroutine)
+    }
+
+    /// Runs an incremental `sync-collection` REPORT (RFC 6578) against
+    /// `calendar_id`, requesting ETags only. Pass [`None`] as
+    /// `sync_token` for an initial sync.
+    pub fn sync_items(
+        &mut self,
+        calendar_id: &str,
+        sync_token: Option<&str>,
+    ) -> Result<WebdavSyncDelta, WebdavClientStdError> {
+        let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        let coroutine = WebdavSyncCollection::new(
+            &self.base_url,
+            &self.auth,
+            &self.user_agent,
+            &path,
+            sync_token,
+            &[GETETAG],
         );
         self.run(coroutine)
     }
@@ -488,9 +543,10 @@ impl WebdavClientStd {
         &mut self,
         calendar_id: &str,
         item_id: &str,
-    ) -> Result<ItemBody, WebdavClientStdError> {
+    ) -> Result<CaldavItemBody, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
-        let coroutine = ReadItem::new(&self.base_url, &self.auth, &self.user_agent, &path, item_id);
+        let coroutine =
+            CaldavItemRead::new(&self.base_url, &self.auth, &self.user_agent, &path, item_id);
         self.run(coroutine)
     }
 
@@ -500,9 +556,9 @@ impl WebdavClientStd {
         calendar_id: &str,
         id: &str,
         ical: Vec<u8>,
-    ) -> Result<CreateItemOk, WebdavClientStdError> {
+    ) -> Result<CaldavItemCreateOk, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
-        let coroutine = CreateItem::new(
+        let coroutine = CaldavItemCreate::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -520,9 +576,9 @@ impl WebdavClientStd {
         id: &str,
         ical: Vec<u8>,
         if_match: Option<&str>,
-    ) -> Result<UpdateItemOk, WebdavClientStdError> {
+    ) -> Result<CaldavItemUpdateOk, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
-        let coroutine = UpdateItem::new(
+        let coroutine = CaldavItemUpdate::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -542,7 +598,7 @@ impl WebdavClientStd {
         if_match: Option<&str>,
     ) -> Result<(), WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
-        let coroutine = DeleteItem::new(
+        let coroutine = CaldavItemDelete::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -568,7 +624,7 @@ impl WebdavClientStd {
         let path = principal.path().to_string();
 
         let mut coroutine =
-            AddressbookHomeSet::new(&self.base_url, &self.auth, &self.user_agent, &path);
+            CarddavAddressbookHomeSet::new(&self.base_url, &self.auth, &self.user_agent, &path);
         let url = self.run_redirect(&mut coroutine)?;
         let url = url.ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
 
@@ -580,14 +636,17 @@ impl WebdavClientStd {
     /// [`addressbook_home_set`].
     ///
     /// [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
-    pub fn list_addressbooks(&mut self) -> Result<BTreeSet<Addressbook>, WebdavClientStdError> {
+    pub fn list_addressbooks(
+        &mut self,
+    ) -> Result<BTreeSet<CarddavAddressbook>, WebdavClientStdError> {
         let home = self
             .addressbook_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
         let path = home.path().to_string();
 
-        let coroutine = ListAddressbooks::new(&self.base_url, &self.auth, &self.user_agent, &path);
+        let coroutine =
+            CarddavAddressbookList::new(&self.base_url, &self.auth, &self.user_agent, &path);
         self.run(coroutine)
     }
 
@@ -597,7 +656,7 @@ impl WebdavClientStd {
     /// [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
     pub fn create_addressbook(
         &mut self,
-        addressbook: &Addressbook,
+        addressbook: &CarddavAddressbook,
     ) -> Result<(), WebdavClientStdError> {
         let home = self
             .addressbook_home_set
@@ -605,7 +664,7 @@ impl WebdavClientStd {
             .ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
         let path = home.path().to_string();
 
-        let coroutine = CreateAddressbook::new(
+        let coroutine = CarddavAddressbookCreate::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -618,7 +677,7 @@ impl WebdavClientStd {
     /// Updates an addressbook collection's properties.
     pub fn update_addressbook(
         &mut self,
-        addressbook: &Addressbook,
+        addressbook: &CarddavAddressbook,
     ) -> Result<(), WebdavClientStdError> {
         let home = self
             .addressbook_home_set
@@ -626,7 +685,7 @@ impl WebdavClientStd {
             .ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
         let path = home.path().to_string();
 
-        let coroutine = UpdateAddressbook::new(
+        let coroutine = CarddavAddressbookUpdate::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -644,7 +703,7 @@ impl WebdavClientStd {
             .ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
         let path = home.path().to_string();
 
-        let coroutine = DeleteAddressbook::new(
+        let coroutine = CarddavAddressbookDelete::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -658,9 +717,9 @@ impl WebdavClientStd {
     pub fn list_cards(
         &mut self,
         addressbook_id: &str,
-    ) -> Result<BTreeSet<CardEntry>, WebdavClientStdError> {
+    ) -> Result<BTreeSet<CarddavCardEntry>, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
-        let coroutine = ListCards::new(&self.base_url, &self.auth, &self.user_agent, &path);
+        let coroutine = CarddavCardList::new(&self.base_url, &self.auth, &self.user_agent, &path);
         self.run(coroutine)
     }
 
@@ -669,9 +728,9 @@ impl WebdavClientStd {
     pub fn enum_cards(
         &mut self,
         addressbook_id: &str,
-    ) -> Result<BTreeSet<CardRef>, WebdavClientStdError> {
+    ) -> Result<BTreeSet<CarddavCardRef>, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
-        let coroutine = EnumCards::new(&self.base_url, &self.auth, &self.user_agent, &path);
+        let coroutine = CarddavCardEnum::new(&self.base_url, &self.auth, &self.user_agent, &path);
         self.run(coroutine)
     }
 
@@ -681,10 +740,10 @@ impl WebdavClientStd {
         &mut self,
         addressbook_id: &str,
         ids: &[&str],
-    ) -> Result<Vec<CardEntry>, WebdavClientStdError> {
+    ) -> Result<Vec<CarddavCardEntry>, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
         let coroutine =
-            MultigetCards::new(&self.base_url, &self.auth, &self.user_agent, &path, ids);
+            CarddavCardMultiget::new(&self.base_url, &self.auth, &self.user_agent, &path, ids);
         self.run(coroutine)
     }
 
@@ -695,9 +754,9 @@ impl WebdavClientStd {
         &mut self,
         addressbook_id: &str,
         sync_token: Option<&str>,
-    ) -> Result<SyncDelta, WebdavClientStdError> {
+    ) -> Result<WebdavSyncDelta, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
-        let coroutine = SyncCollection::new(
+        let coroutine = WebdavSyncCollection::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -713,9 +772,10 @@ impl WebdavClientStd {
         &mut self,
         addressbook_id: &str,
         card_id: &str,
-    ) -> Result<CardBody, WebdavClientStdError> {
+    ) -> Result<CarddavCardBody, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
-        let coroutine = ReadCard::new(&self.base_url, &self.auth, &self.user_agent, &path, card_id);
+        let coroutine =
+            CarddavCardRead::new(&self.base_url, &self.auth, &self.user_agent, &path, card_id);
         self.run(coroutine)
     }
 
@@ -725,9 +785,9 @@ impl WebdavClientStd {
         addressbook_id: &str,
         id: &str,
         vcard: Vec<u8>,
-    ) -> Result<CreateCardOk, WebdavClientStdError> {
+    ) -> Result<CarddavCardCreateOk, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
-        let coroutine = CreateCard::new(
+        let coroutine = CarddavCardCreate::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -745,9 +805,9 @@ impl WebdavClientStd {
         id: &str,
         vcard: Vec<u8>,
         if_match: Option<&str>,
-    ) -> Result<UpdateCardOk, WebdavClientStdError> {
+    ) -> Result<CarddavCardUpdateOk, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
-        let coroutine = UpdateCard::new(
+        let coroutine = CarddavCardUpdate::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,
@@ -767,7 +827,7 @@ impl WebdavClientStd {
         if_match: Option<&str>,
     ) -> Result<(), WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
-        let coroutine = DeleteCard::new(
+        let coroutine = CarddavCardDelete::new(
             &self.base_url,
             &self.auth,
             &self.user_agent,

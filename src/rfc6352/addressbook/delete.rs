@@ -12,7 +12,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::addressbook::delete::DeleteAddressbook,
+//!     rfc6352::addressbook::delete::CarddavAddressbookDelete,
 //! };
 //! use url::Url;
 //!
@@ -23,7 +23,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     DeleteAddressbook::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/", "contacts");
+//!     CarddavAddressbookDelete::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/", "contacts");
 //! let mut arg = None;
 //!
 //! loop {
@@ -50,19 +50,19 @@ use crate::{
     coroutine::*,
     rfc4918::{
         WebdavAuth,
-        delete::Delete,
-        send::{SendError, SendOk},
+        delete::WebdavDelete,
+        send::{WebdavSendError, WebdavSendOk},
     },
     rfc6352::addressbook::join_path,
 };
 
 /// Coroutine that deletes an addressbook collection.
 #[derive(Debug)]
-pub struct DeleteAddressbook {
+pub struct CarddavAddressbookDelete {
     state: State,
 }
 
-impl DeleteAddressbook {
+impl CarddavAddressbookDelete {
     /// Builds a new `delete-addressbook` coroutine.
     pub fn new(
         base_url: &Url,
@@ -73,24 +73,24 @@ impl DeleteAddressbook {
     ) -> Self {
         let path = join_path(home_set_path, addressbook_id);
         Self {
-            state: State::Delete(Delete::new(base_url, auth, user_agent, &path, None)),
+            state: State::WebdavDelete(WebdavDelete::new(base_url, auth, user_agent, &path, None)),
         }
     }
 }
 
-impl WebdavCoroutine for DeleteAddressbook {
+impl WebdavCoroutine for CarddavAddressbookDelete {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Delete(delete) => delete.resume(arg),
+            State::WebdavDelete(delete) => delete.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Delete(Delete),
+    WebdavDelete(WebdavDelete),
 }

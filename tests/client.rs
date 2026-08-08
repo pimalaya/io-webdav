@@ -15,9 +15,9 @@ use std::{
 use common::*;
 use io_webdav::{
     client::{WebdavClientStd, WebdavClientStdError},
-    rfc4791::calendar::Calendar,
-    rfc4918::{WebdavAuth, send::SendError},
-    rfc6352::addressbook::Addressbook,
+    rfc4791::calendar::CaldavCalendar,
+    rfc4918::{WebdavAuth, send::WebdavSendError},
+    rfc6352::addressbook::CarddavAddressbook,
 };
 #[cfg(any(
     feature = "rustls-aws",
@@ -155,6 +155,17 @@ END:VCALENDAR</c:calendar-data>
       <d:status>HTTP/1.1 200 OK</d:status>
     </d:propstat>
   </d:response>
+</d:multistatus>"#;
+
+const ITEM_SYNC_XML: &str = r#"<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/dav/calendars/personal/event-1.ics</d:href>
+    <d:propstat>
+      <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:sync-token>http://example.org/ns/sync/7</d:sync-token>
 </d:multistatus>"#;
 
 const ADDRESSBOOKS_XML: &str = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
@@ -421,7 +432,7 @@ fn addressbook_home_set_fails_on_an_empty_multistatus() {
 fn methods_require_the_home_set_cache() {
     let mut client = WebdavClientStd::new(ScriptedStream::new([]), WebdavAuth::None, base());
 
-    let calendar = Calendar::default();
+    let calendar = CaldavCalendar::default();
     assert!(matches!(
         client.list_calendars().unwrap_err(),
         WebdavClientStdError::MissingCalendarHomeSet
@@ -443,7 +454,7 @@ fn methods_require_the_home_set_cache() {
         WebdavClientStdError::MissingCalendarHomeSet
     ));
 
-    let addressbook = Addressbook::default();
+    let addressbook = CarddavAddressbook::default();
     assert!(matches!(
         client.list_addressbooks().unwrap_err(),
         WebdavClientStdError::MissingAddressbookHomeSet
@@ -472,7 +483,7 @@ fn http_failures_surface_as_send_errors() {
     let err = client.list_calendars().unwrap_err();
     assert!(matches!(
         err,
-        WebdavClientStdError::Send(SendError::HttpStatus(403, _))
+        WebdavClientStdError::Send(WebdavSendError::HttpStatus(403, _))
     ));
 }
 
@@ -482,7 +493,10 @@ fn discovery_http_failures_surface_as_follow_redirects_errors() {
     let mut client =
         WebdavClientStd::new(ScriptedStream::new([forbidden]), WebdavAuth::None, base());
     let err = client.current_user_principal().unwrap_err();
-    assert!(matches!(err, WebdavClientStdError::FollowRedirects(_)));
+    assert!(matches!(
+        err,
+        WebdavClientStdError::WebdavFollowRedirects(_)
+    ));
 }
 
 #[test]
@@ -510,7 +524,7 @@ fn calendar_methods_run_their_coroutines() {
     let calendars = client.list_calendars().expect("list calendars");
     assert_eq!(calendars.first().unwrap().id, "personal");
 
-    let calendar = Calendar {
+    let calendar = CaldavCalendar {
         id: "work".into(),
         display_name: Some("Work".into()),
         ..Default::default()
@@ -524,6 +538,9 @@ fn calendar_methods_run_their_coroutines() {
 fn item_methods_run_their_coroutines() {
     let mut client = discovered_client(vec![
         multistatus_response(ITEMS_XML),
+        multistatus_response(ITEMS_XML),
+        multistatus_response(ITEMS_XML),
+        multistatus_response(ITEM_SYNC_XML),
         http_response("200 OK", &[("ETag", "\"etag-1\"")], "BEGIN:VCALENDAR"),
         http_response("201 Created", &[("ETag", "\"etag-1\"")], ""),
         http_response("204 No Content", &[], ""),
@@ -531,26 +548,43 @@ fn item_methods_run_their_coroutines() {
     ]);
 
     let items = client.list_items("personal", "").expect("list items");
-    assert_eq!(items.first().unwrap().id, "event-1");
+    assert_eq!(items.first().unwrap().id, "event-1.ics");
 
-    let body = client.read_item("personal", "event-1").expect("read item");
+    let refs = client.enum_items("personal", "").expect("enum items");
+    assert_eq!(refs.first().unwrap().id, "event-1.ics");
+
+    let fetched = client
+        .multiget_items("personal", &["event-1.ics"])
+        .expect("multiget items");
+    assert_eq!(fetched.len(), 1);
+
+    let delta = client.sync_items("personal", None).expect("initial sync");
+    assert_eq!(delta.changed.len(), 1);
+    assert_eq!(
+        delta.sync_token.as_deref(),
+        Some("http://example.org/ns/sync/7")
+    );
+
+    let body = client
+        .read_item("personal", "event-1.ics")
+        .expect("read item");
     assert_eq!(body.etag.as_deref(), Some("etag-1"));
 
     let created = client
-        .create_item("personal", "event-1", b"BEGIN:VCALENDAR".to_vec())
+        .create_item("personal", "event-1.ics", b"BEGIN:VCALENDAR".to_vec())
         .expect("create item");
-    assert_eq!(created.id, "event-1");
+    assert_eq!(created.id, "event-1.ics");
 
     client
         .update_item(
             "personal",
-            "event-1",
+            "event-1.ics",
             b"BEGIN:VCALENDAR".to_vec(),
             Some("etag-1"),
         )
         .expect("update item");
     client
-        .delete_item("personal", "event-1", None)
+        .delete_item("personal", "event-1.ics", None)
         .expect("delete item");
 }
 
@@ -568,7 +602,7 @@ fn addressbook_methods_run_their_coroutines() {
     let addressbooks = client.list_addressbooks().expect("list addressbooks");
     assert_eq!(addressbooks.first().unwrap().id, "contacts");
 
-    let addressbook = Addressbook {
+    let addressbook = CarddavAddressbook {
         id: "team".into(),
         display_name: Some("Team".into()),
         ..Default::default()

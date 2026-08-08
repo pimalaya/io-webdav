@@ -12,7 +12,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::addressbook::{Addressbook, create::CreateAddressbook},
+//!     rfc6352::addressbook::{CarddavAddressbook, create::CarddavAddressbookCreate},
 //! };
 //! use url::Url;
 //!
@@ -22,13 +22,13 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let addressbook = Addressbook {
+//! let addressbook = CarddavAddressbook {
 //!     id: "contacts".into(),
 //!     display_name: Some("Contacts".into()),
 //!     ..Default::default()
 //! };
 //! let mut coroutine =
-//!     CreateAddressbook::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/", &addressbook);
+//!     CarddavAddressbookCreate::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/", &addressbook);
 //! let mut arg = None;
 //!
 //! loop {
@@ -51,47 +51,47 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{WebdavAuth, mkcol::Mkcol, send::SendError},
-    rfc6352::addressbook::{ADDRESSBOOK, Addressbook, join_path, property_set},
+    rfc4918::{WebdavAuth, mkcol::WebdavMkcol, send::WebdavSendError},
+    rfc6352::addressbook::{ADDRESSBOOK, CarddavAddressbook, join_path, property_set},
 };
 
 /// Coroutine that creates an addressbook collection.
 #[derive(Debug)]
-pub struct CreateAddressbook {
+pub struct CarddavAddressbookCreate {
     state: State,
 }
 
-impl CreateAddressbook {
+impl CarddavAddressbookCreate {
     /// Builds a new `create-addressbook` coroutine.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         home_set_path: &str,
-        addressbook: &Addressbook,
+        addressbook: &CarddavAddressbook,
     ) -> Self {
         let path = join_path(home_set_path, &addressbook.id);
         let set = property_set(addressbook);
-        let mkcol = Mkcol::new(base_url, auth, user_agent, &path, &[ADDRESSBOOK], &set);
+        let mkcol = WebdavMkcol::new(base_url, auth, user_agent, &path, &[ADDRESSBOOK], &set);
         Self {
-            state: State::Mkcol(mkcol),
+            state: State::WebdavMkcol(mkcol),
         }
     }
 }
 
-impl WebdavCoroutine for CreateAddressbook {
+impl WebdavCoroutine for CarddavAddressbookCreate {
     type Yield = WebdavYield;
-    type Return = Result<(), SendError>;
+    type Return = Result<(), WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Mkcol(mkcol) => mkcol.resume(arg),
+            State::WebdavMkcol(mkcol) => mkcol.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Mkcol(Mkcol),
+    WebdavMkcol(WebdavMkcol),
 }

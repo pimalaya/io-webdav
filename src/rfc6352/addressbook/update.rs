@@ -12,7 +12,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::addressbook::{Addressbook, update::UpdateAddressbook},
+//!     rfc6352::addressbook::{CarddavAddressbook, update::CarddavAddressbookUpdate},
 //! };
 //! use url::Url;
 //!
@@ -22,13 +22,13 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let addressbook = Addressbook {
+//! let addressbook = CarddavAddressbook {
 //!     id: "contacts".into(),
 //!     display_name: Some("My Contacts".into()),
 //!     ..Default::default()
 //! };
 //! let mut coroutine =
-//!     UpdateAddressbook::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/", &addressbook);
+//!     CarddavAddressbookUpdate::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/", &addressbook);
 //! let mut arg = None;
 //!
 //! loop {
@@ -51,47 +51,47 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{WebdavAuth, proppatch::Proppatch, send::SendError},
-    rfc6352::addressbook::{Addressbook, join_path, property_set},
+    rfc4918::{WebdavAuth, proppatch::WebdavProppatch, send::WebdavSendError},
+    rfc6352::addressbook::{CarddavAddressbook, join_path, property_set},
 };
 
 /// Coroutine that updates an addressbook collection's properties.
 #[derive(Debug)]
-pub struct UpdateAddressbook {
+pub struct CarddavAddressbookUpdate {
     state: State,
 }
 
-impl UpdateAddressbook {
+impl CarddavAddressbookUpdate {
     /// Builds a new `update-addressbook` coroutine.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         home_set_path: &str,
-        addressbook: &Addressbook,
+        addressbook: &CarddavAddressbook,
     ) -> Self {
         let path = join_path(home_set_path, &addressbook.id);
         let set = property_set(addressbook);
-        let proppatch = Proppatch::new(base_url, auth, user_agent, &path, &set);
+        let proppatch = WebdavProppatch::new(base_url, auth, user_agent, &path, &set);
         Self {
-            state: State::Proppatch(proppatch),
+            state: State::WebdavProppatch(proppatch),
         }
     }
 }
 
-impl WebdavCoroutine for UpdateAddressbook {
+impl WebdavCoroutine for CarddavAddressbookUpdate {
     type Yield = WebdavYield;
-    type Return = Result<(), SendError>;
+    type Return = Result<(), WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Proppatch(proppatch) => proppatch.resume(arg),
+            State::WebdavProppatch(proppatch) => proppatch.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Proppatch(Proppatch),
+    WebdavProppatch(WebdavProppatch),
 }

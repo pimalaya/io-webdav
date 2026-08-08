@@ -7,36 +7,36 @@ mod common;
 
 use common::*;
 use io_webdav::rfc4918::{
-    DAV, DISPLAYNAME, GETETAG, Namespace, PropItem, Property, RESOURCETYPE, ResponseEntry,
-    WebdavAuth,
-    copy::Copy as CopyResource,
-    delete::Delete,
-    follow_redirects::{FollowRedirects, FollowRedirectsError},
-    get::Get,
-    mkcol::Mkcol,
-    r#move::Move,
-    options::Options,
+    DAV, DISPLAYNAME, GETETAG, RESOURCETYPE, WebdavAuth, WebdavNamespace, WebdavPropItem,
+    WebdavPropValue, WebdavProperty, WebdavResponseEntry,
+    copy::WebdavCopy as CopyResource,
+    delete::WebdavDelete,
+    follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
+    get::WebdavGet,
+    mkcol::WebdavMkcol,
+    r#move::WebdavMove,
+    options::WebdavOptions,
     parse_multistatus,
-    propfind::Propfind,
-    proppatch::Proppatch,
-    put::{Put, PutArgs},
+    propfind::WebdavPropfind,
+    proppatch::WebdavProppatch,
+    put::{WebdavPut, WebdavPutArgs},
     read_etag,
-    report::Report,
+    report::WebdavReport,
     report_query_body,
     request::WebdavRequest,
     resolve, resolve_href,
-    send::{SendError, SendRaw},
+    send::{WebdavSendError, WebdavSendRaw},
     trace_unrecognized, xmlns_decls,
 };
 use url::Url;
 
 const UA: &str = "io-webdav/test";
 
-const CALDAV: Namespace = Namespace {
+const CALDAV: WebdavNamespace = WebdavNamespace {
     uri: "urn:ietf:params:xml:ns:caldav",
     prefix: "C",
 };
-const CALENDAR: Property = Property {
+const CALENDAR: WebdavProperty = WebdavProperty {
     ns: CALDAV,
     local: "calendar",
 };
@@ -49,7 +49,7 @@ fn base() -> Url {
 
 #[test]
 fn xmlns_decls_dedupes_and_supports_the_default_namespace() {
-    const DEFAULT: Namespace = Namespace {
+    const DEFAULT: WebdavNamespace = WebdavNamespace {
         uri: "urn:x-test:default",
         prefix: "",
     };
@@ -62,8 +62,8 @@ fn xmlns_decls_dedupes_and_supports_the_default_namespace() {
 
 #[test]
 fn report_query_body_supports_an_unprefixed_root() {
-    const ROOT: Property = Property {
-        ns: Namespace {
+    const ROOT: WebdavProperty = WebdavProperty {
+        ns: WebdavNamespace {
             uri: "urn:x-test:default",
             prefix: "",
         },
@@ -168,10 +168,10 @@ fn multistatus_iterates_over_its_responses() {
 
 #[test]
 fn response_entry_helpers_handle_missing_data() {
-    let entry = ResponseEntry {
+    let entry = WebdavResponseEntry {
         href: String::new(),
         status: None,
-        props: vec![PropItem {
+        props: vec![WebdavPropItem {
             local: "unknown-prop".into(),
             text: "   ".into(),
             children: Vec::new(),
@@ -180,7 +180,7 @@ fn response_entry_helpers_handle_missing_data() {
 
     assert_eq!(entry.id(), "");
     assert!(entry.prop(DISPLAYNAME).is_none());
-    let unknown = Property {
+    let unknown = WebdavProperty {
         ns: DAV,
         local: "unknown-prop",
     };
@@ -296,7 +296,7 @@ fn resolve_href_joins_relative_and_rejects_invalid() {
 #[test]
 fn send_raw_returns_the_response_body() {
     let request = WebdavRequest::get(&base(), &WebdavAuth::None, UA, "file.txt").body(Vec::new());
-    let mut send = SendRaw::new(request);
+    let mut send = WebdavSendRaw::new(request);
 
     let (request, ok) = expect_exchange(&mut send, &http_response("200 OK", &[], "hello"));
     let ok = ok.unwrap();
@@ -309,11 +309,11 @@ fn send_raw_returns_the_response_body() {
 #[test]
 fn send_raw_maps_failure_statuses_to_http_status() {
     let request = WebdavRequest::get(&base(), &WebdavAuth::None, UA, "x").body(Vec::new());
-    let mut send = SendRaw::new(request);
+    let mut send = WebdavSendRaw::new(request);
 
     let (_, ret) = expect_exchange(&mut send, &http_response("404 Not Found", &[], "nope"));
     let err = ret.unwrap_err();
-    let SendError::HttpStatus(status, body) = err else {
+    let WebdavSendError::HttpStatus(status, body) = err else {
         panic!("expected HttpStatus, got {err:?}");
     };
     assert_eq!(status, 404);
@@ -323,28 +323,31 @@ fn send_raw_maps_failure_statuses_to_http_status() {
 #[test]
 fn send_raw_rejects_redirects() {
     let request = WebdavRequest::get(&base(), &WebdavAuth::None, UA, "x").body(Vec::new());
-    let mut send = SendRaw::new(request);
+    let mut send = WebdavSendRaw::new(request);
 
     let reply = http_response("301 Moved Permanently", &[("Location", "/new")], "");
     let (_, ret) = expect_exchange(&mut send, &reply);
-    assert!(matches!(ret.unwrap_err(), SendError::UnexpectedRedirect));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::UnexpectedRedirect
+    ));
 }
 
 #[test]
 fn send_raw_surfaces_transport_errors() {
     let request = WebdavRequest::get(&base(), &WebdavAuth::None, UA, "x").body(Vec::new());
-    let mut send = SendRaw::new(request);
+    let mut send = WebdavSendRaw::new(request);
 
     // NOTE: an immediate EOF while reading the response head surfaces
     // the underlying HTTP/1.1 send error.
     let (_, ret) = expect_exchange(&mut send, b"");
-    assert!(matches!(ret.unwrap_err(), SendError::Send(_)));
+    assert!(matches!(ret.unwrap_err(), WebdavSendError::Send(_)));
 }
 
 #[test]
 fn follow_redirects_returns_the_success_body() {
     let request = WebdavRequest::propfind(&base(), &WebdavAuth::None, UA, "").body(Vec::new());
-    let mut send = FollowRedirects::new(request);
+    let mut send = WebdavFollowRedirects::new(request);
 
     let (_, ret) = expect_redirect_exchange(&mut send, &http_response("200 OK", &[], "body"));
     assert_eq!(ret.unwrap().body, b"body");
@@ -353,7 +356,7 @@ fn follow_redirects_returns_the_success_body() {
 #[test]
 fn follow_redirects_surfaces_the_redirect() {
     let request = WebdavRequest::propfind(&base(), &WebdavAuth::None, UA, "").body(Vec::new());
-    let mut send = FollowRedirects::new(request);
+    let mut send = WebdavFollowRedirects::new(request);
 
     expect_redirect_wants_write(&mut send, None);
     expect_redirect_wants_read(&mut send);
@@ -368,26 +371,29 @@ fn follow_redirects_surfaces_the_redirect() {
 #[test]
 fn follow_redirects_maps_failure_statuses_and_transport_errors() {
     let request = WebdavRequest::propfind(&base(), &WebdavAuth::None, UA, "").body(Vec::new());
-    let mut send = FollowRedirects::new(request);
+    let mut send = WebdavFollowRedirects::new(request);
     let (_, ret) = expect_redirect_exchange(&mut send, &http_response("403 Forbidden", &[], "no"));
     let err = ret.unwrap_err();
-    let FollowRedirectsError::HttpStatus(status, body) = err else {
+    let WebdavFollowRedirectsError::HttpStatus(status, body) = err else {
         panic!("expected HttpStatus, got {err:?}");
     };
     assert_eq!(status, 403);
     assert_eq!(body, "no");
 
     let request = WebdavRequest::propfind(&base(), &WebdavAuth::None, UA, "").body(Vec::new());
-    let mut send = FollowRedirects::new(request);
+    let mut send = WebdavFollowRedirects::new(request);
     let (_, ret) = expect_redirect_exchange(&mut send, b"");
-    assert!(matches!(ret.unwrap_err(), FollowRedirectsError::Send(_)));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavFollowRedirectsError::Send(_)
+    ));
 }
 
 // --- generic method coroutines ---------------------------------------------
 
 #[test]
 fn get_returns_the_raw_body() {
-    let mut get = Get::new(&base(), &WebdavAuth::None, UA, "calendars/personal/e.ics");
+    let mut get = WebdavGet::new(&base(), &WebdavAuth::None, UA, "calendars/personal/e.ics");
     let (request, ret) = expect_exchange(&mut get, &http_response("200 OK", &[], "ICS"));
     assert!(request.starts_with("get /dav/calendars/personal/e.ics http/1.1\r\n"));
     assert_eq!(ret.unwrap().body, b"ICS");
@@ -395,7 +401,7 @@ fn get_returns_the_raw_body() {
 
 #[test]
 fn put_carries_preconditions_and_content_type() {
-    let mut put = Put::new(PutArgs {
+    let mut put = WebdavPut::new(WebdavPutArgs {
         base_url: &base(),
         auth: &WebdavAuth::None,
         user_agent: UA,
@@ -420,13 +426,13 @@ fn put_carries_preconditions_and_content_type() {
 
 #[test]
 fn delete_carries_the_optional_if_match() {
-    let mut delete = Delete::new(&base(), &WebdavAuth::None, UA, "x.ics", Some("etag-1"));
+    let mut delete = WebdavDelete::new(&base(), &WebdavAuth::None, UA, "x.ics", Some("etag-1"));
     let (request, ret) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
     assert!(request.starts_with("delete /dav/x.ics http/1.1\r\n"));
     assert!(request.contains("if-match: \"etag-1\"\r\n"));
     ret.unwrap();
 
-    let mut delete = Delete::new(&base(), &WebdavAuth::None, UA, "x.ics", None);
+    let mut delete = WebdavDelete::new(&base(), &WebdavAuth::None, UA, "x.ics", None);
     let (request, ret) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
     assert!(!request.contains("if-match"));
     ret.unwrap();
@@ -434,7 +440,7 @@ fn delete_carries_the_optional_if_match() {
 
 #[test]
 fn options_exposes_the_dav_header() {
-    let mut options = Options::new(&base(), &WebdavAuth::None, UA, "");
+    let mut options = WebdavOptions::new(&base(), &WebdavAuth::None, UA, "");
     let reply = http_response("200 OK", &[("DAV", "1, 3, calendar-access")], "");
     let (request, ret) = expect_exchange(&mut options, &reply);
     assert!(request.starts_with("options /dav/ http/1.1\r\n"));
@@ -444,13 +450,13 @@ fn options_exposes_the_dav_header() {
 
 #[test]
 fn mkcol_sends_the_extended_body() {
-    let mut mkcol = Mkcol::new(
+    let mut mkcol = WebdavMkcol::new(
         &base(),
         &WebdavAuth::None,
         UA,
         "books/contacts/",
         &[CALENDAR],
-        &[(DISPLAYNAME, "Contacts")],
+        &[(DISPLAYNAME, WebdavPropValue::Text("Contacts"))],
     );
     let (request, ret) = expect_exchange(&mut mkcol, &http_response("201 Created", &[], ""));
     assert!(request.starts_with("mkcol /dav/books/contacts/ http/1.1\r\n"));
@@ -461,7 +467,7 @@ fn mkcol_sends_the_extended_body() {
 
 #[test]
 fn propfind_parses_the_multistatus() {
-    let mut propfind = Propfind::new(&base(), &WebdavAuth::None, UA, "", 1, &[DISPLAYNAME]);
+    let mut propfind = WebdavPropfind::new(&base(), &WebdavAuth::None, UA, "", 1, &[DISPLAYNAME]);
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
         <d:href>/dav/personal/</d:href>
@@ -483,12 +489,12 @@ fn propfind_parses_the_multistatus() {
 
 #[test]
 fn proppatch_sends_the_propertyupdate_body() {
-    let mut proppatch = Proppatch::new(
+    let mut proppatch = WebdavProppatch::new(
         &base(),
         &WebdavAuth::None,
         UA,
         "personal/",
-        &[(DISPLAYNAME, "Renamed")],
+        &[(DISPLAYNAME, WebdavPropValue::Text("Renamed"))],
     );
     let (request, ret) = expect_exchange(
         &mut proppatch,
@@ -503,7 +509,7 @@ fn proppatch_sends_the_propertyupdate_body() {
 #[test]
 fn report_sends_the_query_body_and_parses_the_multistatus() {
     let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
-    let mut report = Report::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
+    let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
     let (request, ret) = expect_exchange(
         &mut report,
         &multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>"),
@@ -532,7 +538,7 @@ fn copy_and_move_carry_destination_overwrite_and_depth() {
     assert!(request.contains("depth: 0\r\n"));
     ret.unwrap();
 
-    let mut mv = Move::new(&base(), &WebdavAuth::None, UA, "a.ics", "/dav/c.ics", false);
+    let mut mv = WebdavMove::new(&base(), &WebdavAuth::None, UA, "a.ics", "/dav/c.ics", false);
     let (request, ret) = expect_exchange(&mut mv, &http_response("201 Created", &[], ""));
     assert!(request.starts_with("move /dav/a.ics http/1.1\r\n"));
     assert!(request.contains("destination: /dav/c.ics\r\n"));

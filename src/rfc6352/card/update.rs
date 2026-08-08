@@ -15,7 +15,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::card::update::UpdateCard,
+//!     rfc6352::card::update::CarddavCardUpdate,
 //! };
 //! use url::Url;
 //!
@@ -26,7 +26,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let vcard = b"BEGIN:VCARD\r\n...\r\nEND:VCARD\r\n".to_vec();
-//! let mut coroutine = UpdateCard::new(
+//! let mut coroutine = CarddavCardUpdate::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
@@ -68,9 +68,9 @@ use crate::{
     coroutine::*,
     rfc4918::{
         WebdavAuth,
-        put::{Put, PutArgs},
+        put::{WebdavPut, WebdavPutArgs},
         read_etag,
-        send::{SendError, SendOk},
+        send::{WebdavSendError, WebdavSendOk},
     },
     rfc6352::card::join_path,
     webdav_try,
@@ -78,14 +78,14 @@ use crate::{
 
 /// Coroutine that updates a card.
 #[derive(Debug)]
-pub struct UpdateCard {
+pub struct CarddavCardUpdate {
     id: String,
     state: State,
 }
 
-impl UpdateCard {
+impl CarddavCardUpdate {
     /// Builds a new `update-card` coroutine. `id` is the resource id
-    /// exactly as the server returned it (`CardEntry::id`), used
+    /// exactly as the server returned it (`CarddavCardEntry::id`), used
     /// verbatim.
     pub fn new(
         base_url: &Url,
@@ -97,7 +97,7 @@ impl UpdateCard {
         if_match: Option<&str>,
     ) -> Self {
         let path = join_path(addressbook_path, id);
-        let put = Put::new(PutArgs {
+        let put = WebdavPut::new(WebdavPutArgs {
             base_url,
             auth,
             user_agent,
@@ -109,23 +109,23 @@ impl UpdateCard {
         });
         Self {
             id: id.to_string(),
-            state: State::Put(put),
+            state: State::WebdavPut(put),
         }
     }
 }
 
-impl WebdavCoroutine for UpdateCard {
+impl WebdavCoroutine for CarddavCardUpdate {
     type Yield = WebdavYield;
-    type Return = Result<UpdateCardOk, SendError>;
+    type Return = Result<CarddavCardUpdateOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Put(put) => {
-                let SendOk { response, .. } = webdav_try!(put, arg);
+            State::WebdavPut(put) => {
+                let WebdavSendOk { response, .. } = webdav_try!(put, arg);
                 let etag = read_etag(&response);
                 let id = mem::take(&mut self.id);
-                WebdavCoroutineState::Complete(Ok(UpdateCardOk { id, etag }))
+                WebdavCoroutineState::Complete(Ok(CarddavCardUpdateOk { id, etag }))
             }
         }
     }
@@ -133,13 +133,13 @@ impl WebdavCoroutine for UpdateCard {
 
 #[derive(Debug)]
 enum State {
-    Put(Put),
+    WebdavPut(WebdavPut),
 }
 
 /// Outcome of a successful
-/// [`UpdateCard`] resume.
+/// [`CarddavCardUpdate`] resume.
 #[derive(Clone, Debug)]
-pub struct UpdateCardOk {
+pub struct CarddavCardUpdateOk {
     /// Card resource id (the resource name supplied by the caller, used
     /// verbatim).
     pub id: String,

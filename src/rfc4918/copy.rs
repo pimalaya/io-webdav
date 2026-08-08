@@ -10,7 +10,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{WebdavAuth, copy::Copy},
+//!     rfc4918::{WebdavAuth, copy::WebdavCopy},
 //! };
 //! use url::Url;
 //!
@@ -20,7 +20,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = Copy::new(
+//! let mut coroutine = WebdavCopy::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
@@ -56,17 +56,17 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         request::WebdavRequest,
-        send::{SendError, SendOk, SendRaw},
+        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
     },
 };
 
 /// Coroutine that runs a `COPY` of `path` to `destination`.
 #[derive(Debug)]
-pub struct Copy {
+pub struct WebdavCopy {
     state: State,
 }
 
-impl Copy {
+impl WebdavCopy {
     /// Builds a new `COPY` coroutine. `depth` is the `Depth` header
     /// (typically `0` for resources, `infinity` is encoded by the
     /// server, expose only the `0` / `1` case here).
@@ -85,14 +85,14 @@ impl Copy {
             .depth(depth)
             .body(Vec::new());
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Copy {
+impl WebdavCoroutine for WebdavCopy {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -104,5 +104,5 @@ impl WebdavCoroutine for Copy {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

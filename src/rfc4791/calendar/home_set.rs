@@ -13,7 +13,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState},
-//!     rfc4791::calendar::home_set::CalendarHomeSet,
+//!     rfc4791::calendar::home_set::CaldavCalendarHomeSet,
 //!     rfc4918::{WebdavAuth, coroutine::WebdavRedirectYield},
 //! };
 //! use url::Url;
@@ -25,7 +25,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     CalendarHomeSet::new(&base_url, &auth, "io-webdav", "/principals/alice/");
+//!     CaldavCalendarHomeSet::new(&base_url, &auth, "io-webdav", "/principals/alice/");
 //! let mut arg = None;
 //!
 //! let home_set = loop {
@@ -59,7 +59,7 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         coroutine::WebdavRedirectYield,
-        follow_redirects::{FollowRedirects, FollowRedirectsError},
+        follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
         parse_multistatus, propfind_body,
         request::WebdavRequest,
         resolve_href,
@@ -70,12 +70,12 @@ use crate::{
 /// I/O-free coroutine that discovers the calendar-home-set URL. Yields
 /// [`None`] when the server returned an empty multistatus.
 #[derive(Debug)]
-pub struct CalendarHomeSet {
+pub struct CaldavCalendarHomeSet {
     base_url: Url,
     state: State,
 }
 
-impl CalendarHomeSet {
+impl CaldavCalendarHomeSet {
     /// Builds a new `calendar-home-set` discovery coroutine targeting
     /// `principal_path` (relative to `base_url`).
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, principal_path: &str) -> Self {
@@ -86,14 +86,14 @@ impl CalendarHomeSet {
 
         Self {
             base_url: base_url.clone(),
-            state: State::Send(FollowRedirects::new(request)),
+            state: State::Send(WebdavFollowRedirects::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for CalendarHomeSet {
+impl WebdavCoroutine for CaldavCalendarHomeSet {
     type Yield = WebdavRedirectYield;
-    type Return = Result<Option<Url>, FollowRedirectsError>;
+    type Return = Result<Option<Url>, WebdavFollowRedirectsError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -114,5 +114,5 @@ impl WebdavCoroutine for CalendarHomeSet {
 
 #[derive(Debug)]
 enum State {
-    Send(FollowRedirects),
+    Send(WebdavFollowRedirects),
 }

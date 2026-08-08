@@ -6,7 +6,7 @@
 //!
 //! All I/O is hoisted: the coroutine yields [`WebdavYield`] and the
 //! caller owns the stream work. 3xx redirects surface as
-//! [`SendError::UnexpectedRedirect`]; redirect-aware coroutines use
+//! [`WebdavSendError::UnexpectedRedirect`]; redirect-aware coroutines use
 //! [`crate::rfc4918::follow_redirects`] instead.
 //!
 //! # Example
@@ -19,7 +19,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{WebdavAuth, request::WebdavRequest, send::SendRaw},
+//!     rfc4918::{WebdavAuth, request::WebdavRequest, send::WebdavSendRaw},
 //! };
 //! use url::Url;
 //!
@@ -30,7 +30,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let request = WebdavRequest::get(&base_url, &auth, "io-webdav", "/dav/file.txt").body(Vec::new());
-//! let mut coroutine = SendRaw::new(request);
+//! let mut coroutine = WebdavSendRaw::new(request);
 //! let mut arg = None;
 //!
 //! let ok = loop {
@@ -68,7 +68,7 @@ use crate::coroutine::*;
 
 /// Successful terminal output of a WebDAV send coroutine.
 #[derive(Debug)]
-pub struct SendOk<T> {
+pub struct WebdavSendOk<T> {
     /// The HTTP response head (status line and headers).
     pub response: HttpResponse,
     /// Whether the server allows reusing the connection.
@@ -79,14 +79,13 @@ pub struct SendOk<T> {
 
 /// Failure causes during a WebDAV send.
 #[derive(Debug, Error)]
-pub enum SendError {
+pub enum WebdavSendError {
     /// The server returned a non-2xx HTTP status.
     #[error("WebDAV server returned HTTP {0}: {1}")]
     HttpStatus(u16, String),
     /// The server returned a redirect where none was expected.
     #[error("WebDAV server returned unexpected redirect")]
     UnexpectedRedirect,
-
     /// The underlying HTTP/1.1 send failed.
     #[error(transparent)]
     Send(#[from] Http11SendError),
@@ -95,12 +94,12 @@ pub enum SendError {
 /// I/O-free coroutine that sends a WebDAV request and returns the
 /// response body as raw bytes.
 #[derive(Debug)]
-pub struct SendRaw {
+pub struct WebdavSendRaw {
     state: State,
 }
 
-impl SendRaw {
-    /// Builds a new `SendRaw` coroutine. `request` must already carry
+impl WebdavSendRaw {
+    /// Builds a new `WebdavSendRaw` coroutine. `request` must already carry
     /// its body bytes (via [`crate::rfc4918::request::WebdavRequest::body`]).
     pub fn new(request: HttpRequest) -> Self {
         Self {
@@ -109,9 +108,9 @@ impl SendRaw {
     }
 }
 
-impl WebdavCoroutine for SendRaw {
+impl WebdavCoroutine for WebdavSendRaw {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -125,7 +124,9 @@ impl WebdavCoroutine for SendRaw {
                         return WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes));
                     }
                     HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect { .. }) => {
-                        return WebdavCoroutineState::Complete(Err(SendError::UnexpectedRedirect));
+                        return WebdavCoroutineState::Complete(Err(
+                            WebdavSendError::UnexpectedRedirect,
+                        ));
                     }
                     HttpCoroutineState::Complete(Err(err)) => {
                         return WebdavCoroutineState::Complete(Err(err.into()));
@@ -141,12 +142,12 @@ impl WebdavCoroutine for SendRaw {
 
                 if !response.status.is_success() {
                     let body = String::from_utf8_lossy(&response.body).into_owned();
-                    let err = SendError::HttpStatus(*response.status, body);
+                    let err = WebdavSendError::HttpStatus(*response.status, body);
                     return WebdavCoroutineState::Complete(Err(err));
                 }
 
                 let body = response.body.clone();
-                WebdavCoroutineState::Complete(Ok(SendOk {
+                WebdavCoroutineState::Complete(Ok(WebdavSendOk {
                     response,
                     keep_alive,
                     body,

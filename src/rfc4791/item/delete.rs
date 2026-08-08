@@ -1,4 +1,5 @@
-//! `delete-item` coroutine: `DELETE` a calendar item by id.
+//! `delete-item` coroutine: `DELETE` a calendar item by its resource
+//! name.
 //!
 //! Supports the optional `If-Match` precondition so callers can gate
 //! the deletion on the last-known ETag (RFC 9110 §13.1.1).
@@ -13,7 +14,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::item::delete::DeleteItem,
+//!     rfc4791::item::delete::CaldavItemDelete,
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -24,12 +25,12 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = DeleteItem::new(
+//! let mut coroutine = CaldavItemDelete::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
 //!     "/dav/calendars/personal/",
-//!     "event-1",
+//!     "event-1.ics",
 //!     None,
 //! );
 //! let mut arg = None;
@@ -59,47 +60,50 @@ use crate::{
     rfc4791::item::join_path,
     rfc4918::{
         WebdavAuth,
-        delete::Delete,
-        send::{SendError, SendOk},
+        delete::WebdavDelete,
+        send::{WebdavSendError, WebdavSendOk},
     },
 };
 
 /// Coroutine that deletes a calendar item.
 #[derive(Debug)]
-pub struct DeleteItem {
+pub struct CaldavItemDelete {
     state: State,
 }
 
-impl DeleteItem {
-    /// Builds a new `delete-item` coroutine.
+impl CaldavItemDelete {
+    /// Builds a new `delete-item` coroutine. `id` is the resource id
+    /// exactly as the server returned it (`CaldavItemRef::id`), used verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         calendar_path: &str,
-        item_id: &str,
+        id: &str,
         if_match: Option<&str>,
     ) -> Self {
-        let path = join_path(calendar_path, item_id);
+        let path = join_path(calendar_path, id);
         Self {
-            state: State::Delete(Delete::new(base_url, auth, user_agent, &path, if_match)),
+            state: State::WebdavDelete(WebdavDelete::new(
+                base_url, auth, user_agent, &path, if_match,
+            )),
         }
     }
 }
 
-impl WebdavCoroutine for DeleteItem {
+impl WebdavCoroutine for CaldavItemDelete {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Delete(delete) => delete.resume(arg),
+            State::WebdavDelete(delete) => delete.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Delete(Delete),
+    WebdavDelete(WebdavDelete),
 }

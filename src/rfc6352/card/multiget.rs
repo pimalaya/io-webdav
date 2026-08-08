@@ -17,7 +17,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::card::multiget::MultigetCards,
+//!     rfc6352::card::multiget::CarddavCardMultiget,
 //! };
 //! use url::Url;
 //!
@@ -27,7 +27,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = MultigetCards::new(
+//! let mut coroutine = CarddavCardMultiget::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
@@ -60,10 +60,10 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{WebdavAuth, report::Report, send::SendError},
+    rfc4918::{WebdavAuth, report::WebdavReport, send::WebdavSendError},
     rfc6352::{
         addressbook::addressbook_multiget_body,
-        card::{CARD_PROPS, CardEntry, card_from_entry, join_path},
+        card::{CARD_PROPS, CarddavCardEntry, card_from_entry, join_path},
     },
     webdav_try,
 };
@@ -71,11 +71,11 @@ use crate::{
 /// Coroutine that batch-fetches cards by resource name via REPORT
 /// `addressbook-multiget`.
 #[derive(Debug)]
-pub struct MultigetCards {
+pub struct CarddavCardMultiget {
     state: State,
 }
 
-impl MultigetCards {
+impl CarddavCardMultiget {
     /// Builds a new `multiget-cards` coroutine fetching each card of
     /// `ids` (resource ids as the server returned them, used verbatim)
     /// inside `addressbook_path`. The `Depth` header is pinned to 0: RFC
@@ -92,21 +92,21 @@ impl MultigetCards {
             .map(|id| join_path(addressbook_path, id))
             .collect();
         let body = addressbook_multiget_body(&hrefs, CARD_PROPS);
-        let report = Report::new(base_url, auth, user_agent, addressbook_path, 0, body);
+        let report = WebdavReport::new(base_url, auth, user_agent, addressbook_path, 0, body);
         Self {
-            state: State::Report(report),
+            state: State::WebdavReport(report),
         }
     }
 }
 
-impl WebdavCoroutine for MultigetCards {
+impl WebdavCoroutine for CarddavCardMultiget {
     type Yield = WebdavYield;
-    type Return = Result<Vec<CardEntry>, SendError>;
+    type Return = Result<Vec<CarddavCardEntry>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Report(report) => {
+            State::WebdavReport(report) => {
                 let multistatus = webdav_try!(report, arg);
                 let cards = multistatus
                     .responses
@@ -121,5 +121,5 @@ impl WebdavCoroutine for MultigetCards {
 
 #[derive(Debug)]
 enum State {
-    Report(Report),
+    WebdavReport(WebdavReport),
 }

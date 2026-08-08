@@ -1,5 +1,11 @@
 //! `create-item` coroutine: PUT raw iCalendar bytes against
-//! `<calendar>/<id>.ics`.
+//! `<calendar>/<id>`.
+//!
+//! The `id` is the resource name, used verbatim. io-webdav never
+//! appends a file extension, so the caller owns the whole name. The
+//! returned [`CaldavItemCreateOk::id`] is the caller's name, or the server's
+//! own when it relocates the resource and reports it in a `Location`
+//! header. Either way it is what read, update and delete address.
 //!
 //! Uses `If-None-Match: *` so the server rejects the PUT when a
 //! resource with the same id already exists (RFC 4791 §5.3.2).
@@ -14,7 +20,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::item::create::CreateItem,
+//!     rfc4791::item::create::CaldavItemCreate,
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -26,8 +32,14 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let ical = b"BEGIN:VCALENDAR\r\n...\r\nEND:VCALENDAR\r\n".to_vec();
-//! let mut coroutine =
-//!     CreateItem::new(&base_url, &auth, "io-webdav", "/dav/calendars/personal/", "event-1", ical);
+//! let mut coroutine = CaldavItemCreate::new(
+//!     &base_url,
+//!     &auth,
+//!     "io-webdav",
+//!     "/dav/calendars/personal/",
+//!     "event-1.ics",
+//!     ical,
+//! );
 //! let mut arg = None;
 //!
 //! let created = loop {
@@ -61,24 +73,24 @@ use crate::{
     coroutine::*,
     rfc4791::item::join_path,
     rfc4918::{
-        WebdavAuth,
-        put::{Put, PutArgs},
+        WebdavAuth, id_from_location,
+        put::{WebdavPut, WebdavPutArgs},
         read_etag,
-        send::{SendError, SendOk},
+        send::{WebdavSendError, WebdavSendOk},
     },
     webdav_try,
 };
 
 /// Coroutine that creates a calendar item.
 #[derive(Debug)]
-pub struct CreateItem {
+pub struct CaldavItemCreate {
     id: String,
     state: State,
 }
 
-impl CreateItem {
+impl CaldavItemCreate {
     /// Builds a new `create-item` coroutine targeting
-    /// `<calendar_path>/<id>.ics`.
+    /// `<calendar_path>/<id>`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -88,7 +100,7 @@ impl CreateItem {
         ical: Vec<u8>,
     ) -> Self {
         let path = join_path(calendar_path, id);
-        let put = Put::new(PutArgs {
+        let put = WebdavPut::new(WebdavPutArgs {
             base_url,
             auth,
             user_agent,
@@ -100,23 +112,26 @@ impl CreateItem {
         });
         Self {
             id: id.to_string(),
-            state: State::Put(put),
+            state: State::WebdavPut(put),
         }
     }
 }
 
-impl WebdavCoroutine for CreateItem {
+impl WebdavCoroutine for CaldavItemCreate {
     type Yield = WebdavYield;
-    type Return = Result<CreateItemOk, SendError>;
+    type Return = Result<CaldavItemCreateOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Put(put) => {
-                let SendOk { response, .. } = webdav_try!(put, arg);
+            State::WebdavPut(put) => {
+                let WebdavSendOk { response, .. } = webdav_try!(put, arg);
                 let etag = read_etag(&response);
-                let id = mem::take(&mut self.id);
-                WebdavCoroutineState::Complete(Ok(CreateItemOk { id, etag }))
+                let id = response
+                    .header("location")
+                    .and_then(id_from_location)
+                    .unwrap_or_else(|| mem::take(&mut self.id));
+                WebdavCoroutineState::Complete(Ok(CaldavItemCreateOk { id, etag }))
             }
         }
     }
@@ -124,14 +139,16 @@ impl WebdavCoroutine for CreateItem {
 
 #[derive(Debug)]
 enum State {
-    Put(Put),
+    WebdavPut(WebdavPut),
 }
 
 /// Outcome of a successful
-/// [`CreateItem`] resume.
+/// [`CaldavItemCreate`] resume.
 #[derive(Clone, Debug)]
-pub struct CreateItemOk {
-    /// Item identifier (as supplied by the caller).
+pub struct CaldavItemCreateOk {
+    /// Item resource id: the `Location` header's last path segment when
+    /// the server returns one (its own name for the resource), otherwise
+    /// the caller-supplied name, verbatim.
     pub id: String,
     /// Entity tag returned by the server, when present.
     pub etag: Option<String>,

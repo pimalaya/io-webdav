@@ -20,13 +20,14 @@
 //! and REPORT requests, the multistatus response parser, the
 //! [`rfc4918::WebdavAuth`] modes and the low-level send coroutine every
 //! higher request builds on. [`rfc4791`] covers CalDAV: calendar
-//! collections and calendar object resources (items), with calendar
-//! home-set discovery. [`rfc6352`] covers CardDAV: address book
-//! collections and contact cards, with address book home-set
-//! discovery, batch multiget and ETag-only enumeration. [`rfc5397`]
-//! discovers the current user principal, the entry point of the
-//! discovery flow. [`rfc6578`] adds collection synchronization: the
-//! sync-collection REPORT and its sync tokens.
+//! collections and calendar object resources (items). [`rfc6352`]
+//! covers CardDAV: address book collections and contact cards. The two
+//! are deliberately twins, offering the same verbs under the same
+//! shapes, home-set discovery and batch multiget and ETag-only
+//! enumeration included. [`rfc5397`] discovers the current user
+//! principal, the entry point of the discovery flow. [`rfc6578`] adds
+//! collection synchronization: the sync-collection REPORT and its sync
+//! tokens, protocol-neutral so both layers use it.
 //!
 //! Two modules span the RFC modules and therefore live at the crate
 //! root: [`coroutine`] defines the coroutine contract every state
@@ -51,11 +52,19 @@
 //!
 //! ## Conventions
 //!
-//! The crate is no_std with alloc; std only enters behind the `client`
+//! The crate is no_std with alloc. std only enters behind the `client`
 //! feature. Every public item carries the bare `Webdav` prefix, the
 //! protocol not being version-scoped. Logging follows the library
 //! rules: state changes at debug level, in-process steps and data dumps
 //! at trace level.
+//!
+//! The crate stays byte-oriented. An iCalendar or vCard payload is
+//! carried as raw bytes in both directions, the parse belonging to
+//! ical and vcard upstream, so neither is a dependency here.
+//!
+//! The living spec and the development history are in the cairn/
+//! folder, and the crate's own conventions and test matrix are in
+//! CONTRIBUTING.md.
 
 extern crate alloc;
 #[cfg(feature = "client")]

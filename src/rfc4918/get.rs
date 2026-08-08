@@ -1,8 +1,8 @@
 //! Generic `GET` coroutine (RFC 9110 §9.3.1).
 //!
 //! Sends a `GET` against `path` and returns the response body as raw
-//! bytes. iCal/vCard parsing happens upstream in
-//! io-calendar/io-addressbook.
+//! bytes. iCalendar and vCard parsing happens upstream, in ical and
+//! vcard.
 //!
 //! # Example
 //!
@@ -14,7 +14,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{WebdavAuth, get::Get},
+//!     rfc4918::{WebdavAuth, get::WebdavGet},
 //! };
 //! use url::Url;
 //!
@@ -24,7 +24,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = Get::new(&base_url, &auth, "io-webdav", "/dav/calendars/personal/event-1.ics");
+//! let mut coroutine = WebdavGet::new(&base_url, &auth, "io-webdav", "/dav/calendars/personal/event-1.ics");
 //! let mut arg = None;
 //!
 //! let ok = loop {
@@ -54,29 +54,29 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         request::WebdavRequest,
-        send::{SendError, SendOk, SendRaw},
+        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
     },
 };
 
 /// Coroutine that runs a `GET`.
 #[derive(Debug)]
-pub struct Get {
+pub struct WebdavGet {
     state: State,
 }
 
-impl Get {
+impl WebdavGet {
     /// Builds a new `GET` coroutine.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, path: &str) -> Self {
         let request = WebdavRequest::get(base_url, auth, user_agent, path).body(Vec::new());
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Get {
+impl WebdavCoroutine for WebdavGet {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -88,5 +88,5 @@ impl WebdavCoroutine for Get {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

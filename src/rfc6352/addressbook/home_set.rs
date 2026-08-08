@@ -14,7 +14,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState},
 //!     rfc4918::{WebdavAuth, coroutine::WebdavRedirectYield},
-//!     rfc6352::addressbook::home_set::AddressbookHomeSet,
+//!     rfc6352::addressbook::home_set::CarddavAddressbookHomeSet,
 //! };
 //! use url::Url;
 //!
@@ -25,7 +25,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     AddressbookHomeSet::new(&base_url, &auth, "io-webdav", "/principals/alice/");
+//!     CarddavAddressbookHomeSet::new(&base_url, &auth, "io-webdav", "/principals/alice/");
 //! let mut arg = None;
 //!
 //! let home_set = loop {
@@ -58,7 +58,7 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         coroutine::WebdavRedirectYield,
-        follow_redirects::{FollowRedirects, FollowRedirectsError},
+        follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
         parse_multistatus, propfind_body,
         request::WebdavRequest,
         resolve_href,
@@ -70,12 +70,12 @@ use crate::{
 /// I/O-free coroutine that discovers the addressbook-home-set URL.
 /// Yields [`None`] when the server returned an empty multistatus.
 #[derive(Debug)]
-pub struct AddressbookHomeSet {
+pub struct CarddavAddressbookHomeSet {
     base_url: Url,
     state: State,
 }
 
-impl AddressbookHomeSet {
+impl CarddavAddressbookHomeSet {
     /// Builds a new `addressbook-home-set` discovery coroutine.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, principal_path: &str) -> Self {
         let request = WebdavRequest::propfind(base_url, auth, user_agent, principal_path)
@@ -85,14 +85,14 @@ impl AddressbookHomeSet {
 
         Self {
             base_url: base_url.clone(),
-            state: State::Send(FollowRedirects::new(request)),
+            state: State::Send(WebdavFollowRedirects::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for AddressbookHomeSet {
+impl WebdavCoroutine for CarddavAddressbookHomeSet {
     type Yield = WebdavRedirectYield;
-    type Return = Result<Option<Url>, FollowRedirectsError>;
+    type Return = Result<Option<Url>, WebdavFollowRedirectsError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -113,5 +113,5 @@ impl WebdavCoroutine for AddressbookHomeSet {
 
 #[derive(Debug)]
 enum State {
-    Send(FollowRedirects),
+    Send(WebdavFollowRedirects),
 }

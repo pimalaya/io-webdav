@@ -13,7 +13,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::addressbook::list::ListAddressbooks,
+//!     rfc6352::addressbook::list::CarddavAddressbookList,
 //! };
 //! use url::Url;
 //!
@@ -24,7 +24,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     ListAddressbooks::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/");
+//!     CarddavAddressbookList::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/");
 //! let mut arg = None;
 //!
 //! let addressbooks = loop {
@@ -52,39 +52,40 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        DISPLAYNAME, GETCTAG, RESOURCETYPE, ResponseEntry, SYNC_TOKEN, WebdavAuth,
-        propfind::Propfind, send::SendError, trace_unrecognized,
+        DISPLAYNAME, GETCTAG, RESOURCETYPE, SYNC_TOKEN, WebdavAuth, WebdavResponseEntry,
+        propfind::WebdavPropfind, send::WebdavSendError, trace_unrecognized,
     },
     rfc6352::addressbook::{
-        ADDRESSBOOK, ADDRESSBOOK_COLOR, ADDRESSBOOK_DESCRIPTION, Addressbook, LIST_PROPS,
+        ADDRESSBOOK, ADDRESSBOOK_COLOR, ADDRESSBOOK_DESCRIPTION, CarddavAddressbook, LIST_PROPS,
     },
     webdav_try,
 };
 
 /// Coroutine that lists addressbooks under `home_set_path`.
 #[derive(Debug)]
-pub struct ListAddressbooks {
+pub struct CarddavAddressbookList {
     state: State,
 }
 
-impl ListAddressbooks {
+impl CarddavAddressbookList {
     /// Builds a new `list-addressbooks` coroutine.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, home_set_path: &str) -> Self {
-        let propfind = Propfind::new(base_url, auth, user_agent, home_set_path, 1, LIST_PROPS);
+        let propfind =
+            WebdavPropfind::new(base_url, auth, user_agent, home_set_path, 1, LIST_PROPS);
         Self {
-            state: State::Propfind(propfind),
+            state: State::WebdavPropfind(propfind),
         }
     }
 }
 
-impl WebdavCoroutine for ListAddressbooks {
+impl WebdavCoroutine for CarddavAddressbookList {
     type Yield = WebdavYield;
-    type Return = Result<BTreeSet<Addressbook>, SendError>;
+    type Return = Result<BTreeSet<CarddavAddressbook>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Propfind(propfind) => {
+            State::WebdavPropfind(propfind) => {
                 let multistatus = webdav_try!(propfind, arg);
                 let addressbooks = multistatus
                     .responses
@@ -97,7 +98,7 @@ impl WebdavCoroutine for ListAddressbooks {
     }
 }
 
-fn from_entry(entry: &ResponseEntry) -> Option<Addressbook> {
+fn from_entry(entry: &WebdavResponseEntry) -> Option<CarddavAddressbook> {
     if !entry.has_resource_type(RESOURCETYPE, ADDRESSBOOK) {
         trace!("skip non-addressbook response {}", entry.href);
         return None;
@@ -110,7 +111,7 @@ fn from_entry(entry: &ResponseEntry) -> Option<Addressbook> {
 
     trace_unrecognized(entry, LIST_PROPS);
 
-    Some(Addressbook {
+    Some(CarddavAddressbook {
         id: id.to_string(),
         display_name: entry.text(DISPLAYNAME).map(ToString::to_string),
         description: entry.text(ADDRESSBOOK_DESCRIPTION).map(ToString::to_string),
@@ -122,5 +123,5 @@ fn from_entry(entry: &ResponseEntry) -> Option<Addressbook> {
 
 #[derive(Debug)]
 enum State {
-    Propfind(Propfind),
+    WebdavPropfind(WebdavPropfind),
 }

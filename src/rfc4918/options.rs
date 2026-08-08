@@ -13,7 +13,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{WebdavAuth, options::Options},
+//!     rfc4918::{WebdavAuth, options::WebdavOptions},
 //! };
 //! use url::Url;
 //!
@@ -23,7 +23,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = Options::new(&base_url, &auth, "io-webdav", "/dav/");
+//! let mut coroutine = WebdavOptions::new(&base_url, &auth, "io-webdav", "/dav/");
 //! let mut arg = None;
 //!
 //! let ok = loop {
@@ -53,29 +53,29 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         request::WebdavRequest,
-        send::{SendError, SendOk, SendRaw},
+        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
     },
 };
 
 /// Coroutine that runs an `OPTIONS`.
 #[derive(Debug)]
-pub struct Options {
+pub struct WebdavOptions {
     state: State,
 }
 
-impl Options {
+impl WebdavOptions {
     /// Builds a new `OPTIONS` coroutine.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, path: &str) -> Self {
         let request = WebdavRequest::options(base_url, auth, user_agent, path).body(Vec::new());
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Options {
+impl WebdavCoroutine for WebdavOptions {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -87,5 +87,5 @@ impl WebdavCoroutine for Options {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

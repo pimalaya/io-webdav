@@ -6,16 +6,18 @@ mod common;
 
 use common::*;
 use io_webdav::{
-    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth},
+    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue},
     rfc6352::{
         addressbook::{
-            Addressbook, addressbook_multiget_body, addressbook_query_body,
-            create::CreateAddressbook, delete::DeleteAddressbook, home_set::AddressbookHomeSet,
-            list::ListAddressbooks, property_set, update::UpdateAddressbook,
+            CarddavAddressbook, addressbook_multiget_body, addressbook_query_body,
+            create::CarddavAddressbookCreate, delete::CarddavAddressbookDelete,
+            home_set::CarddavAddressbookHomeSet, list::CarddavAddressbookList, property_set,
+            update::CarddavAddressbookUpdate,
         },
         card::{
-            create::CreateCard, delete::DeleteCard, enumerate::EnumCards, join_path,
-            list::ListCards, multiget::MultigetCards, read::ReadCard, update::UpdateCard,
+            create::CarddavCardCreate, delete::CarddavCardDelete, enumerate::CarddavCardEnum,
+            join_path, list::CarddavCardList, multiget::CarddavCardMultiget, read::CarddavCardRead,
+            update::CarddavCardUpdate,
         },
     },
 };
@@ -31,7 +33,7 @@ fn base() -> Url {
 
 #[test]
 fn property_set_keeps_only_the_present_fields() {
-    let addressbook = Addressbook {
+    let addressbook = CarddavAddressbook {
         id: "contacts".into(),
         display_name: Some("Contacts".into()),
         color: Some("#0000ff".into()),
@@ -40,9 +42,9 @@ fn property_set_keeps_only_the_present_fields() {
     };
     let set = property_set(&addressbook);
     assert_eq!(set.len(), 3);
-    assert_eq!(set[0], (DISPLAYNAME, "Contacts"));
+    assert_eq!(set[0], (DISPLAYNAME, WebdavPropValue::Text("Contacts")));
 
-    assert!(property_set(&Addressbook::default()).is_empty());
+    assert!(property_set(&CarddavAddressbook::default()).is_empty());
 }
 
 #[test]
@@ -82,7 +84,7 @@ fn card_join_path_keeps_the_resource_name_verbatim() {
 
 #[test]
 fn list_addressbooks_maps_addressbook_collections_only() {
-    let mut list = ListAddressbooks::new(&base(), &WebdavAuth::None, UA, "/dav/books/");
+    let mut list = CarddavAddressbookList::new(&base(), &WebdavAuth::None, UA, "/dav/books/");
     let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav"
         xmlns:cs="http://calendarserver.org/ns/" xmlns:i="http://inf-it.com/ns/ab/">
       <d:response>
@@ -137,13 +139,13 @@ fn list_addressbooks_maps_addressbook_collections_only() {
 
 #[test]
 fn create_addressbook_sends_the_extended_mkcol() {
-    let addressbook = Addressbook {
+    let addressbook = CarddavAddressbook {
         id: "team".into(),
         display_name: Some("Team".into()),
         ..Default::default()
     };
     let mut create =
-        CreateAddressbook::new(&base(), &WebdavAuth::None, UA, "/dav/books/", &addressbook);
+        CarddavAddressbookCreate::new(&base(), &WebdavAuth::None, UA, "/dav/books/", &addressbook);
     let (request, ret) = expect_exchange(&mut create, &http_response("201 Created", &[], ""));
     assert!(request.starts_with("mkcol /dav/books/team/ http/1.1\r\n"));
     assert!(request.contains("<d:resourcetype><d:collection/><c:addressbook/></d:resourcetype>"));
@@ -152,13 +154,13 @@ fn create_addressbook_sends_the_extended_mkcol() {
 
 #[test]
 fn update_addressbook_sends_proppatch() {
-    let addressbook = Addressbook {
+    let addressbook = CarddavAddressbook {
         id: "team".into(),
         display_name: Some("Renamed".into()),
         ..Default::default()
     };
     let mut update =
-        UpdateAddressbook::new(&base(), &WebdavAuth::None, UA, "/dav/books/", &addressbook);
+        CarddavAddressbookUpdate::new(&base(), &WebdavAuth::None, UA, "/dav/books/", &addressbook);
     let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
     let (request, ret) = expect_exchange(&mut update, &reply);
     assert!(request.starts_with("proppatch /dav/books/team/ http/1.1\r\n"));
@@ -168,7 +170,8 @@ fn update_addressbook_sends_proppatch() {
 
 #[test]
 fn delete_addressbook_targets_the_collection() {
-    let mut delete = DeleteAddressbook::new(&base(), &WebdavAuth::None, UA, "/dav/books/", "team");
+    let mut delete =
+        CarddavAddressbookDelete::new(&base(), &WebdavAuth::None, UA, "/dav/books/", "team");
     let (request, ret) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
     assert!(request.starts_with("delete /dav/books/team/ http/1.1\r\n"));
     ret.unwrap();
@@ -177,7 +180,7 @@ fn delete_addressbook_targets_the_collection() {
 #[test]
 fn addressbook_home_set_resolves_the_href() {
     let mut discovery =
-        AddressbookHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
+        CarddavAddressbookHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
     let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
       <d:response>
         <d:href>/principals/alice/</d:href>
@@ -201,7 +204,7 @@ fn addressbook_home_set_resolves_the_href() {
 #[test]
 fn addressbook_home_set_yields_none_on_an_empty_multistatus() {
     let mut discovery =
-        AddressbookHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
+        CarddavAddressbookHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
     let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
     let (_, ret) = expect_redirect_exchange(&mut discovery, &reply);
     assert!(ret.unwrap().is_none());
@@ -239,18 +242,33 @@ END:VCARD</c:address-data>
       <d:status>HTTP/1.1 200 OK</d:status>
     </d:propstat>
   </d:response>
+  <d:response>
+    <d:href>/dav/books/contacts/</d:href>
+    <d:propstat>
+      <d:prop><c:address-data>BEGIN:VCARD</c:address-data></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href></d:href>
+    <d:propstat>
+      <d:prop><c:address-data>BEGIN:VCARD</c:address-data></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
 </d:multistatus>"#;
 
 #[test]
 fn list_cards_maps_address_data_entries() {
-    let mut list = ListCards::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
+    let mut list = CarddavCardList::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
     let (request, ret) = expect_exchange(&mut list, &multistatus_response(CARDS_XML));
     assert!(request.starts_with("report /dav/books/contacts/ http/1.1\r\n"));
     assert!(request.contains("<c:address-data/>"));
 
     let cards = ret.unwrap();
-    // NOTE: the data-less entry is skipped; every id is the href's last
-    // segment verbatim — no `.vcf` is stripped, so `alice.vcf` stays
+    // NOTE: the data-less entry, the collection self-entry and the
+    // empty href are all skipped. Every surviving id is the href's last
+    // segment verbatim, no `.vcf` stripped, so `alice.vcf` stays
     // `alice.vcf` and the suffix-less `bob` stays `bob`.
     assert_eq!(cards.len(), 2);
     let alice = cards.iter().find(|card| card.id == "alice.vcf").unwrap();
@@ -262,7 +280,8 @@ fn list_cards_maps_address_data_entries() {
 
 #[test]
 fn enum_cards_returns_etag_only_references() {
-    let mut enumerate = EnumCards::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
+    let mut enumerate =
+        CarddavCardEnum::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
         <d:href>/dav/books/contacts/alice.vcf</d:href>
@@ -286,11 +305,12 @@ fn enum_cards_returns_etag_only_references() {
 }
 
 #[test]
-fn enum_cards_skips_the_collection_self_entry() {
+fn enum_cards_skips_the_collection_self_entry_and_empty_hrefs() {
     // iCloud echoes the addressbook collection itself (its href ends in
     // a slash) in the addressbook-query response; it must not enter the
-    // spine as a bogus card named after the collection.
-    let mut enumerate = EnumCards::new(
+    // spine as a bogus card named after the collection. An href with no
+    // last segment at all yields no addressable id either.
+    let mut enumerate = CarddavCardEnum::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -301,6 +321,13 @@ fn enum_cards_skips_the_collection_self_entry() {
         <d:href>/17170244959/carddavhome/card/</d:href>
         <d:propstat>
           <d:prop><d:getetag>"coll-etag"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href></d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"empty-href"</d:getetag></d:prop>
           <d:status>HTTP/1.1 200 OK</d:status>
         </d:propstat>
       </d:response>
@@ -323,7 +350,7 @@ fn enum_cards_skips_the_collection_self_entry() {
 
 #[test]
 fn multiget_cards_requests_each_href() {
-    let mut multiget = MultigetCards::new(
+    let mut multiget = CarddavCardMultiget::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -342,7 +369,7 @@ fn multiget_cards_requests_each_href() {
 
 #[test]
 fn read_card_returns_body_and_etag() {
-    let mut read = ReadCard::new(
+    let mut read = CarddavCardRead::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -360,10 +387,10 @@ fn read_card_returns_body_and_etag() {
 
 #[test]
 fn create_card_uses_the_id_verbatim() {
-    // The id is the resource name — io-webdav never appends `.vcf`, so a
+    // The id is the resource name. io-webdav never appends `.vcf`, so a
     // bare `alice` is PUT at `.../alice`, not `.../alice.vcf`. The caller
     // owns the whole name and picks its own extension, if any.
-    let mut create = CreateCard::new(
+    let mut create = CarddavCardCreate::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -389,7 +416,7 @@ fn create_card_prefers_the_location_id_when_the_server_relocates() {
     // A server may store the card under a name of its own and report it
     // in `Location` (Google does): the returned id is then that name, not
     // the caller's, while the PUT still targets the caller's name.
-    let mut create = CreateCard::new(
+    let mut create = CarddavCardCreate::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -418,7 +445,7 @@ fn create_card_prefers_the_location_id_when_the_server_relocates() {
 
 #[test]
 fn update_card_uses_the_resource_name_verbatim() {
-    let mut update = UpdateCard::new(
+    let mut update = CarddavCardUpdate::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -438,7 +465,7 @@ fn update_card_uses_the_resource_name_verbatim() {
 
 #[test]
 fn delete_card_targets_the_resource() {
-    let mut delete = DeleteCard::new(
+    let mut delete = CarddavCardDelete::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -455,15 +482,15 @@ fn delete_card_targets_the_resource() {
 fn a_listed_card_id_round_trips_through_read() {
     // Regression: a consumer takes a card's listed id and reads it back.
     // The id must address the very resource the server enumerated, with
-    // no extension added or stripped in between — the asymmetry that
-    // broke read/update/delete on `.vcf`-suffixing servers (the listed
-    // id was `.vcf`-stripped, but the GET path was not re-suffixed).
-    let mut list = ListCards::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
+    // no extension added or stripped in between. That asymmetry broke
+    // read, update and delete on `.vcf`-suffixing servers: the listed
+    // id was `.vcf`-stripped, but the GET path was not re-suffixed.
+    let mut list = CarddavCardList::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
     let (_request, ret) = expect_exchange(&mut list, &multistatus_response(CARDS_XML));
     let cards = ret.unwrap();
     let alice = cards.iter().find(|card| card.id == "alice.vcf").unwrap();
 
-    let mut read = ReadCard::new(
+    let mut read = CarddavCardRead::new(
         &base(),
         &WebdavAuth::None,
         UA,

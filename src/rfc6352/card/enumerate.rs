@@ -3,7 +3,7 @@
 //!
 //! Enumerates the full card spine (id plus ETag) without downloading
 //! any vCard body; bodies are then batch-fetched with
-//! [`MultigetCards`](crate::rfc6352::card::multiget::MultigetCards).
+//! [`CarddavCardMultiget`](crate::rfc6352::card::multiget::CarddavCardMultiget).
 //!
 //! # Example
 //!
@@ -16,7 +16,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::card::enumerate::EnumCards,
+//!     rfc6352::card::enumerate::CarddavCardEnum,
 //! };
 //! use url::Url;
 //!
@@ -27,7 +27,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     EnumCards::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/contacts/");
+//!     CarddavCardEnum::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/contacts/");
 //! let mut arg = None;
 //!
 //! let refs = loop {
@@ -54,21 +54,24 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{GETETAG, Property, ResponseEntry, WebdavAuth, report::Report, send::SendError},
-    rfc6352::{addressbook::addressbook_query_body, card::CardRef},
+    rfc4918::{
+        GETETAG, WebdavAuth, WebdavProperty, WebdavResponseEntry, report::WebdavReport,
+        send::WebdavSendError,
+    },
+    rfc6352::{addressbook::addressbook_query_body, card::CarddavCardRef},
     webdav_try,
 };
 
-const ENUM_PROPS: &[Property] = &[GETETAG];
+const ENUM_PROPS: &[WebdavProperty] = &[GETETAG];
 
 /// Coroutine that enumerates card references (id plus ETag, no body)
 /// inside an addressbook via REPORT `addressbook-query`.
 #[derive(Debug)]
-pub struct EnumCards {
+pub struct CarddavCardEnum {
     state: State,
 }
 
-impl EnumCards {
+impl CarddavCardEnum {
     /// Builds a new `enum-cards` coroutine.
     pub fn new(
         base_url: &Url,
@@ -77,21 +80,21 @@ impl EnumCards {
         addressbook_path: &str,
     ) -> Self {
         let body = addressbook_query_body(ENUM_PROPS);
-        let report = Report::new(base_url, auth, user_agent, addressbook_path, 1, body);
+        let report = WebdavReport::new(base_url, auth, user_agent, addressbook_path, 1, body);
         Self {
-            state: State::Report(report),
+            state: State::WebdavReport(report),
         }
     }
 }
 
-impl WebdavCoroutine for EnumCards {
+impl WebdavCoroutine for CarddavCardEnum {
     type Yield = WebdavYield;
-    type Return = Result<BTreeSet<CardRef>, SendError>;
+    type Return = Result<BTreeSet<CarddavCardRef>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Report(report) => {
+            State::WebdavReport(report) => {
                 let multistatus = webdav_try!(report, arg);
                 let refs = multistatus
                     .responses
@@ -104,7 +107,7 @@ impl WebdavCoroutine for EnumCards {
     }
 }
 
-fn from_entry(entry: &ResponseEntry) -> Option<CardRef> {
+fn from_entry(entry: &WebdavResponseEntry) -> Option<CarddavCardRef> {
     // Skip the collection self-entry: an address object resource never
     // ends in a slash, but some servers (iCloud) echo the addressbook
     // itself in the query response, which would otherwise enter the
@@ -118,7 +121,7 @@ fn from_entry(entry: &ResponseEntry) -> Option<CardRef> {
         return None;
     }
 
-    Some(CardRef {
+    Some(CarddavCardRef {
         id: id.to_string(),
         etag: entry
             .text(GETETAG)
@@ -128,5 +131,5 @@ fn from_entry(entry: &ResponseEntry) -> Option<CardRef> {
 
 #[derive(Debug)]
 enum State {
-    Report(Report),
+    WebdavReport(WebdavReport),
 }

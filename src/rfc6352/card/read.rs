@@ -1,7 +1,7 @@
 //! `read-card` coroutine: GET a card by its resource name.
 //!
 //! Stays byte-oriented: returns raw vCard bytes plus the response's
-//! ETag so io-addressbook can run calcard upstream.
+//! ETag, leaving the parse to vcard upstream.
 //!
 //! # Example
 //!
@@ -14,7 +14,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::card::read::ReadCard,
+//!     rfc6352::card::read::CarddavCardRead,
 //! };
 //! use url::Url;
 //!
@@ -25,7 +25,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     ReadCard::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/contacts/", "alice");
+//!     CarddavCardRead::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/contacts/", "alice");
 //! let mut arg = None;
 //!
 //! let card = loop {
@@ -54,9 +54,9 @@ use crate::{
     coroutine::*,
     rfc4918::{
         WebdavAuth,
-        get::Get,
+        get::WebdavGet,
         read_etag,
-        send::{SendError, SendOk},
+        send::{WebdavSendError, WebdavSendOk},
     },
     rfc6352::card::join_path,
     webdav_try,
@@ -64,13 +64,13 @@ use crate::{
 
 /// Coroutine that reads a card.
 #[derive(Debug)]
-pub struct ReadCard {
+pub struct CarddavCardRead {
     state: State,
 }
 
-impl ReadCard {
+impl CarddavCardRead {
     /// Builds a new `read-card` coroutine. `id` is the resource id
-    /// exactly as the server returned it (`CardEntry::id`), used
+    /// exactly as the server returned it (`CarddavCardEntry::id`), used
     /// verbatim.
     pub fn new(
         base_url: &Url,
@@ -81,22 +81,22 @@ impl ReadCard {
     ) -> Self {
         let path = join_path(addressbook_path, id);
         Self {
-            state: State::Get(Get::new(base_url, auth, user_agent, &path)),
+            state: State::WebdavGet(WebdavGet::new(base_url, auth, user_agent, &path)),
         }
     }
 }
 
-impl WebdavCoroutine for ReadCard {
+impl WebdavCoroutine for CarddavCardRead {
     type Yield = WebdavYield;
-    type Return = Result<CardBody, SendError>;
+    type Return = Result<CarddavCardBody, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Get(get) => {
-                let SendOk { response, body, .. } = webdav_try!(get, arg);
+            State::WebdavGet(get) => {
+                let WebdavSendOk { response, body, .. } = webdav_try!(get, arg);
                 let etag = read_etag(&response);
-                WebdavCoroutineState::Complete(Ok(CardBody { data: body, etag }))
+                WebdavCoroutineState::Complete(Ok(CarddavCardBody { data: body, etag }))
             }
         }
     }
@@ -104,13 +104,13 @@ impl WebdavCoroutine for ReadCard {
 
 #[derive(Debug)]
 enum State {
-    Get(Get),
+    WebdavGet(WebdavGet),
 }
 
 /// Card body plus optional ETag returned by
-/// [`ReadCard`].
+/// [`CarddavCardRead`].
 #[derive(Clone, Debug)]
-pub struct CardBody {
+pub struct CarddavCardBody {
     /// Raw vCard bytes.
     pub data: Vec<u8>,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.

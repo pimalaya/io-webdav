@@ -20,7 +20,7 @@
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::{
 //!         WebdavAuth,
-//!         put::{Put, PutArgs},
+//!         put::{WebdavPut, WebdavPutArgs},
 //!     },
 //! };
 //! use url::Url;
@@ -31,7 +31,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = Put::new(PutArgs {
+//! let mut coroutine = WebdavPut::new(WebdavPutArgs {
 //!     base_url: &base_url,
 //!     auth: &auth,
 //!     user_agent: "io-webdav",
@@ -70,17 +70,17 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         request::WebdavRequest,
-        send::{SendError, SendOk, SendRaw},
+        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
     },
 };
 
-/// Build inputs for a [`Put`] coroutine.
+/// Build inputs for a [`WebdavPut`] coroutine.
 ///
 /// Uses a struct rather than positional arguments so callers can
 /// build the request literal-style and skip the two optional
 /// precondition fields without juggling positional `None`s.
 #[derive(Clone, Debug)]
-pub struct PutArgs<'a> {
+pub struct WebdavPutArgs<'a> {
     /// Base URL the request path is resolved against.
     pub base_url: &'a Url,
     /// Authentication scheme for the `Authorization` header.
@@ -101,13 +101,13 @@ pub struct PutArgs<'a> {
 
 /// Coroutine that runs a `PUT`.
 #[derive(Debug)]
-pub struct Put {
+pub struct WebdavPut {
     state: State,
 }
 
-impl Put {
+impl WebdavPut {
     /// Builds a new `PUT` coroutine.
-    pub fn new(args: PutArgs<'_>) -> Self {
+    pub fn new(args: WebdavPutArgs<'_>) -> Self {
         let mut builder = WebdavRequest::put(args.base_url, args.auth, args.user_agent, args.path)
             .content_type(args.content_type);
 
@@ -121,14 +121,14 @@ impl Put {
 
         let request = builder.body(args.body);
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Put {
+impl WebdavCoroutine for WebdavPut {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -140,5 +140,5 @@ impl WebdavCoroutine for Put {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

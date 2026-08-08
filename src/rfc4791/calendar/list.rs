@@ -12,7 +12,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::calendar::list::ListCalendars,
+//!     rfc4791::calendar::list::CaldavCalendarList,
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -23,7 +23,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = ListCalendars::new(&base_url, &auth, "io-webdav", "/dav/calendars/");
+//! let mut coroutine = CaldavCalendarList::new(&base_url, &auth, "io-webdav", "/dav/calendars/");
 //! let mut arg = None;
 //!
 //! let calendars = loop {
@@ -51,39 +51,41 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4791::calendar::{
-        CALENDAR, CALENDAR_COLOR, CALENDAR_DESCRIPTION, CALENDAR_TIMEZONE, Calendar, LIST_PROPS,
+        CALENDAR, CALENDAR_COLOR, CALENDAR_DESCRIPTION, CALENDAR_TIMEZONE, CaldavCalendar,
+        LIST_PROPS, SUPPORTED_CALENDAR_COMPONENT_SET,
     },
     rfc4918::{
-        DISPLAYNAME, GETCTAG, RESOURCETYPE, ResponseEntry, WebdavAuth, propfind::Propfind,
-        send::SendError, trace_unrecognized,
+        DISPLAYNAME, GETCTAG, RESOURCETYPE, SYNC_TOKEN, WebdavAuth, WebdavResponseEntry,
+        propfind::WebdavPropfind, send::WebdavSendError, trace_unrecognized,
     },
     webdav_try,
 };
 
 /// Coroutine that lists calendars under `home_set_path`.
 #[derive(Debug)]
-pub struct ListCalendars {
+pub struct CaldavCalendarList {
     state: State,
 }
 
-impl ListCalendars {
+impl CaldavCalendarList {
     /// Builds a new `list-calendars` coroutine.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str, home_set_path: &str) -> Self {
-        let propfind = Propfind::new(base_url, auth, user_agent, home_set_path, 1, LIST_PROPS);
+        let propfind =
+            WebdavPropfind::new(base_url, auth, user_agent, home_set_path, 1, LIST_PROPS);
         Self {
-            state: State::Propfind(propfind),
+            state: State::WebdavPropfind(propfind),
         }
     }
 }
 
-impl WebdavCoroutine for ListCalendars {
+impl WebdavCoroutine for CaldavCalendarList {
     type Yield = WebdavYield;
-    type Return = Result<BTreeSet<Calendar>, SendError>;
+    type Return = Result<BTreeSet<CaldavCalendar>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Propfind(propfind) => {
+            State::WebdavPropfind(propfind) => {
                 let multistatus = webdav_try!(propfind, arg);
                 let calendars = multistatus
                     .responses
@@ -96,7 +98,7 @@ impl WebdavCoroutine for ListCalendars {
     }
 }
 
-fn from_entry(entry: &ResponseEntry) -> Option<Calendar> {
+fn from_entry(entry: &WebdavResponseEntry) -> Option<CaldavCalendar> {
     if !entry.has_resource_type(RESOURCETYPE, CALENDAR) {
         trace!("skip non-calendar response {}", entry.href);
         return None;
@@ -109,17 +111,31 @@ fn from_entry(entry: &ResponseEntry) -> Option<Calendar> {
 
     trace_unrecognized(entry, LIST_PROPS);
 
-    Some(Calendar {
+    // NOTE: the component set is markup, not text: each type is the
+    // `name` attribute of a `<C:comp/>` child (RFC 4791 §5.2.3).
+    let components = entry
+        .prop(SUPPORTED_CALENDAR_COMPONENT_SET)
+        .map(|item| {
+            item.children
+                .iter()
+                .filter_map(|child| child.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(CaldavCalendar {
         id: id.to_string(),
         display_name: entry.text(DISPLAYNAME).map(ToString::to_string),
         description: entry.text(CALENDAR_DESCRIPTION).map(ToString::to_string),
         color: entry.text(CALENDAR_COLOR).map(ToString::to_string),
+        components,
         ctag: entry.text(GETCTAG).map(ToString::to_string),
+        sync_token: entry.text(SYNC_TOKEN).map(ToString::to_string),
         tz: entry.text(CALENDAR_TIMEZONE).map(ToString::to_string),
     })
 }
 
 #[derive(Debug)]
 enum State {
-    Propfind(Propfind),
+    WebdavPropfind(WebdavPropfind),
 }

@@ -22,25 +22,40 @@
 //! A fresh stream is opened before every request, so the flows do not
 //! depend on the server honouring HTTP keep-alive across operations.
 //!
+//! These flows write to real production accounts, so everything a run
+//! creates is torn down through [`with_cleanup`], on the failing path
+//! as much as on the passing one. Read that function before adding a
+//! step that creates anything.
+//!
 //! The full CalDAV flow exercises:
 //!
 //! ```text
 //! CURRENT-USER-PRINCIPAL → CALENDAR-HOME-SET
 //!   → MKCALENDAR create   (create test calendar)
-//!   → PROPFIND list       (verify creation)
-//!   → PUT create          (create test event)
-//!   → REPORT list         (verify event present)
-//!   → GET read            (fetch raw iCalendar)
-//!   → PUT update          (bump the event)
-//!   → DELETE item         (cleanup)
-//!   → DELETE collection   (cleanup)
+//!   ┌ guarded by with_cleanup ────────────────────────────────┐
+//!   │ → PROPFIND list     (verify creation)                   │
+//!   │ → PUT create        (create test event)                 │
+//!   │ → REPORT list       (verify event present)              │
+//!   │ → REPORT enum       (etag-only spine)                   │
+//!   │ → REPORT multiget   (batch bodies)                      │
+//!   │ → REPORT sync       (initial sync-collection)           │
+//!   │ → GET read          (fetch raw iCalendar)               │
+//!   │ → PUT update        (bump the event)                    │
+//!   │ → DELETE item       (the removal the next sync reports) │
+//!   │ → REPORT sync       (incremental, reports the removal)  │
+//!   └─────────────────────────────────────────────────────────┘
+//!   → DELETE collection   (teardown, runs however the guard exits)
 //! ```
 //!
-//! The full CardDAV flow mirrors it for addressbooks and vCards, and
-//! additionally exercises the sync read-side: etag-only enumeration,
-//! `addressbook-multiget` batch fetch, and an initial plus incremental
+//! The full CardDAV flow mirrors it for addressbooks and vCards. Both
+//! exercise the sync read-side: etag-only enumeration, the protocol's
+//! multiget batch fetch, and an initial plus incremental
 //! `sync-collection` REPORT (RFC 6578) that must report the deleted
-//! card as vanished.
+//! resource as vanished.
+//!
+//! The item-only flows are guarded the same way, from the moment the
+//! event or card is created, since the collection holding it belongs to
+//! the account rather than to the run.
 //!
 //! Each integration test compiles this module on its own and only
 //! exercises a subset of these helpers, so the rest end up flagged as
@@ -53,6 +68,7 @@ use core::fmt::Debug;
 use std::{
     io::{Read, Result as IoResult, Write},
     net::TcpStream,
+    panic::{self, AssertUnwindSafe},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -64,8 +80,8 @@ use io_http::{
     rfc8615::well_known::Http11WellKnown,
 };
 use io_webdav::{
-    client::WebdavClientStd, coroutine::*, rfc4791::calendar::Calendar, rfc4918::WebdavAuth,
-    rfc4918::coroutine::*, rfc6352::addressbook::Addressbook,
+    client::WebdavClientStd, coroutine::*, rfc4791::calendar::CaldavCalendar, rfc4918::WebdavAuth,
+    rfc4918::coroutine::*, rfc6352::addressbook::CarddavAddressbook,
 };
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};
 use rustls_platform_verifier::ConfigVerifierExt;
@@ -284,6 +300,42 @@ fn unix_millis() -> u128 {
         .as_millis()
 }
 
+/// Runs `body`, then `cleanup` whichever way `body` went, and only then
+/// re-raises a panic `body` may have raised.
+///
+/// These flows run against real production accounts. Every step panics
+/// on failure, so a cleanup written as the last statements of a flow is
+/// skipped the moment anything goes wrong, and each failed run leaves a
+/// collection or a resource behind in the account for good. Whatever a
+/// run created has to be torn down on the failing path too, which is
+/// the one where it matters.
+///
+/// `cleanup` is best-effort on purpose. It is caught too, because it
+/// reconnects and every connection step panics on failure: a teardown
+/// that cannot reach the server any more must report that and step
+/// aside, never replace the failure the run was about to report.
+fn with_cleanup<T, B, C>(state: &mut T, body: B, cleanup: C)
+where
+    B: FnOnce(&mut T),
+    C: FnOnce(&mut T),
+{
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| body(state)));
+
+    if panic::catch_unwind(AssertUnwindSafe(|| cleanup(state))).is_err() {
+        eprintln!("WARNING: cleanup itself failed, the account may hold leftovers");
+    }
+
+    if let Err(payload) = outcome {
+        panic::resume_unwind(payload);
+    }
+}
+
+/// Reports a failed teardown without panicking, naming what was left
+/// behind so it can be removed by hand.
+fn report_leftover(what: &str, id: &str, err: &dyn Debug) {
+    eprintln!("WARNING: could not clean up {what} `{id}`, remove it by hand: {err:?}");
+}
+
 /// Full CalDAV CRUD flow against the DAV root at `base_url`.
 pub fn caldav(base_url: &str, auth: WebdavAuth) {
     let _ = env_logger::try_init();
@@ -307,75 +359,153 @@ pub fn caldav(base_url: &str, auth: WebdavAuth) {
     let ts = unix_millis();
     let cal_id = format!("io-webdav-test-{ts}");
     let item_id = format!("event-{ts}");
+    // The caller owns the whole resource name, extension included; the
+    // same name is the item's id everywhere afterwards.
+    let item_name = format!("{item_id}.ics");
 
     // ── MKCALENDAR create ───────────────────────────────────────────────────────
 
-    let calendar = Calendar {
+    let calendar = CaldavCalendar {
         id: cal_id.clone(),
         display_name: Some("io-webdav integration test".to_owned()),
         description: Some("created by io-webdav integration tests".to_owned()),
+        components: ["VEVENT".to_owned()].into(),
         ..Default::default()
     };
     client.set_stream(connect(&base));
     client.create_calendar(&calendar).expect("create calendar");
 
+    // From here on the account holds a real collection, so every exit
+    // path has to remove it. See with_cleanup.
+    with_cleanup(
+        &mut client,
+        |client| caldav_body(client, &base, &cal_id, &item_id, &item_name),
+        |client| {
+            client.set_stream(connect(&base));
+            if let Err(err) = client.delete_calendar(&cal_id) {
+                report_leftover("calendar", &cal_id, &err);
+            }
+        },
+    );
+}
+
+/// The body of the full CalDAV flow, everything that runs once the test
+/// calendar exists. Split out so [`with_cleanup`] can own the teardown.
+fn caldav_body(
+    client: &mut WebdavClientStd,
+    base: &Url,
+    cal_id: &str,
+    item_id: &str,
+    item_name: &str,
+) {
     // ── PROPFIND list (verify creation) ─────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     let calendars = client.list_calendars().expect("list calendars");
+    let created_calendar = calendars
+        .iter()
+        .find(|c| c.id == cal_id)
+        .unwrap_or_else(|| panic!("created calendar {cal_id} missing from list"));
+    // The component set was sent at MKCALENDAR time, so a server that
+    // honours it reports it back; one that advertises nothing at all is
+    // saying "any type", which is not a mismatch.
     assert!(
-        calendars.iter().any(|c| c.id == cal_id),
-        "created calendar {cal_id} missing from list"
+        created_calendar.components.is_empty() || created_calendar.components.contains("VEVENT"),
+        "created calendar dropped the VEVENT component: {:?}",
+        created_calendar.components
     );
 
     // ── PUT create event ────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     let created = client
         .create_item(
-            &cal_id,
-            &item_id,
-            build_ics(&item_id, "io-webdav event").into_bytes(),
+            cal_id,
+            item_name,
+            build_ics(item_id, "io-webdav event").into_bytes(),
         )
         .expect("create item");
-    assert_eq!(created.id, item_id, "create item id mismatch");
+    assert_eq!(created.id, item_name, "create item id mismatch");
 
     // ── REPORT list items (verify present) ──────────────────────────────────────
 
-    client.set_stream(connect(&base));
-    let items = client.list_items(&cal_id, "").expect("list items");
+    client.set_stream(connect(base));
+    let items = client.list_items(cal_id, "").expect("list items");
+    // An item is addressed by its id, i.e. the resource name the server
+    // enumerates, used verbatim: we created `<item_id>.ics`, so that is
+    // its id everywhere (io-webdav never adds nor strips an extension).
     assert!(
-        items.iter().any(|i| i.id == item_id),
-        "created event {item_id} missing from REPORT"
+        items.iter().any(|i| i.id == item_name),
+        "created event {item_name} missing from REPORT"
     );
+
+    // ── REPORT enum item refs (etag-only spine) ─────────────────────────────────
+
+    client.set_stream(connect(base));
+    let refs = client.enum_items(cal_id, "").expect("enum items");
+    assert!(
+        refs.iter().any(|r| r.id == item_name),
+        "created event {item_name} missing from etag-only enumeration"
+    );
+
+    // ── REPORT multiget (batch bodies) ──────────────────────────────────────────
+
+    client.set_stream(connect(base));
+    let fetched = client
+        .multiget_items(cal_id, &[item_name])
+        .expect("multiget items");
+    assert!(
+        fetched
+            .iter()
+            .any(|i| i.id == item_name && !i.data.is_empty()),
+        "multiget returned no body for event {item_name}"
+    );
+
+    // ── REPORT sync-collection (initial sync) ───────────────────────────────────
+
+    client.set_stream(connect(base));
+    let initial = client.sync_items(cal_id, None).expect("initial sync");
+    assert!(
+        initial.changed.iter().any(|c| c.href.contains(item_id)),
+        "created event {item_id} missing from initial sync"
+    );
+    let sync_token = initial.sync_token.expect("initial sync returned no token");
 
     // ── GET read item ───────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
-    let body = client.read_item(&cal_id, &item_id).expect("read item");
+    client.set_stream(connect(base));
+    let body = client.read_item(cal_id, item_name).expect("read item");
     assert!(!body.data.is_empty(), "read item returned empty body");
 
     // ── PUT update item ─────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     client
         .update_item(
-            &cal_id,
-            &item_id,
-            build_ics(&item_id, "io-webdav event (updated)").into_bytes(),
+            cal_id,
+            item_name,
+            build_ics(item_id, "io-webdav event (updated)").into_bytes(),
             body.etag.as_deref(),
         )
         .expect("update item");
 
-    // ── CLEANUP: delete item then collection ────────────────────────────────────
+    // ── DELETE item (the removal the next sync must report) ─────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     client
-        .delete_item(&cal_id, &item_id, None)
+        .delete_item(cal_id, item_name, None)
         .expect("delete item");
 
-    client.set_stream(connect(&base));
-    client.delete_calendar(&cal_id).expect("delete calendar");
+    // ── REPORT sync-collection (incremental sync reports the removal) ───────────
+
+    client.set_stream(connect(base));
+    let delta = client
+        .sync_items(cal_id, Some(&sync_token))
+        .expect("incremental sync");
+    assert!(
+        delta.vanished.iter().any(|href| href.contains(item_id)),
+        "deleted event {item_id} missing from incremental sync removals"
+    );
 }
 
 /// Read-only CalDAV flow for providers without `MKCALENDAR` support
@@ -510,6 +640,9 @@ pub fn caldav_items(base_url: &str, auth: WebdavAuth, calendar_id: &str) {
     );
 
     let item_id = format!("event-{}", unix_millis());
+    // The caller owns the whole resource name, extension included; the
+    // same name is the item's id everywhere afterwards.
+    let item_name = format!("{item_id}.ics");
 
     // ── PUT create event ────────────────────────────────────────────────────────
 
@@ -517,45 +650,87 @@ pub fn caldav_items(base_url: &str, auth: WebdavAuth, calendar_id: &str) {
     let created = client
         .create_item(
             calendar_id,
-            &item_id,
+            &item_name,
             build_ics(&item_id, "io-webdav event").into_bytes(),
         )
         .expect("create item");
-    assert_eq!(created.id, item_id, "create item id mismatch");
+    assert_eq!(created.id, item_name, "create item id mismatch");
 
+    // The event now exists in a calendar this flow does not own, so
+    // every exit path has to remove it. See with_cleanup.
+    with_cleanup(
+        &mut client,
+        |client| caldav_items_body(client, &base, calendar_id, &item_id, &item_name),
+        |client| {
+            client.set_stream(connect(&base));
+            if let Err(err) = client.delete_item(calendar_id, &item_name, None) {
+                report_leftover("event", &item_name, &err);
+            }
+        },
+    );
+}
+
+/// The body of the item-only CalDAV flow, everything that runs once the
+/// test event exists. Split out so [`with_cleanup`] can own the
+/// teardown.
+fn caldav_items_body(
+    client: &mut WebdavClientStd,
+    base: &Url,
+    calendar_id: &str,
+    item_id: &str,
+    item_name: &str,
+) {
     // ── REPORT list items (verify present) ──────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     let items = client.list_items(calendar_id, "").expect("list items");
+    // An item is addressed by its id, i.e. the resource name the server
+    // enumerates, used verbatim: we created `<item_id>.ics`, so that is
+    // its id everywhere (io-webdav never adds nor strips an extension).
     assert!(
-        items.iter().any(|i| i.id == item_id),
-        "created event {item_id} missing from REPORT"
+        items.iter().any(|i| i.id == item_name),
+        "created event {item_name} missing from REPORT"
+    );
+
+    // ── REPORT enum item refs (etag-only spine) ─────────────────────────────────
+
+    client.set_stream(connect(base));
+    let refs = client.enum_items(calendar_id, "").expect("enum items");
+    assert!(
+        refs.iter().any(|r| r.id == item_name),
+        "created event {item_name} missing from etag-only enumeration"
+    );
+
+    // ── REPORT multiget (batch bodies) ──────────────────────────────────────────
+
+    client.set_stream(connect(base));
+    let fetched = client
+        .multiget_items(calendar_id, &[item_name])
+        .expect("multiget items");
+    assert!(
+        fetched
+            .iter()
+            .any(|i| i.id == item_name && !i.data.is_empty()),
+        "multiget returned no body for event {item_name}"
     );
 
     // ── GET read item ───────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
-    let body = client.read_item(calendar_id, &item_id).expect("read item");
+    client.set_stream(connect(base));
+    let body = client.read_item(calendar_id, item_name).expect("read item");
     assert!(!body.data.is_empty(), "read item returned empty body");
 
     // ── PUT update item ─────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     client
         .update_item(
             calendar_id,
-            &item_id,
-            build_ics(&item_id, "io-webdav event (updated)").into_bytes(),
+            item_name,
+            build_ics(item_id, "io-webdav event (updated)").into_bytes(),
             body.etag.as_deref(),
         )
         .expect("update item");
-
-    // ── CLEANUP: delete the item only ───────────────────────────────────────────
-
-    client.set_stream(connect(&base));
-    client
-        .delete_item(calendar_id, &item_id, None)
-        .expect("delete item");
 }
 
 /// Full CardDAV CRUD flow against the DAV root at `base_url`.
@@ -587,7 +762,7 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
 
     // ── MKCOL create ────────────────────────────────────────────────────────────
 
-    let addressbook = Addressbook {
+    let addressbook = CarddavAddressbook {
         id: book_id.clone(),
         display_name: Some("io-webdav integration test".to_owned()),
         description: Some("created by io-webdav integration tests".to_owned()),
@@ -598,9 +773,33 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
         .create_addressbook(&addressbook)
         .expect("create addressbook");
 
+    // From here on the account holds a real collection, so every exit
+    // path has to remove it. See with_cleanup.
+    with_cleanup(
+        &mut client,
+        |client| carddav_body(client, &base, &book_id, &card_id, &card_name),
+        |client| {
+            client.set_stream(connect(&base));
+            if let Err(err) = client.delete_addressbook(&book_id) {
+                report_leftover("addressbook", &book_id, &err);
+            }
+        },
+    );
+}
+
+/// The body of the full CardDAV flow, everything that runs once the
+/// test addressbook exists. Split out so [`with_cleanup`] can own the
+/// teardown.
+fn carddav_body(
+    client: &mut WebdavClientStd,
+    base: &Url,
+    book_id: &str,
+    card_id: &str,
+    card_name: &str,
+) {
     // ── PROPFIND list (verify creation) ─────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     let addressbooks = client.list_addressbooks().expect("list addressbooks");
     assert!(
         addressbooks.iter().any(|b| b.id == book_id),
@@ -609,20 +808,20 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
 
     // ── PUT create card ─────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     let created = client
         .create_card(
-            &book_id,
-            &card_name,
-            build_vcf(&card_id, "io-webdav Test").into_bytes(),
+            book_id,
+            card_name,
+            build_vcf(card_id, "io-webdav Test").into_bytes(),
         )
         .expect("create card");
     assert_eq!(created.id, card_name, "create card id mismatch");
 
     // ── REPORT list cards (verify present) ──────────────────────────────────────
 
-    client.set_stream(connect(&base));
-    let cards = client.list_cards(&book_id).expect("list cards");
+    client.set_stream(connect(base));
+    let cards = client.list_cards(book_id).expect("list cards");
     // A card is addressed by its id, i.e. the resource name the server
     // enumerates, used verbatim: we created `<card_id>.vcf`, so that is
     // its id everywhere (io-webdav never adds nor strips an extension).
@@ -633,8 +832,8 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
 
     // ── REPORT enum card refs (etag-only spine) ─────────────────────────────────
 
-    client.set_stream(connect(&base));
-    let refs = client.enum_cards(&book_id).expect("enum cards");
+    client.set_stream(connect(base));
+    let refs = client.enum_cards(book_id).expect("enum cards");
     assert!(
         refs.iter().any(|r| r.id == card_name),
         "created card {card_name} missing from etag-only enumeration"
@@ -642,9 +841,9 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
 
     // ── REPORT multiget (batch bodies) ──────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     let fetched = client
-        .multiget_cards(&book_id, &[card_name.as_str()])
+        .multiget_cards(book_id, &[card_name])
         .expect("multiget cards");
     assert!(
         fetched
@@ -655,54 +854,49 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
 
     // ── REPORT sync-collection (initial sync) ───────────────────────────────────
 
-    client.set_stream(connect(&base));
-    let initial = client.sync_cards(&book_id, None).expect("initial sync");
+    client.set_stream(connect(base));
+    let initial = client.sync_cards(book_id, None).expect("initial sync");
     assert!(
-        initial.changed.iter().any(|c| c.href.contains(&card_id)),
+        initial.changed.iter().any(|c| c.href.contains(card_id)),
         "created card {card_id} missing from initial sync"
     );
     let sync_token = initial.sync_token.expect("initial sync returned no token");
 
     // ── GET read card ───────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
-    let body = client.read_card(&book_id, &card_name).expect("read card");
+    client.set_stream(connect(base));
+    let body = client.read_card(book_id, card_name).expect("read card");
     assert!(!body.data.is_empty(), "read card returned empty body");
 
     // ── PUT update card ─────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     client
         .update_card(
-            &book_id,
-            &card_name,
-            build_vcf(&card_id, "io-webdav Test (updated)").into_bytes(),
+            book_id,
+            card_name,
+            build_vcf(card_id, "io-webdav Test (updated)").into_bytes(),
             body.etag.as_deref(),
         )
         .expect("update card");
 
     // ── CLEANUP: delete card then collection ────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     client
-        .delete_card(&book_id, &card_name, None)
+        .delete_card(book_id, card_name, None)
         .expect("delete card");
 
     // ── REPORT sync-collection (incremental sync reports the removal) ───────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     let delta = client
-        .sync_cards(&book_id, Some(&sync_token))
+        .sync_cards(book_id, Some(&sync_token))
         .expect("incremental sync");
     assert!(
-        delta.vanished.iter().any(|href| href.contains(&card_id)),
+        delta.vanished.iter().any(|href| href.contains(card_id)),
         "deleted card {card_id} missing from incremental sync removals"
     );
-
-    client.set_stream(connect(&base));
-    client
-        .delete_addressbook(&book_id)
-        .expect("delete addressbook");
 }
 
 /// CardDAV card CRUD inside the existing addressbook `addressbook_id`,
@@ -755,9 +949,33 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
         .expect("create card");
     assert_eq!(created.id, card_name, "create card id mismatch");
 
+    // The card now exists in an addressbook this flow does not own, so
+    // every exit path has to remove it. See with_cleanup.
+    with_cleanup(
+        &mut client,
+        |client| carddav_cards_body(client, &base, addressbook_id, &card_id, &card_name),
+        |client| {
+            client.set_stream(connect(&base));
+            if let Err(err) = client.delete_card(addressbook_id, &card_name, None) {
+                report_leftover("card", &card_name, &err);
+            }
+        },
+    );
+}
+
+/// The body of the card-only CardDAV flow, everything that runs once
+/// the test card exists. Split out so [`with_cleanup`] can own the
+/// teardown.
+fn carddav_cards_body(
+    client: &mut WebdavClientStd,
+    base: &Url,
+    addressbook_id: &str,
+    card_id: &str,
+    card_name: &str,
+) {
     // ── REPORT list cards (verify present) ──────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     let cards = client.list_cards(addressbook_id).expect("list cards");
     // A card is addressed by its id, i.e. the resource name the server
     // enumerates, used verbatim: we created `<card_id>.vcf`, so that is
@@ -767,32 +985,47 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
         "created card {card_name} missing from REPORT"
     );
 
+    // ── REPORT enum card refs (etag-only spine) ─────────────────────────────────
+
+    client.set_stream(connect(base));
+    let refs = client.enum_cards(addressbook_id).expect("enum cards");
+    assert!(
+        refs.iter().any(|r| r.id == card_name),
+        "created card {card_name} missing from etag-only enumeration"
+    );
+
+    // ── REPORT multiget (batch bodies) ──────────────────────────────────────────
+
+    client.set_stream(connect(base));
+    let fetched = client
+        .multiget_cards(addressbook_id, &[card_name])
+        .expect("multiget cards");
+    assert!(
+        fetched
+            .iter()
+            .any(|c| c.id == card_name && !c.data.is_empty()),
+        "multiget returned no body for card {card_name}"
+    );
+
     // ── GET read card ───────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     let body = client
-        .read_card(addressbook_id, &card_name)
+        .read_card(addressbook_id, card_name)
         .expect("read card");
     assert!(!body.data.is_empty(), "read card returned empty body");
 
     // ── PUT update card ─────────────────────────────────────────────────────────
 
-    client.set_stream(connect(&base));
+    client.set_stream(connect(base));
     client
         .update_card(
             addressbook_id,
-            &card_name,
-            build_vcf(&card_id, "io-webdav Test (updated)").into_bytes(),
+            card_name,
+            build_vcf(card_id, "io-webdav Test (updated)").into_bytes(),
             body.etag.as_deref(),
         )
         .expect("update card");
-
-    // ── CLEANUP: delete the card only ───────────────────────────────────────────
-
-    client.set_stream(connect(&base));
-    client
-        .delete_card(addressbook_id, &card_name, None)
-        .expect("delete card");
 }
 
 /// Builds a minimal single-event iCalendar object (CRLF line endings,

@@ -25,7 +25,7 @@ This library is composed of 3 feature-gated layers:
 - **CalDAV**: calendar collections and calendar object resources, with discovery of the calendar home set.
 - **CardDAV**: address book collections and contact cards, with discovery of the address book home set.
 - **Discovery**: current-user-principal lookup and home-set resolution, surfacing redirects to the caller instead of following them.
-- **Incremental sync**: collection synchronization with sync tokens, batch multiget and ETag-only enumeration for change detection.
+- **Incremental sync**: collection synchronization with sync tokens, batch multiget and ETag-only enumeration for change detection, on both calendars and address books.
 - **Authentication**: HTTP Basic and Bearer.
 - Full standard, blocking client with **TLS** support:
   - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature, enabled by default)
@@ -40,7 +40,7 @@ This library is composed of 3 feature-gated layers:
 | RFC    | What is covered                                                                                                        |
 |--------|-----------------------------------------------------------------------------------------------------------------------|
 | [4918] | WebDAV core: property discovery and patching, collection creation, copy, move, delete, get, put, options, report and multistatus parsing |
-| [4791] | CalDAV: calendar collections and calendar object resources, with calendar home-set discovery                          |
+| [4791] | CalDAV: calendar collections and calendar object resources, with calendar home-set discovery, batch multiget and ETag-only enumeration |
 | [5397] | WebDAV current principal: current-user-principal discovery                                                             |
 | [6352] | CardDAV: address book collections and contact cards, with address book home-set discovery, batch multiget and ETag-only enumeration |
 | [6578] | Collection synchronization: sync-collection report and sync tokens                                                    |
@@ -68,7 +68,7 @@ This project is developed with AI assistance. This section documents how, so use
 - **Not used for**: Engineering, critical code, git manipulation (commit, merge, rebase…), real-world tests.
 - **Verification**: Every AI-assisted change is read, compiled, tested, and formatted before commit. Behavioural correctness is verified against the relevant RFC or upstream spec, not assumed from the model output. Tests are never adjusted to fit AI-generated code; the code is adjusted to fit correct behaviour.
 - **Limitations**: AI models occasionally produce code that compiles and passes tests but is subtly wrong. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken seriously.
-- **Last reviewed**: 16/07/2026
+- **Last reviewed**: 08/08/2026
 
 ## License
 

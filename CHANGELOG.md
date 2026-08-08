@@ -7,16 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added the CalDAV read-side sync coroutines, bringing calendars level with address books: `CaldavItemEnum` (ETag-only enumeration returning `CaldavItemRef` rows), `CaldavItemMultiget` (`calendar-multiget` batch fetch, RFC 4791 §7.9) and the matching `enum_items` / `multiget_items` / `sync_items` client methods, the last running a `sync-collection` REPORT (RFC 6578) against a calendar.
+- Added `CaldavCalendar::sync_token`, requested alongside the existing ctag when listing calendars, so an incremental calendar sync has a checkpoint to start from.
+- Added `CaldavCalendar::components`, read from and written to `supported-calendar-component-set` (RFC 4791 §5.2.3), so a caller can tell whether a collection holds `VEVENT`, `VTODO` or `VJOURNAL`, and can declare it when creating one.
+- Added `WebdavPropValue`, the value side of a `PROPPATCH` / `MKCOL` / `MKCALENDAR` property set: `Text` for escaped content, `Raw` for a markup fragment such as the `<C:comp/>` children of a component set.
+- Added `WebdavPropChild`, carrying a property child's `name` attribute so attribute-valued properties can be read at all.
+
 ### Changed
 
-- Collapsed `CardRef`/`CardEntry` to a single verbatim `id` (the href's last path segment), stopped `CreateCard` appending `.vcf`, and renamed `UpdateCardOk.uri` to `id`.
+- Collapsed `CarddavCardRef`/`CarddavCardEntry` to a single verbatim `id` (the href's last path segment), stopped `CarddavCardCreate` appending `.vcf`, and renamed `CarddavCardUpdateOk.uri` to `id`.
 
   **Breaking**: read `id` instead of `uri`, and pass any extension yourself on create (`create_card(book, "alice.vcf", …)`).
+
+- Gave calendar items the verbatim `id` cards already had: `join_path` no longer appends `.ics` and a listing no longer strips it.
+
+  **Breaking**: pass the whole resource name to every item verb (`create_item(cal, "event-1.ics", …)`), and drop any extension juggling around the listed id.
+
+- Moved `CaldavItemEntry` from `rfc4791::item::list` to `rfc4791::item`, beside the new `CaldavItemRef`, mirroring `rfc6352::card`.
+
+  **Breaking**: import `rfc4791::item::CaldavItemEntry`.
+
+- Property sets take a `WebdavPropValue` instead of a `&str`, so `property_set`, `proppatch_body`, `mkcol_body`, `prop_set_body`, `mkcalendar_body`, `WebdavProppatch::new` and `WebdavMkcol::new` all changed shape.
+
+  **Breaking**: wrap text values in `WebdavPropValue::Text`.
+
+- `WebdavPropItem::children` holds `WebdavPropChild` values rather than bare local names.
+
+  **Breaking**: read `child.local` where a `String` was read before.
+
+- Renamed every public type to the Pimalaya naming canon, domain first then target then verb: the WebDAV core and the protocol-neutral pieces take the `Webdav` prefix, the CalDAV layer takes `Caldav`, the CardDAV layer takes `Carddav`. Coroutines stopped being verb-first, so `ListCalendars` became `CaldavCalendarList` and `CreateCard` became `CarddavCardCreate`.
+
+  **Breaking**: every import changes. Module paths are untouched, so only the type names move.
 
 ### Fixed
 
 - Fixed card `read`/`update`/`delete` addressing the wrong resource on `.vcf`-suffixing servers (Fastmail, iCloud): the id is verbatim end-to-end, so a listed id round-trips through every verb.
-- Fixed `card create` returning an unusable id when the server names the resource itself (e.g. Google): `CreateCardOk.id` now comes from the `Location` header when present, else the caller's name.
+- Fixed `card create` returning an unusable id when the server names the resource itself (e.g. Google): `CarddavCardCreateOk.id` now comes from the `Location` header when present, else the caller's name.
+- Fixed item `read`/`update`/`delete` addressing the wrong resource: a listed id had `.ics` stripped while every verb re-appended it, so any id not ending in `.ics` addressed nothing.
+- Fixed `item create` returning an unusable id when the server names the resource itself: `CaldavItemCreateOk.id` now comes from the `Location` header when present, else the caller's name.
+- Fixed `CaldavCalendar::tz` being read by a listing but never written back, so a time zone was silently dropped on create and update.
+- Fixed the item listing keeping a calendar's own multistatus self-entry as a bogus item (iCloud echoes the collection), matching the card listing.
+- Fixed the copyright holder and year in both license files, and the supported version line in the security policy.
+- Fixed the live provider suites leaking collections and resources into real accounts: teardown was written as the last steps of each flow, so any failure skipped it. Every flow now tears down on the failing path too, and reports what it could not remove.
+
+### Removed
+
+- Removed the docs/ folder, replaced by cairn/ following the Cairn convention (spec, changes, log) with its AGENTS.md activation stanza.
 
 ## [0.1.0] - 2026-07-16
 

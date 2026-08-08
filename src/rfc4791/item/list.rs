@@ -2,7 +2,7 @@
 //! collection.
 //!
 //! Stays byte-oriented: the iCalendar payload is returned as raw bytes
-//! and parsed by io-calendar.
+//! and parsed upstream (ical).
 //!
 //! # Example
 //!
@@ -14,7 +14,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::item::list::ListItems,
+//!     rfc4791::item::list::CaldavItemList,
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -25,7 +25,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = ListItems::new(
+//! let mut coroutine = CaldavItemList::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
@@ -51,37 +51,29 @@
 //! println!("{} items", items.len());
 //! ```
 
-use alloc::{
-    collections::BTreeSet,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::collections::BTreeSet;
 
 use log::trace;
 use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::calendar::{CALENDAR_DATA, calendar_query_body},
-    rfc4918::{
-        GETETAG, WebdavAuth,
-        report::Report,
-        send::SendError,
-        trace_unrecognized, {Property, ResponseEntry},
+    rfc4791::{
+        calendar::calendar_query_body,
+        item::{CaldavItemEntry, ITEM_PROPS, item_from_entry},
     },
+    rfc4918::{WebdavAuth, report::WebdavReport, send::WebdavSendError},
     webdav_try,
 };
-
-const ITEM_PROPS: &[Property] = &[GETETAG, CALENDAR_DATA];
 
 /// Coroutine that lists items inside a calendar via REPORT
 /// `calendar-query`.
 #[derive(Debug)]
-pub struct ListItems {
+pub struct CaldavItemList {
     state: State,
 }
 
-impl ListItems {
+impl CaldavItemList {
     /// Builds a new `list-items` coroutine.
     ///
     /// `calendar_path` is the calendar collection path. `comp_filter`
@@ -96,26 +88,26 @@ impl ListItems {
         comp_filter: &str,
     ) -> Self {
         let body = calendar_query_body(ITEM_PROPS, comp_filter);
-        let report = Report::new(base_url, auth, user_agent, calendar_path, 1, body);
+        let report = WebdavReport::new(base_url, auth, user_agent, calendar_path, 1, body);
         Self {
-            state: State::Report(report),
+            state: State::WebdavReport(report),
         }
     }
 }
 
-impl WebdavCoroutine for ListItems {
+impl WebdavCoroutine for CaldavItemList {
     type Yield = WebdavYield;
-    type Return = Result<BTreeSet<ItemEntry>, SendError>;
+    type Return = Result<BTreeSet<CaldavItemEntry>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Report(report) => {
+            State::WebdavReport(report) => {
                 let multistatus = webdav_try!(report, arg);
                 let items = multistatus
                     .responses
                     .iter()
-                    .filter_map(from_entry)
+                    .filter_map(item_from_entry)
                     .collect();
                 WebdavCoroutineState::Complete(Ok(items))
             }
@@ -123,42 +115,7 @@ impl WebdavCoroutine for ListItems {
     }
 }
 
-fn from_entry(entry: &ResponseEntry) -> Option<ItemEntry> {
-    let id = entry.id().trim_end_matches(".ics");
-    if id.is_empty() {
-        return None;
-    }
-
-    let data = entry.text(CALENDAR_DATA)?;
-    trace_unrecognized(entry, ITEM_PROPS);
-
-    let etag = entry
-        .text(GETETAG)
-        .map(|raw| raw.trim_matches('"').to_string());
-
-    Some(ItemEntry {
-        id: id.to_string(),
-        etag,
-        data: data.as_bytes().to_vec(),
-    })
-}
-
 #[derive(Debug)]
 enum State {
-    Report(Report),
-}
-
-/// Raw calendar item entry returned by
-/// [`ListItems`].
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ItemEntry {
-    /// Item identifier (last path segment of the href, with `.ics`
-    /// stripped).
-    pub id: String,
-
-    /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
-    pub etag: Option<String>,
-
-    /// Raw iCalendar bytes (`calendar-data`).
-    pub data: Vec<u8>,
+    WebdavReport(WebdavReport),
 }

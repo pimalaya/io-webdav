@@ -1,7 +1,7 @@
-//! `read-item` coroutine: GET a calendar item by id.
+//! `read-item` coroutine: GET a calendar item by its resource name.
 //!
 //! Stays byte-oriented: returns raw iCalendar bytes plus the
-//! response's `ETag` so io-calendar can run calcard upstream.
+//! response's `ETag`, leaving the parse to ical upstream.
 //!
 //! # Example
 //!
@@ -13,7 +13,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::item::read::ReadItem,
+//!     rfc4791::item::read::CaldavItemRead,
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -25,7 +25,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     ReadItem::new(&base_url, &auth, "io-webdav", "/dav/calendars/personal/", "event-1");
+//!     CaldavItemRead::new(&base_url, &auth, "io-webdav", "/dav/calendars/personal/", "event-1.ics");
 //! let mut arg = None;
 //!
 //! let item = loop {
@@ -55,46 +55,48 @@ use crate::{
     rfc4791::item::join_path,
     rfc4918::{
         WebdavAuth,
-        get::Get,
+        get::WebdavGet,
         read_etag,
-        send::{SendError, SendOk},
+        send::{WebdavSendError, WebdavSendOk},
     },
     webdav_try,
 };
 
 /// Coroutine that reads a calendar item.
 #[derive(Debug)]
-pub struct ReadItem {
+pub struct CaldavItemRead {
     state: State,
 }
 
-impl ReadItem {
-    /// Builds a new `read-item` coroutine.
+impl CaldavItemRead {
+    /// Builds a new `read-item` coroutine. `id` is the resource id
+    /// exactly as the server returned it (`CaldavItemEntry::id`), used
+    /// verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         calendar_path: &str,
-        item_id: &str,
+        id: &str,
     ) -> Self {
-        let path = join_path(calendar_path, item_id);
+        let path = join_path(calendar_path, id);
         Self {
-            state: State::Get(Get::new(base_url, auth, user_agent, &path)),
+            state: State::WebdavGet(WebdavGet::new(base_url, auth, user_agent, &path)),
         }
     }
 }
 
-impl WebdavCoroutine for ReadItem {
+impl WebdavCoroutine for CaldavItemRead {
     type Yield = WebdavYield;
-    type Return = Result<ItemBody, SendError>;
+    type Return = Result<CaldavItemBody, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Get(get) => {
-                let SendOk { response, body, .. } = webdav_try!(get, arg);
+            State::WebdavGet(get) => {
+                let WebdavSendOk { response, body, .. } = webdav_try!(get, arg);
                 let etag = read_etag(&response);
-                WebdavCoroutineState::Complete(Ok(ItemBody { data: body, etag }))
+                WebdavCoroutineState::Complete(Ok(CaldavItemBody { data: body, etag }))
             }
         }
     }
@@ -102,13 +104,13 @@ impl WebdavCoroutine for ReadItem {
 
 #[derive(Debug)]
 enum State {
-    Get(Get),
+    WebdavGet(WebdavGet),
 }
 
 /// Item body plus optional ETag returned by
-/// [`ReadItem`].
+/// [`CaldavItemRead`].
 #[derive(Clone, Debug)]
-pub struct ItemBody {
+pub struct CaldavItemBody {
     /// Raw iCalendar bytes.
     pub data: Vec<u8>,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.

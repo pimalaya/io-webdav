@@ -1,9 +1,10 @@
-//! Generator-shape coroutine driver. Mirrors `core::ops::Coroutine`: a `Yield`
-//! associated type for intermediate progress, a `Return` for terminal output,
-//! and a two-variant [`WebdavCoroutineState`].
+//! Generator-shape coroutine driver. Mirrors `core::ops::Coroutine`: a
+//! `Yield` associated type for intermediate progress, a `Return` for
+//! terminal output, and a two-variant [`WebdavCoroutineState`].
 //!
-//! Most coroutines pick the standard [`WebdavYield`] (I/O-only); redirect-aware
-//! ones declare their own (e.g. [`WebdavRedirectYield`]).
+//! Most coroutines pick the standard [`WebdavYield`], which carries
+//! nothing but I/O requests. Redirect-aware ones declare their own, as
+//! [`WebdavRedirectYield`] does.
 //!
 //! [`WebdavRedirectYield`]: crate::rfc4918::coroutine::WebdavRedirectYield
 
@@ -42,8 +43,8 @@ pub enum WebdavYield {
     WantsWrite(Vec<u8>),
 }
 
-/// Coroutine `?`: forwards `Yielded` (via `Into`), short-circuits on `Err` (via
-/// `Into`), evaluates to the inner `Ok` value.
+/// Coroutine `?`: forwards `Yielded` and short-circuits on `Err`, both
+/// through `Into`, and evaluates to the inner `Ok` value.
 #[macro_export]
 macro_rules! webdav_try {
     ($coroutine:expr, $arg:expr $(,)?) => {

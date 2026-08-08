@@ -10,7 +10,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{WebdavAuth, r#move::Move},
+//!     rfc4918::{WebdavAuth, r#move::WebdavMove},
 //! };
 //! use url::Url;
 //!
@@ -20,7 +20,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = Move::new(
+//! let mut coroutine = WebdavMove::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
@@ -55,17 +55,17 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         request::WebdavRequest,
-        send::{SendError, SendOk, SendRaw},
+        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
     },
 };
 
 /// Coroutine that runs a `MOVE` of `path` to `destination`.
 #[derive(Debug)]
-pub struct Move {
+pub struct WebdavMove {
     state: State,
 }
 
-impl Move {
+impl WebdavMove {
     /// Builds a new `MOVE` coroutine.
     pub fn new(
         base_url: &Url,
@@ -80,14 +80,14 @@ impl Move {
             .overwrite(overwrite)
             .body(Vec::new());
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Move {
+impl WebdavCoroutine for WebdavMove {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -99,5 +99,5 @@ impl WebdavCoroutine for Move {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

@@ -1,11 +1,11 @@
 //! `create-card` coroutine: PUT raw vCard bytes against
 //! `<addressbook>/<id>`.
 //!
-//! The `id` is the resource name, used verbatim — io-webdav never
+//! The `id` is the resource name, used verbatim. io-webdav never
 //! appends a file extension, so the caller owns the whole name. The
-//! returned [`CreateCardOk::id`] is the caller's name, or the server's
+//! returned [`CarddavCardCreateOk::id`] is the caller's name, or the server's
 //! own when it relocates the resource and reports it in a `Location`
-//! header; either way it is what read/update/delete address.
+//! header. Either way it is what read, update and delete address.
 //!
 //! Uses `If-None-Match: *` so the server rejects the PUT when a
 //! resource with the same id already exists.
@@ -21,7 +21,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::card::create::CreateCard,
+//!     rfc6352::card::create::CarddavCardCreate,
 //! };
 //! use url::Url;
 //!
@@ -32,7 +32,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let vcard = b"BEGIN:VCARD\r\n...\r\nEND:VCARD\r\n".to_vec();
-//! let mut coroutine = CreateCard::new(
+//! let mut coroutine = CarddavCardCreate::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
@@ -72,10 +72,10 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth,
-        put::{Put, PutArgs},
+        WebdavAuth, id_from_location,
+        put::{WebdavPut, WebdavPutArgs},
         read_etag,
-        send::{SendError, SendOk},
+        send::{WebdavSendError, WebdavSendOk},
     },
     rfc6352::card::join_path,
     webdav_try,
@@ -83,12 +83,12 @@ use crate::{
 
 /// Coroutine that creates a card.
 #[derive(Debug)]
-pub struct CreateCard {
+pub struct CarddavCardCreate {
     id: String,
     state: State,
 }
 
-impl CreateCard {
+impl CarddavCardCreate {
     /// Builds a new `create-card` coroutine.
     pub fn new(
         base_url: &Url,
@@ -99,7 +99,7 @@ impl CreateCard {
         vcard: Vec<u8>,
     ) -> Self {
         let path = join_path(addressbook_path, id);
-        let put = Put::new(PutArgs {
+        let put = WebdavPut::new(WebdavPutArgs {
             base_url,
             auth,
             user_agent,
@@ -111,26 +111,26 @@ impl CreateCard {
         });
         Self {
             id: id.to_string(),
-            state: State::Put(put),
+            state: State::WebdavPut(put),
         }
     }
 }
 
-impl WebdavCoroutine for CreateCard {
+impl WebdavCoroutine for CarddavCardCreate {
     type Yield = WebdavYield;
-    type Return = Result<CreateCardOk, SendError>;
+    type Return = Result<CarddavCardCreateOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Put(put) => {
-                let SendOk { response, .. } = webdav_try!(put, arg);
+            State::WebdavPut(put) => {
+                let WebdavSendOk { response, .. } = webdav_try!(put, arg);
                 let etag = read_etag(&response);
                 let id = response
                     .header("location")
                     .and_then(id_from_location)
                     .unwrap_or_else(|| mem::take(&mut self.id));
-                WebdavCoroutineState::Complete(Ok(CreateCardOk { id, etag }))
+                WebdavCoroutineState::Complete(Ok(CarddavCardCreateOk { id, etag }))
             }
         }
     }
@@ -138,26 +138,13 @@ impl WebdavCoroutine for CreateCard {
 
 #[derive(Debug)]
 enum State {
-    Put(Put),
-}
-
-/// Extracts a card's resource id from a `Location` header: its last path
-/// segment (query and fragment dropped), matching how a listed card's id
-/// is derived from its href. [`None`] for an empty segment.
-fn id_from_location(location: &str) -> Option<String> {
-    let path = location
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(location)
-        .trim_end_matches('/');
-    let segment = path.rsplit('/').next().unwrap_or_default();
-    (!segment.is_empty()).then(|| segment.to_string())
+    WebdavPut(WebdavPut),
 }
 
 /// Outcome of a successful
-/// [`CreateCard`] resume.
+/// [`CarddavCardCreate`] resume.
 #[derive(Clone, Debug)]
-pub struct CreateCardOk {
+pub struct CarddavCardCreateOk {
     /// Card resource id: the `Location` header's last path segment when
     /// the server returns one (its own name for the resource), otherwise
     /// the caller-supplied name, verbatim.

@@ -1,6 +1,6 @@
 //! CardDAV addressbook collections (RFC 6352 §5).
 //!
-//! Holds the shared [`Addressbook`] type, the CardDAV property
+//! Holds the shared [`CarddavAddressbook`] type, the CardDAV property
 //! vocabulary, and the crate-internal request-body helpers reused across
 //! the addressbook coroutines. Each coroutine (create, delete, home_set,
 //! list, update) is its own submodule.
@@ -16,85 +16,80 @@ use alloc::{format, string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 
 use crate::rfc4918::{
-    DISPLAYNAME, GETCTAG, Namespace, Property, RESOURCETYPE, SYNC_TOKEN, escape_text,
-    report_query_body,
+    DISPLAYNAME, GETCTAG, RESOURCETYPE, SYNC_TOKEN, WebdavNamespace, WebdavPropValue,
+    WebdavProperty, escape_text, report_query_body,
 };
 
 /// A CardDAV addressbook collection (RFC 6352 §5).
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
-pub struct Addressbook {
-    /// Addressbook identifier; the last non-empty path segment of the
+pub struct CarddavAddressbook {
+    /// Addressbook identifier: the last non-empty path segment of the
     /// addressbook collection URL.
     pub id: String,
-
     /// Human-readable display name (DAV:displayname).
     pub display_name: Option<String>,
-
     /// Free-form description (RFC 6352 §6.2.1).
     pub description: Option<String>,
-
     /// Display color (custom inf-it.com extension, widely supported by
     /// CardDAV clients).
     pub color: Option<String>,
-
     /// Collection change tag (CalendarServer ctag extension); bumped on
     /// every change to the addressbook.
     pub ctag: Option<String>,
-
     /// Collection sync token (RFC 6578 §4), the checkpoint fed back to
     /// a `sync-collection` REPORT.
     pub sync_token: Option<String>,
 }
 
 /// CardDAV namespace (RFC 6352 §4).
-pub const CARDDAV: Namespace = Namespace {
+pub const CARDDAV: WebdavNamespace = WebdavNamespace {
     uri: "urn:ietf:params:xml:ns:carddav",
     prefix: "C",
 };
 /// inf-it extension namespace (addressbook color).
-pub const INFIT: Namespace = Namespace {
+pub const INFIT: WebdavNamespace = WebdavNamespace {
     uri: "http://inf-it.com/ns/ab/",
     prefix: "I",
 };
 
 /// `C:addressbook` resourcetype marker (RFC 6352 §5.2).
-pub const ADDRESSBOOK: Property = Property {
+pub const ADDRESSBOOK: WebdavProperty = WebdavProperty {
     ns: CARDDAV,
     local: "addressbook",
 };
 /// `C:addressbook-home-set` (RFC 6352 §7.1.1).
-pub const ADDRESSBOOK_HOME_SET: Property = Property {
+pub const ADDRESSBOOK_HOME_SET: WebdavProperty = WebdavProperty {
     ns: CARDDAV,
     local: "addressbook-home-set",
 };
 /// `C:addressbook-description` (RFC 6352 §6.2.1).
-pub const ADDRESSBOOK_DESCRIPTION: Property = Property {
+pub const ADDRESSBOOK_DESCRIPTION: WebdavProperty = WebdavProperty {
     ns: CARDDAV,
     local: "addressbook-description",
 };
 /// `C:address-data` (RFC 6352 §10.4).
-pub const ADDRESS_DATA: Property = Property {
+pub const ADDRESS_DATA: WebdavProperty = WebdavProperty {
     ns: CARDDAV,
     local: "address-data",
 };
 /// `I:addressbook-color` (inf-it extension).
-pub const ADDRESSBOOK_COLOR: Property = Property {
+pub const ADDRESSBOOK_COLOR: WebdavProperty = WebdavProperty {
     ns: INFIT,
     local: "addressbook-color",
 };
 /// `C:addressbook-query` REPORT root (RFC 6352 §8.6).
-pub const ADDRESSBOOK_QUERY: Property = Property {
+pub const ADDRESSBOOK_QUERY: WebdavProperty = WebdavProperty {
     ns: CARDDAV,
     local: "addressbook-query",
 };
 /// `C:addressbook-multiget` REPORT root (RFC 6352 §8.7).
-pub const ADDRESSBOOK_MULTIGET: Property = Property {
+pub const ADDRESSBOOK_MULTIGET: WebdavProperty = WebdavProperty {
     ns: CARDDAV,
     local: "addressbook-multiget",
 };
 
 /// Properties requested when listing addressbooks.
-pub const LIST_PROPS: &[Property] = &[
+pub const LIST_PROPS: &[WebdavProperty] = &[
     RESOURCETYPE,
     DISPLAYNAME,
     ADDRESSBOOK_DESCRIPTION,
@@ -113,16 +108,18 @@ pub fn join_path(home: &str, id: &str) -> String {
 
 /// The present display name / color / description of `addressbook` as
 /// `PROPPATCH` / `MKCOL` set pairs.
-pub fn property_set(addressbook: &Addressbook) -> Vec<(Property, &str)> {
+pub fn property_set(
+    addressbook: &CarddavAddressbook,
+) -> Vec<(WebdavProperty, WebdavPropValue<'_>)> {
     let mut set = Vec::new();
     if let Some(name) = &addressbook.display_name {
-        set.push((DISPLAYNAME, name.as_str()));
+        set.push((DISPLAYNAME, WebdavPropValue::Text(name)));
     }
     if let Some(color) = &addressbook.color {
-        set.push((ADDRESSBOOK_COLOR, color.as_str()));
+        set.push((ADDRESSBOOK_COLOR, WebdavPropValue::Text(color)));
     }
     if let Some(description) = &addressbook.description {
-        set.push((ADDRESSBOOK_DESCRIPTION, description.as_str()));
+        set.push((ADDRESSBOOK_DESCRIPTION, WebdavPropValue::Text(description)));
     }
     set
 }
@@ -135,14 +132,14 @@ pub fn property_set(addressbook: &Addressbook) -> Vec<(Property, &str)> {
 /// servers (Google) reject a missing filter with HTTP 400 and treat an
 /// empty `anyof` (the schema default) as matching nothing, so `allof`
 /// is the portable match-all form.
-pub fn addressbook_query_body(props: &[Property]) -> Vec<u8> {
+pub fn addressbook_query_body(props: &[WebdavProperty]) -> Vec<u8> {
     let filter = "<C:filter test=\"allof\"></C:filter>";
     report_query_body(ADDRESSBOOK_QUERY, &[CARDDAV], props, filter)
 }
 
 /// Builds a CardDAV `addressbook-multiget` REPORT body (RFC 6352 §8.7)
 /// requesting `props` for each given href.
-pub fn addressbook_multiget_body(hrefs: &[String], props: &[Property]) -> Vec<u8> {
+pub fn addressbook_multiget_body(hrefs: &[String], props: &[WebdavProperty]) -> Vec<u8> {
     let mut fragment = String::new();
     for href in hrefs {
         fragment.push_str(&format!("<D:href>{}</D:href>", escape_text(href)));

@@ -13,7 +13,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{DISPLAYNAME, WebdavAuth, proppatch::Proppatch},
+//!     rfc4918::{DISPLAYNAME, WebdavPropValue, WebdavAuth, proppatch::WebdavProppatch},
 //! };
 //! use url::Url;
 //!
@@ -23,8 +23,8 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine =
-//!     Proppatch::new(&base_url, &auth, "io-webdav", "/dav/collection/", &[(DISPLAYNAME, "Renamed")]);
+//! let set = [(DISPLAYNAME, WebdavPropValue::Text("Renamed"))];
+//! let mut coroutine = WebdavProppatch::new(&base_url, &auth, "io-webdav", "/dav/collection/", &set);
 //! let mut arg = None;
 //!
 //! loop {
@@ -48,20 +48,20 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        Property, WebdavAuth, proppatch_body,
+        WebdavAuth, WebdavPropValue, WebdavProperty, proppatch_body,
         request::WebdavRequest,
-        send::{SendError, SendRaw},
+        send::{WebdavSendError, WebdavSendRaw},
     },
     webdav_try,
 };
 
 /// Coroutine that runs a `PROPPATCH`.
 #[derive(Debug)]
-pub struct Proppatch {
+pub struct WebdavProppatch {
     state: State,
 }
 
-impl Proppatch {
+impl WebdavProppatch {
     /// Builds a new `PROPPATCH` coroutine setting each `(property,
     /// value)` pair against `path`.
     pub fn new(
@@ -69,20 +69,20 @@ impl Proppatch {
         auth: &WebdavAuth,
         user_agent: &str,
         path: &str,
-        set: &[(Property, &str)],
+        set: &[(WebdavProperty, WebdavPropValue<'_>)],
     ) -> Self {
         let request = WebdavRequest::proppatch(base_url, auth, user_agent, path)
             .content_type_xml()
             .body(proppatch_body(set));
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Proppatch {
+impl WebdavCoroutine for WebdavProppatch {
     type Yield = WebdavYield;
-    type Return = Result<(), SendError>;
+    type Return = Result<(), WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -97,5 +97,5 @@ impl WebdavCoroutine for Proppatch {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

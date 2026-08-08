@@ -11,7 +11,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::calendar::{Calendar, update::UpdateCalendar},
+//!     rfc4791::calendar::{CaldavCalendar, update::CaldavCalendarUpdate},
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -22,13 +22,13 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let calendar = Calendar {
+//! let calendar = CaldavCalendar {
 //!     id: "personal".into(),
 //!     color: Some("#ff0000".into()),
 //!     ..Default::default()
 //! };
 //! let mut coroutine =
-//!     UpdateCalendar::new(&base_url, &auth, "io-webdav", "/dav/calendars/", &calendar);
+//!     CaldavCalendarUpdate::new(&base_url, &auth, "io-webdav", "/dav/calendars/", &calendar);
 //! let mut arg = None;
 //!
 //! loop {
@@ -51,17 +51,17 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::calendar::{Calendar, join_path, property_set},
-    rfc4918::{WebdavAuth, proppatch::Proppatch, send::SendError},
+    rfc4791::calendar::{CaldavCalendar, join_path, property_set},
+    rfc4918::{WebdavAuth, proppatch::WebdavProppatch, send::WebdavSendError},
 };
 
 /// Coroutine that updates a calendar collection's properties.
 #[derive(Debug)]
-pub struct UpdateCalendar {
+pub struct CaldavCalendarUpdate {
     state: State,
 }
 
-impl UpdateCalendar {
+impl CaldavCalendarUpdate {
     /// Builds a new `update-calendar` coroutine targeting
     /// `home_set_path` joined with `calendar.id`.
     pub fn new(
@@ -69,30 +69,30 @@ impl UpdateCalendar {
         auth: &WebdavAuth,
         user_agent: &str,
         home_set_path: &str,
-        calendar: &Calendar,
+        calendar: &CaldavCalendar,
     ) -> Self {
         let path = join_path(home_set_path, &calendar.id);
         let set = property_set(calendar);
-        let proppatch = Proppatch::new(base_url, auth, user_agent, &path, &set);
+        let proppatch = WebdavProppatch::new(base_url, auth, user_agent, &path, &set);
         Self {
-            state: State::Proppatch(proppatch),
+            state: State::WebdavProppatch(proppatch),
         }
     }
 }
 
-impl WebdavCoroutine for UpdateCalendar {
+impl WebdavCoroutine for CaldavCalendarUpdate {
     type Yield = WebdavYield;
-    type Return = Result<(), SendError>;
+    type Return = Result<(), WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Proppatch(proppatch) => proppatch.resume(arg),
+            State::WebdavProppatch(proppatch) => proppatch.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Proppatch(Proppatch),
+    WebdavProppatch(WebdavProppatch),
 }

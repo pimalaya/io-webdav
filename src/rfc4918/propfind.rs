@@ -2,7 +2,7 @@
 //!
 //! Requests `props` against `path` at the given `Depth`; the request
 //! body is generated from the selector and the response is parsed into
-//! a [`Multistatus`].
+//! a [`WebdavMultistatus`].
 //!
 //! # Example
 //!
@@ -14,7 +14,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{DISPLAYNAME, RESOURCETYPE, WebdavAuth, propfind::Propfind},
+//!     rfc4918::{DISPLAYNAME, RESOURCETYPE, WebdavAuth, propfind::WebdavPropfind},
 //! };
 //! use url::Url;
 //!
@@ -25,7 +25,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     Propfind::new(&base_url, &auth, "io-webdav", "/dav/", 1, &[RESOURCETYPE, DISPLAYNAME]);
+//!     WebdavPropfind::new(&base_url, &auth, "io-webdav", "/dav/", 1, &[RESOURCETYPE, DISPLAYNAME]);
 //! let mut arg = None;
 //!
 //! let multistatus = loop {
@@ -55,20 +55,20 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        Multistatus, Property, WebdavAuth, parse_multistatus, propfind_body,
+        WebdavAuth, WebdavMultistatus, WebdavProperty, parse_multistatus, propfind_body,
         request::WebdavRequest,
-        send::{SendError, SendRaw},
+        send::{WebdavSendError, WebdavSendRaw},
     },
     webdav_try,
 };
 
 /// Coroutine that runs a `PROPFIND` and parses the multistatus body.
 #[derive(Debug)]
-pub struct Propfind {
+pub struct WebdavPropfind {
     state: State,
 }
 
-impl Propfind {
+impl WebdavPropfind {
     /// Builds a new `PROPFIND` coroutine requesting `props` against
     /// `path` (relative to `base_url`) with the given `depth`.
     pub fn new(
@@ -77,21 +77,21 @@ impl Propfind {
         user_agent: &str,
         path: &str,
         depth: u8,
-        props: &[Property],
+        props: &[WebdavProperty],
     ) -> Self {
         let request = WebdavRequest::propfind(base_url, auth, user_agent, path)
             .depth(depth)
             .content_type_xml()
             .body(propfind_body(props));
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Propfind {
+impl WebdavCoroutine for WebdavPropfind {
     type Yield = WebdavYield;
-    type Return = Result<Multistatus, SendError>;
+    type Return = Result<WebdavMultistatus, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -107,5 +107,5 @@ impl WebdavCoroutine for Propfind {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

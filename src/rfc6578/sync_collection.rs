@@ -4,7 +4,7 @@
 //! An initial sync (no token) returns every member; a subsequent sync
 //! returns only the members changed or removed since the given token,
 //! plus the next token to checkpoint. A rejected token surfaces as
-//! [`SyncCollectionError::InvalidSyncToken`] so the consumer can fall
+//! [`WebdavSyncCollectionError::InvalidSyncToken`] so the consumer can fall
 //! back to a full enumeration.
 //!
 //! # Example
@@ -18,7 +18,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::{GETETAG, WebdavAuth},
-//!     rfc6578::sync_collection::SyncCollection,
+//!     rfc6578::sync_collection::WebdavSyncCollection,
 //! };
 //! use url::Url;
 //!
@@ -28,7 +28,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = SyncCollection::new(
+//! let mut coroutine = WebdavSyncCollection::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
@@ -69,24 +69,21 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        DAV, GETETAG, Multistatus, Property, WebdavAuth, XML_DECL, escape_text, prop_block,
-        report::Report, send::SendError, xmlns_decls,
+        DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty, XML_DECL, escape_text,
+        prop_block, report::WebdavReport, send::WebdavSendError, xmlns_decls,
     },
 };
 
 /// Delta returned by a `sync-collection` REPORT.
 #[derive(Clone, Debug, Default)]
-pub struct SyncDelta {
+pub struct WebdavSyncDelta {
     /// Members created or updated since the request token.
-    pub changed: Vec<SyncChange>,
-
+    pub changed: Vec<WebdavSyncChange>,
     /// Hrefs of the members removed since the request token (404
     /// response-level status, RFC 6578 §3.4).
     pub vanished: Vec<String>,
-
     /// The next checkpoint token, fed back to the following sync.
     pub sync_token: Option<String>,
-
     /// Whether the server truncated the result set (a 507 row was
     /// present, RFC 6578 §3.6); the consumer must run the report again
     /// from [`sync_token`](Self::sync_token) to drain the rest.
@@ -95,37 +92,35 @@ pub struct SyncDelta {
 
 /// A changed member reported by a `sync-collection` REPORT.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct SyncChange {
+pub struct WebdavSyncChange {
     /// The member `<href>`, as returned by the server.
     pub href: String,
-
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
 }
 
 /// Failure causes during a `sync-collection` REPORT.
 #[derive(Debug, Error)]
-pub enum SyncCollectionError {
+pub enum WebdavSyncCollectionError {
     /// The server rejected the sync token; a full enumeration is needed.
     #[error("WebDAV server rejected the sync token; run a full enumeration")]
     InvalidSyncToken,
-
     /// The underlying WebDAV send failed.
     #[error(transparent)]
-    Send(#[from] SendError),
+    Send(#[from] WebdavSendError),
 }
 
 /// Coroutine that runs a `sync-collection` REPORT (RFC 6578 §3.2) and
-/// returns the parsed [`SyncDelta`].
+/// returns the parsed [`WebdavSyncDelta`].
 #[derive(Debug)]
-pub struct SyncCollection {
+pub struct WebdavSyncCollection {
     state: State,
     /// The collection path, without a trailing slash, so its own
     /// self-entry can be told apart from member resources.
     collection: String,
 }
 
-impl SyncCollection {
+impl WebdavSyncCollection {
     /// Builds a new `sync-collection` coroutine against the collection
     /// at `path`, requesting `props` on each changed member. Pass
     /// [`None`] as `sync_token` for an initial sync. The `Depth` header
@@ -137,33 +132,33 @@ impl SyncCollection {
         user_agent: &str,
         path: &str,
         sync_token: Option<&str>,
-        props: &[Property],
+        props: &[WebdavProperty],
     ) -> Self {
         let body = sync_collection_body(sync_token, props);
-        let report = Report::new(base_url, auth, user_agent, path, 0, body);
+        let report = WebdavReport::new(base_url, auth, user_agent, path, 0, body);
         Self {
-            state: State::Report(report),
+            state: State::WebdavReport(report),
             collection: path.trim_end_matches('/').to_string(),
         }
     }
 }
 
-impl WebdavCoroutine for SyncCollection {
+impl WebdavCoroutine for WebdavSyncCollection {
     type Yield = WebdavYield;
-    type Return = Result<SyncDelta, SyncCollectionError>;
+    type Return = Result<WebdavSyncDelta, WebdavSyncCollectionError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Report(report) => {
+            State::WebdavReport(report) => {
                 let multistatus = match report.resume(arg) {
                     WebdavCoroutineState::Yielded(yielded) => {
                         return WebdavCoroutineState::Yielded(yielded);
                     }
-                    WebdavCoroutineState::Complete(Err(SendError::HttpStatus(403, body)))
+                    WebdavCoroutineState::Complete(Err(WebdavSendError::HttpStatus(403, body)))
                         if body.contains("valid-sync-token") =>
                     {
-                        let err = SyncCollectionError::InvalidSyncToken;
+                        let err = WebdavSyncCollectionError::InvalidSyncToken;
                         return WebdavCoroutineState::Complete(Err(err));
                     }
                     WebdavCoroutineState::Complete(Err(err)) => {
@@ -182,7 +177,7 @@ impl WebdavCoroutine for SyncCollection {
 /// Builds a `sync-collection` REPORT body (RFC 6578 §6.1): the request
 /// token (an empty element for an initial sync), sync-level 1 and the
 /// requested `props`, in DTD order.
-pub fn sync_collection_body(sync_token: Option<&str>, props: &[Property]) -> Vec<u8> {
+pub fn sync_collection_body(sync_token: Option<&str>, props: &[WebdavProperty]) -> Vec<u8> {
     let mut nss = vec![DAV];
     nss.extend(props.iter().map(|prop| prop.ns));
     let decls = xmlns_decls(&nss);
@@ -199,13 +194,13 @@ pub fn sync_collection_body(sync_token: Option<&str>, props: &[Property]) -> Vec
     body.into_bytes()
 }
 
-/// Sorts the multistatus rows into a [`SyncDelta`]: 404 rows are
+/// Sorts the multistatus rows into a [`WebdavSyncDelta`]: 404 rows are
 /// removals, a 507 row flags truncation, everything else is a change.
 /// `collection` is the request-target path (trailing slash trimmed), so
 /// the collection's own self-entry can be dropped rather than mistaken
 /// for a member resource.
-fn from_multistatus(multistatus: Multistatus, collection: &str) -> SyncDelta {
-    let mut delta = SyncDelta {
+fn from_multistatus(multistatus: WebdavMultistatus, collection: &str) -> WebdavSyncDelta {
+    let mut delta = WebdavSyncDelta {
         sync_token: multistatus.sync_token,
         ..Default::default()
     };
@@ -232,7 +227,7 @@ fn from_multistatus(multistatus: Multistatus, collection: &str) -> SyncDelta {
                 let etag = entry
                     .text(GETETAG)
                     .map(|raw| raw.trim_matches('"').to_string());
-                delta.changed.push(SyncChange {
+                delta.changed.push(WebdavSyncChange {
                     href: entry.href,
                     etag,
                 });
@@ -245,14 +240,12 @@ fn from_multistatus(multistatus: Multistatus, collection: &str) -> SyncDelta {
 
 #[derive(Debug)]
 enum State {
-    Report(Report),
+    WebdavReport(WebdavReport),
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::rfc4918::parse_multistatus;
-
-    use super::*;
+    use crate::{rfc4918::parse_multistatus, rfc6578::sync_collection::*};
 
     #[test]
     fn body_carries_empty_token_on_initial_sync() {

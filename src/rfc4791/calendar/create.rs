@@ -11,7 +11,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::calendar::{Calendar, create::CreateCalendar},
+//!     rfc4791::calendar::{CaldavCalendar, create::CaldavCalendarCreate},
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -22,13 +22,13 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let calendar = Calendar {
+//! let calendar = CaldavCalendar {
 //!     id: "personal".into(),
 //!     display_name: Some("Personal".into()),
 //!     ..Default::default()
 //! };
 //! let mut coroutine =
-//!     CreateCalendar::new(&base_url, &auth, "io-webdav", "/dav/calendars/", &calendar);
+//!     CaldavCalendarCreate::new(&base_url, &auth, "io-webdav", "/dav/calendars/", &calendar);
 //! let mut arg = None;
 //!
 //! loop {
@@ -51,22 +51,22 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::calendar::{Calendar, join_path, mkcalendar_body, property_set},
+    rfc4791::calendar::{CaldavCalendar, join_path, mkcalendar_body, property_set},
     rfc4918::{
         WebdavAuth,
         request::WebdavRequest,
-        send::{SendError, SendRaw},
+        send::{WebdavSendError, WebdavSendRaw},
     },
     webdav_try,
 };
 
 /// Coroutine that creates a calendar collection.
 #[derive(Debug)]
-pub struct CreateCalendar {
+pub struct CaldavCalendarCreate {
     state: State,
 }
 
-impl CreateCalendar {
+impl CaldavCalendarCreate {
     /// Builds a new `create-calendar` coroutine targeting
     /// `home_set_path` joined with `calendar.id`.
     pub fn new(
@@ -74,7 +74,7 @@ impl CreateCalendar {
         auth: &WebdavAuth,
         user_agent: &str,
         home_set_path: &str,
-        calendar: &Calendar,
+        calendar: &CaldavCalendar,
     ) -> Self {
         let path = join_path(home_set_path, &calendar.id);
         let set = property_set(calendar);
@@ -82,14 +82,14 @@ impl CreateCalendar {
             .content_type_xml()
             .body(mkcalendar_body(&set));
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for CreateCalendar {
+impl WebdavCoroutine for CaldavCalendarCreate {
     type Yield = WebdavYield;
-    type Return = Result<(), SendError>;
+    type Return = Result<(), WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -104,5 +104,5 @@ impl WebdavCoroutine for CreateCalendar {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

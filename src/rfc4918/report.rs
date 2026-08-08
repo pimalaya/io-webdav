@@ -3,7 +3,7 @@
 //! Sends a `REPORT` against `path` with a caller-built query body (e.g.
 //! a CalDAV `calendar-query` from
 //! [`calendar_query_body`](crate::rfc4791::calendar::calendar_query_body))
-//! and parses the response into a [`Multistatus`].
+//! and parses the response into a [`WebdavMultistatus`].
 //!
 //! # Example
 //!
@@ -16,7 +16,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4791::calendar::calendar_query_body,
-//!     rfc4918::{GETETAG, WebdavAuth, report::Report},
+//!     rfc4918::{GETETAG, WebdavAuth, report::WebdavReport},
 //! };
 //! use url::Url;
 //!
@@ -28,7 +28,7 @@
 //! let auth = WebdavAuth::None;
 //! let body = calendar_query_body(&[GETETAG], "");
 //! let mut coroutine =
-//!     Report::new(&base_url, &auth, "io-webdav", "/dav/calendars/personal/", 1, body);
+//!     WebdavReport::new(&base_url, &auth, "io-webdav", "/dav/calendars/personal/", 1, body);
 //! let mut arg = None;
 //!
 //! let multistatus = loop {
@@ -56,20 +56,20 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        Multistatus, WebdavAuth, parse_multistatus,
+        WebdavAuth, WebdavMultistatus, parse_multistatus,
         request::WebdavRequest,
-        send::{SendError, SendRaw},
+        send::{WebdavSendError, WebdavSendRaw},
     },
     webdav_try,
 };
 
 /// Coroutine that runs a `REPORT` and parses the multistatus body.
 #[derive(Debug)]
-pub struct Report {
+pub struct WebdavReport {
     state: State,
 }
 
-impl Report {
+impl WebdavReport {
     /// Builds a new `REPORT` coroutine against `path` with the given
     /// `Depth` and query `body`.
     pub fn new(
@@ -85,14 +85,14 @@ impl Report {
             .content_type_xml()
             .body(body);
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Report {
+impl WebdavCoroutine for WebdavReport {
     type Yield = WebdavYield;
-    type Return = Result<Multistatus, SendError>;
+    type Return = Result<WebdavMultistatus, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -108,5 +108,5 @@ impl WebdavCoroutine for Report {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

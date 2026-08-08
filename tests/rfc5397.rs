@@ -5,8 +5,8 @@ mod common;
 
 use common::*;
 use io_webdav::{
-    rfc4918::WebdavAuth, rfc4918::follow_redirects::FollowRedirectsError,
-    rfc5397::current_user_principal::CurrentUserPrincipal,
+    rfc4918::WebdavAuth, rfc4918::follow_redirects::WebdavFollowRedirectsError,
+    rfc5397::current_user_principal::WebdavCurrentUserPrincipal,
 };
 use url::Url;
 
@@ -18,7 +18,7 @@ fn base() -> Url {
 
 #[test]
 fn discovery_resolves_the_principal_href() {
-    let mut discovery = CurrentUserPrincipal::new(&base(), &WebdavAuth::None, UA);
+    let mut discovery = WebdavCurrentUserPrincipal::new(&base(), &WebdavAuth::None, UA);
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
         <d:href>/</d:href>
@@ -45,7 +45,7 @@ fn discovery_resolves_the_principal_href() {
 
 #[test]
 fn discovery_yields_none_on_an_empty_multistatus() {
-    let mut discovery = CurrentUserPrincipal::new(&base(), &WebdavAuth::None, UA);
+    let mut discovery = WebdavCurrentUserPrincipal::new(&base(), &WebdavAuth::None, UA);
     let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
     let (_, ret) = expect_redirect_exchange(&mut discovery, &reply);
     assert!(ret.unwrap().is_none());
@@ -53,7 +53,7 @@ fn discovery_yields_none_on_an_empty_multistatus() {
 
 #[test]
 fn discovery_surfaces_redirects() {
-    let mut discovery = CurrentUserPrincipal::new(&base(), &WebdavAuth::None, UA);
+    let mut discovery = WebdavCurrentUserPrincipal::new(&base(), &WebdavAuth::None, UA);
     expect_redirect_wants_write(&mut discovery, None);
     expect_redirect_wants_read(&mut discovery);
 
@@ -69,11 +69,11 @@ fn discovery_surfaces_redirects() {
 
 #[test]
 fn discovery_maps_failure_statuses() {
-    let mut discovery = CurrentUserPrincipal::new(&base(), &WebdavAuth::None, UA);
+    let mut discovery = WebdavCurrentUserPrincipal::new(&base(), &WebdavAuth::None, UA);
     let (_, ret) =
         expect_redirect_exchange(&mut discovery, &http_response("401 Unauthorized", &[], ""));
     assert!(matches!(
         ret.unwrap_err(),
-        FollowRedirectsError::HttpStatus(401, _)
+        WebdavFollowRedirectsError::HttpStatus(401, _)
     ));
 }

@@ -2,7 +2,7 @@
 //! addressbook collection.
 //!
 //! Stays byte-oriented: the vCard payload is returned as raw bytes
-//! and parsed by io-addressbook.
+//! and parsed upstream (vcard).
 //!
 //! # Example
 //!
@@ -15,7 +15,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::card::list::ListCards,
+//!     rfc6352::card::list::CarddavCardList,
 //! };
 //! use url::Url;
 //!
@@ -26,7 +26,7 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let mut coroutine =
-//!     ListCards::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/contacts/");
+//!     CarddavCardList::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/contacts/");
 //! let mut arg = None;
 //!
 //! let cards = loop {
@@ -53,10 +53,10 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{WebdavAuth, report::Report, send::SendError},
+    rfc4918::{WebdavAuth, report::WebdavReport, send::WebdavSendError},
     rfc6352::{
         addressbook::addressbook_query_body,
-        card::{CARD_PROPS, CardEntry, card_from_entry},
+        card::{CARD_PROPS, CarddavCardEntry, card_from_entry},
     },
     webdav_try,
 };
@@ -64,11 +64,11 @@ use crate::{
 /// Coroutine that lists cards inside an addressbook via REPORT
 /// `addressbook-query`.
 #[derive(Debug)]
-pub struct ListCards {
+pub struct CarddavCardList {
     state: State,
 }
 
-impl ListCards {
+impl CarddavCardList {
     /// Builds a new `list-cards` coroutine.
     pub fn new(
         base_url: &Url,
@@ -77,21 +77,21 @@ impl ListCards {
         addressbook_path: &str,
     ) -> Self {
         let body = addressbook_query_body(CARD_PROPS);
-        let report = Report::new(base_url, auth, user_agent, addressbook_path, 1, body);
+        let report = WebdavReport::new(base_url, auth, user_agent, addressbook_path, 1, body);
         Self {
-            state: State::Report(report),
+            state: State::WebdavReport(report),
         }
     }
 }
 
-impl WebdavCoroutine for ListCards {
+impl WebdavCoroutine for CarddavCardList {
     type Yield = WebdavYield;
-    type Return = Result<BTreeSet<CardEntry>, SendError>;
+    type Return = Result<BTreeSet<CarddavCardEntry>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Report(report) => {
+            State::WebdavReport(report) => {
                 let multistatus = webdav_try!(report, arg);
                 let cards = multistatus
                     .responses
@@ -106,5 +106,5 @@ impl WebdavCoroutine for ListCards {
 
 #[derive(Debug)]
 enum State {
-    Report(Report),
+    WebdavReport(WebdavReport),
 }

@@ -14,7 +14,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::item::update::UpdateItem,
+//!     rfc4791::item::update::CaldavItemUpdate,
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -26,12 +26,12 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let ical = b"BEGIN:VCALENDAR\r\n...\r\nEND:VCALENDAR\r\n".to_vec();
-//! let mut coroutine = UpdateItem::new(
+//! let mut coroutine = CaldavItemUpdate::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
 //!     "/dav/calendars/personal/",
-//!     "event-1",
+//!     "event-1.ics",
 //!     ical,
 //!     Some("\"abc123\""),
 //! );
@@ -69,22 +69,24 @@ use crate::{
     rfc4791::item::join_path,
     rfc4918::{
         WebdavAuth,
-        put::{Put, PutArgs},
+        put::{WebdavPut, WebdavPutArgs},
         read_etag,
-        send::{SendError, SendOk},
+        send::{WebdavSendError, WebdavSendOk},
     },
     webdav_try,
 };
 
 /// Coroutine that updates a calendar item.
 #[derive(Debug)]
-pub struct UpdateItem {
+pub struct CaldavItemUpdate {
     id: String,
     state: State,
 }
 
-impl UpdateItem {
-    /// Builds a new `update-item` coroutine.
+impl CaldavItemUpdate {
+    /// Builds a new `update-item` coroutine. `id` is the resource id
+    /// exactly as the server returned it (`CaldavItemEntry::id`), used
+    /// verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -95,7 +97,7 @@ impl UpdateItem {
         if_match: Option<&str>,
     ) -> Self {
         let path = join_path(calendar_path, id);
-        let put = Put::new(PutArgs {
+        let put = WebdavPut::new(WebdavPutArgs {
             base_url,
             auth,
             user_agent,
@@ -107,23 +109,23 @@ impl UpdateItem {
         });
         Self {
             id: id.to_string(),
-            state: State::Put(put),
+            state: State::WebdavPut(put),
         }
     }
 }
 
-impl WebdavCoroutine for UpdateItem {
+impl WebdavCoroutine for CaldavItemUpdate {
     type Yield = WebdavYield;
-    type Return = Result<UpdateItemOk, SendError>;
+    type Return = Result<CaldavItemUpdateOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Put(put) => {
-                let SendOk { response, .. } = webdav_try!(put, arg);
+            State::WebdavPut(put) => {
+                let WebdavSendOk { response, .. } = webdav_try!(put, arg);
                 let etag = read_etag(&response);
                 let id = mem::take(&mut self.id);
-                WebdavCoroutineState::Complete(Ok(UpdateItemOk { id, etag }))
+                WebdavCoroutineState::Complete(Ok(CaldavItemUpdateOk { id, etag }))
             }
         }
     }
@@ -131,14 +133,15 @@ impl WebdavCoroutine for UpdateItem {
 
 #[derive(Debug)]
 enum State {
-    Put(Put),
+    WebdavPut(WebdavPut),
 }
 
 /// Outcome of a successful
-/// [`UpdateItem`] resume.
+/// [`CaldavItemUpdate`] resume.
 #[derive(Clone, Debug)]
-pub struct UpdateItemOk {
-    /// Item identifier (as supplied by the caller).
+pub struct CaldavItemUpdateOk {
+    /// Item resource id (the resource name supplied by the caller, used
+    /// verbatim).
     pub id: String,
     /// Updated entity tag returned by the server, when present.
     pub etag: Option<String>,

@@ -14,7 +14,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::card::delete::DeleteCard,
+//!     rfc6352::card::delete::CarddavCardDelete,
 //! };
 //! use url::Url;
 //!
@@ -24,7 +24,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = DeleteCard::new(
+//! let mut coroutine = CarddavCardDelete::new(
 //!     &base_url,
 //!     &auth,
 //!     "io-webdav",
@@ -58,21 +58,21 @@ use crate::{
     coroutine::*,
     rfc4918::{
         WebdavAuth,
-        delete::Delete,
-        send::{SendError, SendOk},
+        delete::WebdavDelete,
+        send::{WebdavSendError, WebdavSendOk},
     },
     rfc6352::card::join_path,
 };
 
 /// Coroutine that deletes a card.
 #[derive(Debug)]
-pub struct DeleteCard {
+pub struct CarddavCardDelete {
     state: State,
 }
 
-impl DeleteCard {
+impl CarddavCardDelete {
     /// Builds a new `delete-card` coroutine. `id` is the resource id
-    /// exactly as the server returned it (`CardRef::id`), used verbatim.
+    /// exactly as the server returned it (`CarddavCardRef::id`), used verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -83,24 +83,26 @@ impl DeleteCard {
     ) -> Self {
         let path = join_path(addressbook_path, id);
         Self {
-            state: State::Delete(Delete::new(base_url, auth, user_agent, &path, if_match)),
+            state: State::WebdavDelete(WebdavDelete::new(
+                base_url, auth, user_agent, &path, if_match,
+            )),
         }
     }
 }
 
-impl WebdavCoroutine for DeleteCard {
+impl WebdavCoroutine for CarddavCardDelete {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Delete(delete) => delete.resume(arg),
+            State::WebdavDelete(delete) => delete.resume(arg),
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Delete(Delete),
+    WebdavDelete(WebdavDelete),
 }

@@ -22,7 +22,7 @@
 //!     rfc4918::{
 //!         WebdavAuth,
 //!         coroutine::WebdavRedirectYield,
-//!         follow_redirects::FollowRedirects,
+//!         follow_redirects::WebdavFollowRedirects,
 //!         request::WebdavRequest,
 //!     },
 //! };
@@ -37,7 +37,7 @@
 //! let request = WebdavRequest::propfind(&base_url, &auth, "io-webdav", "/")
 //!     .content_type_xml()
 //!     .body(Vec::new());
-//! let mut coroutine = FollowRedirects::new(request);
+//! let mut coroutine = WebdavFollowRedirects::new(request);
 //! let mut arg = None;
 //!
 //! let ok = loop {
@@ -72,16 +72,15 @@ use thiserror::Error;
 
 use crate::{
     coroutine::*,
-    rfc4918::{coroutine::WebdavRedirectYield, send::SendOk},
+    rfc4918::{coroutine::WebdavRedirectYield, send::WebdavSendOk},
 };
 
 /// Failure causes during a redirect-aware WebDAV send.
 #[derive(Debug, Error)]
-pub enum FollowRedirectsError {
+pub enum WebdavFollowRedirectsError {
     /// The server returned a non-2xx, non-redirect HTTP status.
     #[error("WebDAV server returned HTTP {0}: {1}")]
     HttpStatus(u16, String),
-
     /// The underlying HTTP/1.1 send failed.
     #[error(transparent)]
     Send(#[from] Http11SendError),
@@ -91,11 +90,11 @@ pub enum FollowRedirectsError {
 /// redirects via [`WebdavRedirectYield::WantsRedirect`] and returns the
 /// success body as raw bytes.
 #[derive(Debug)]
-pub struct FollowRedirects {
+pub struct WebdavFollowRedirects {
     state: State,
 }
 
-impl FollowRedirects {
+impl WebdavFollowRedirects {
     /// Builds a new redirect-aware send coroutine. `request` must
     /// already carry its body bytes.
     pub fn new(request: HttpRequest) -> Self {
@@ -105,9 +104,9 @@ impl FollowRedirects {
     }
 }
 
-impl WebdavCoroutine for FollowRedirects {
+impl WebdavCoroutine for WebdavFollowRedirects {
     type Yield = WebdavRedirectYield;
-    type Return = Result<SendOk<Vec<u8>>, FollowRedirectsError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavFollowRedirectsError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -131,12 +130,12 @@ impl WebdavCoroutine for FollowRedirects {
 
                 if !response.status.is_success() {
                     let body = String::from_utf8_lossy(&response.body).into_owned();
-                    let err = FollowRedirectsError::HttpStatus(*response.status, body);
+                    let err = WebdavFollowRedirectsError::HttpStatus(*response.status, body);
                     return WebdavCoroutineState::Complete(Err(err));
                 }
 
                 let body = response.body.clone();
-                WebdavCoroutineState::Complete(Ok(SendOk {
+                WebdavCoroutineState::Complete(Ok(WebdavSendOk {
                     response,
                     keep_alive,
                     body,

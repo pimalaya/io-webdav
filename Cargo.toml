@@ -2,7 +2,7 @@
 name = "io-webdav"
 description = "WebDAV client library for Rust"
 version = "0.1.0"
-authors = ["soywod <pimalaya.org@posteo.net>"]
+authors = ["Clément DOUIN (soywod) <pimalaya.org@posteo.net>"]
 rust-version = "1.87"
 edition = "2024"
 license = "MIT OR Apache-2.0"

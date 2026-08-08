@@ -14,7 +14,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{WebdavAuth, delete::Delete},
+//!     rfc4918::{WebdavAuth, delete::WebdavDelete},
 //! };
 //! use url::Url;
 //!
@@ -24,7 +24,7 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let mut coroutine = Delete::new(&base_url, &auth, "io-webdav", "/dav/collection/", None);
+//! let mut coroutine = WebdavDelete::new(&base_url, &auth, "io-webdav", "/dav/collection/", None);
 //! let mut arg = None;
 //!
 //! loop {
@@ -52,17 +52,17 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         request::WebdavRequest,
-        send::{SendError, SendOk, SendRaw},
+        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
     },
 };
 
 /// Coroutine that runs a `DELETE`.
 #[derive(Debug)]
-pub struct Delete {
+pub struct WebdavDelete {
     state: State,
 }
 
-impl Delete {
+impl WebdavDelete {
     /// Builds a new `DELETE` coroutine. `if_match` carries the optional
     /// `If-Match` ETag (RFC 9110 §13.1.1).
     pub fn new(
@@ -78,14 +78,14 @@ impl Delete {
         }
         let request = builder.body(Vec::new());
         Self {
-            state: State::Send(SendRaw::new(request)),
+            state: State::Send(WebdavSendRaw::new(request)),
         }
     }
 }
 
-impl WebdavCoroutine for Delete {
+impl WebdavCoroutine for WebdavDelete {
     type Yield = WebdavYield;
-    type Return = Result<SendOk<Vec<u8>>, SendError>;
+    type Return = Result<WebdavSendOk<Vec<u8>>, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -97,5 +97,5 @@ impl WebdavCoroutine for Delete {
 
 #[derive(Debug)]
 enum State {
-    Send(SendRaw),
+    Send(WebdavSendRaw),
 }

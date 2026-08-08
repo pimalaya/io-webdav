@@ -5,8 +5,8 @@ mod common;
 
 use common::*;
 use io_webdav::{
-    rfc4918::{GETETAG, WebdavAuth, send::SendError},
-    rfc6578::sync_collection::{SyncCollection, SyncCollectionError},
+    rfc4918::{GETETAG, WebdavAuth, send::WebdavSendError},
+    rfc6578::sync_collection::{WebdavSyncCollection, WebdavSyncCollectionError},
 };
 use url::Url;
 
@@ -18,7 +18,7 @@ fn base() -> Url {
 
 #[test]
 fn initial_sync_sorts_the_delta_rows() {
-    let mut sync = SyncCollection::new(
+    let mut sync = WebdavSyncCollection::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -69,7 +69,7 @@ fn initial_sync_sorts_the_delta_rows() {
 
 #[test]
 fn incremental_sync_carries_the_request_token() {
-    let mut sync = SyncCollection::new(
+    let mut sync = WebdavSyncCollection::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -90,7 +90,7 @@ fn incremental_sync_carries_the_request_token() {
 
 #[test]
 fn rejected_token_maps_to_invalid_sync_token() {
-    let mut sync = SyncCollection::new(
+    let mut sync = WebdavSyncCollection::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -103,13 +103,13 @@ fn rejected_token_maps_to_invalid_sync_token() {
     let (_, ret) = expect_exchange(&mut sync, &http_response("403 Forbidden", &[], body));
     assert!(matches!(
         ret.unwrap_err(),
-        SyncCollectionError::InvalidSyncToken
+        WebdavSyncCollectionError::InvalidSyncToken
     ));
 }
 
 #[test]
 fn other_failures_pass_through_as_send_errors() {
-    let mut sync = SyncCollection::new(
+    let mut sync = WebdavSyncCollection::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -121,6 +121,6 @@ fn other_failures_pass_through_as_send_errors() {
     let (_, ret) = expect_exchange(&mut sync, &http_response("403 Forbidden", &[], "denied"));
     assert!(matches!(
         ret.unwrap_err(),
-        SyncCollectionError::Send(SendError::HttpStatus(403, _))
+        WebdavSyncCollectionError::Send(WebdavSendError::HttpStatus(403, _))
     ));
 }

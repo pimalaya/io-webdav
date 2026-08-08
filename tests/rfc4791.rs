@@ -8,16 +8,18 @@ use common::*;
 use io_webdav::{
     rfc4791::{
         calendar::{
-            Calendar, calendar_query_body, create::CreateCalendar, delete::DeleteCalendar,
-            home_set::CalendarHomeSet, list::ListCalendars, mkcalendar_body, property_set,
-            update::UpdateCalendar,
+            CaldavCalendar, calendar_multiget_body, calendar_query_body,
+            create::CaldavCalendarCreate, delete::CaldavCalendarDelete,
+            home_set::CaldavCalendarHomeSet, list::CaldavCalendarList, mkcalendar_body,
+            property_set, update::CaldavCalendarUpdate,
         },
         item::{
-            create::CreateItem, delete::DeleteItem, join_path, list::ListItems, read::ReadItem,
-            update::UpdateItem,
+            create::CaldavItemCreate, delete::CaldavItemDelete, enumerate::CaldavItemEnum,
+            join_path, list::CaldavItemList, multiget::CaldavItemMultiget, read::CaldavItemRead,
+            update::CaldavItemUpdate,
         },
     },
-    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth},
+    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue},
 };
 use url::Url;
 
@@ -31,7 +33,7 @@ fn base() -> Url {
 
 #[test]
 fn property_set_keeps_only_the_present_fields() {
-    let calendar = Calendar {
+    let calendar = CaldavCalendar {
         id: "personal".into(),
         display_name: Some("Personal".into()),
         color: Some("#ff0000".into()),
@@ -40,14 +42,34 @@ fn property_set_keeps_only_the_present_fields() {
     };
     let set = property_set(&calendar);
     assert_eq!(set.len(), 3);
-    assert_eq!(set[0], (DISPLAYNAME, "Personal"));
+    assert_eq!(set[0], (DISPLAYNAME, WebdavPropValue::Text("Personal")));
 
-    assert!(property_set(&Calendar::default()).is_empty());
+    assert!(property_set(&CaldavCalendar::default()).is_empty());
+}
+
+#[test]
+fn property_set_carries_the_time_zone_and_the_component_set() {
+    // Both are read back by a listing, so both have to be writable, or
+    // a calendar cannot be round-tripped through create.
+    let calendar = CaldavCalendar {
+        id: "personal".into(),
+        components: ["VEVENT".to_string(), "VTODO".to_string()].into(),
+        tz: Some("BEGIN:VTIMEZONE\r\nEND:VTIMEZONE".into()),
+        ..Default::default()
+    };
+    let body = mkcalendar_body(&property_set(&calendar));
+    let xml = core::str::from_utf8(&body).unwrap();
+    assert!(xml.contains("<C:calendar-timezone>BEGIN:VTIMEZONE"));
+    // The component set is markup, not text: escaping it would leave
+    // the server with a property whose value is a literal string.
+    assert!(xml.contains(
+        "<C:supported-calendar-component-set><C:comp name=\"VEVENT\"/><C:comp name=\"VTODO\"/></C:supported-calendar-component-set>"
+    ));
 }
 
 #[test]
 fn mkcalendar_body_roots_at_the_caldav_element() {
-    let body = mkcalendar_body(&[(DISPLAYNAME, "Work")]);
+    let body = mkcalendar_body(&[(DISPLAYNAME, WebdavPropValue::Text("Work"))]);
     let xml = core::str::from_utf8(&body).unwrap();
     assert!(xml.contains("<C:mkcalendar"));
     assert!(xml.contains("<D:displayname>Work</D:displayname>"));
@@ -63,10 +85,27 @@ fn calendar_query_body_nests_the_component_filter() {
 }
 
 #[test]
-fn item_join_path_appends_the_ics_suffix() {
+fn calendar_multiget_body_lists_escaped_hrefs() {
+    let hrefs = vec![
+        "/dav/calendars/personal/event-1.ics".to_string(),
+        "/dav/calendars/personal/a&b.ics".to_string(),
+    ];
+    let body = calendar_multiget_body(&hrefs, &[GETETAG]);
+    let xml = core::str::from_utf8(&body).unwrap();
+    assert!(xml.contains("<C:calendar-multiget"));
+    assert!(xml.contains("<D:href>/dav/calendars/personal/event-1.ics</D:href>"));
+    assert!(xml.contains("<D:href>/dav/calendars/personal/a&amp;b.ics</D:href>"));
+}
+
+#[test]
+fn item_join_path_keeps_the_resource_name_verbatim() {
     assert_eq!(
-        join_path("/dav/calendars/personal/", "/event-1"),
+        join_path("/dav/calendars/personal/", "/event-1.ics"),
         "/dav/calendars/personal/event-1.ics"
+    );
+    assert_eq!(
+        join_path("/dav/calendars/personal", "event-1"),
+        "/dav/calendars/personal/event-1"
     );
 }
 
@@ -74,7 +113,7 @@ fn item_join_path_appends_the_ics_suffix() {
 
 #[test]
 fn list_calendars_maps_calendar_collections_only() {
-    let mut list = ListCalendars::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/");
+    let mut list = CaldavCalendarList::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/");
     let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"
         xmlns:cs="http://calendarserver.org/ns/" xmlns:i="http://inf-it.com/ns/ab/">
       <d:response>
@@ -92,7 +131,12 @@ fn list_calendars_maps_calendar_collections_only() {
             <d:displayname>Personal</d:displayname>
             <c:calendar-description>Main calendar</c:calendar-description>
             <i:calendar-color>#00ff00</i:calendar-color>
+            <c:supported-calendar-component-set>
+              <c:comp name="VEVENT"/>
+              <c:comp name="VTODO"/>
+            </c:supported-calendar-component-set>
             <cs:getctag>ctag-1</cs:getctag>
+            <d:sync-token>http://example.org/ns/sync/42</d:sync-token>
             <c:calendar-timezone>BEGIN:VTIMEZONE\nEND:VTIMEZONE</c:calendar-timezone>
             <d:unknown-extension>x</d:unknown-extension>
           </d:prop>
@@ -122,18 +166,24 @@ fn list_calendars_maps_calendar_collections_only() {
     assert_eq!(calendar.description.as_deref(), Some("Main calendar"));
     assert_eq!(calendar.color.as_deref(), Some("#00ff00"));
     assert_eq!(calendar.ctag.as_deref(), Some("ctag-1"));
+    assert_eq!(
+        calendar.sync_token.as_deref(),
+        Some("http://example.org/ns/sync/42")
+    );
     assert!(calendar.tz.as_deref().unwrap().contains("VTIMEZONE"));
+    let components: Vec<&str> = calendar.components.iter().map(String::as_str).collect();
+    assert_eq!(components, ["VEVENT", "VTODO"]);
 }
 
 #[test]
 fn create_calendar_sends_mkcalendar() {
-    let calendar = Calendar {
+    let calendar = CaldavCalendar {
         id: "work".into(),
         display_name: Some("Work".into()),
         ..Default::default()
     };
     let mut create =
-        CreateCalendar::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", &calendar);
+        CaldavCalendarCreate::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", &calendar);
     let (request, ret) = expect_exchange(&mut create, &http_response("201 Created", &[], ""));
     assert!(request.starts_with("mkcalendar /dav/calendars/work/ http/1.1\r\n"));
     assert!(request.contains("<c:mkcalendar"));
@@ -142,13 +192,13 @@ fn create_calendar_sends_mkcalendar() {
 
 #[test]
 fn update_calendar_sends_proppatch() {
-    let calendar = Calendar {
+    let calendar = CaldavCalendar {
         id: "work".into(),
         display_name: Some("Renamed".into()),
         ..Default::default()
     };
     let mut update =
-        UpdateCalendar::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", &calendar);
+        CaldavCalendarUpdate::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", &calendar);
     let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
     let (request, ret) = expect_exchange(&mut update, &reply);
     assert!(request.starts_with("proppatch /dav/calendars/work/ http/1.1\r\n"));
@@ -158,7 +208,8 @@ fn update_calendar_sends_proppatch() {
 
 #[test]
 fn delete_calendar_targets_the_collection() {
-    let mut delete = DeleteCalendar::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", "work");
+    let mut delete =
+        CaldavCalendarDelete::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", "work");
     let (request, ret) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
     assert!(request.starts_with("delete /dav/calendars/work/ http/1.1\r\n"));
     ret.unwrap();
@@ -166,7 +217,8 @@ fn delete_calendar_targets_the_collection() {
 
 #[test]
 fn calendar_home_set_resolves_the_href() {
-    let mut discovery = CalendarHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
+    let mut discovery =
+        CaldavCalendarHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
     let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
       <d:response>
         <d:href>/principals/alice/</d:href>
@@ -189,7 +241,8 @@ fn calendar_home_set_resolves_the_href() {
 
 #[test]
 fn calendar_home_set_yields_none_on_an_empty_multistatus() {
-    let mut discovery = CalendarHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
+    let mut discovery =
+        CaldavCalendarHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
     let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
     let (_, ret) = expect_redirect_exchange(&mut discovery, &reply);
     assert!(ret.unwrap().is_none());
@@ -197,64 +250,181 @@ fn calendar_home_set_yields_none_on_an_empty_multistatus() {
 
 // --- item coroutines --------------------------------------------------------
 
+const ITEMS_XML: &str = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/dav/calendars/personal/event-1.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>"etag-1"</d:getetag>
+        <c:calendar-data>BEGIN:VCALENDAR
+END:VCALENDAR</c:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/dav/calendars/personal/event-2</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>"etag-2"</d:getetag>
+        <c:calendar-data>BEGIN:VCALENDAR
+END:VCALENDAR</c:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/dav/calendars/personal/no-data.ics</d:href>
+    <d:propstat>
+      <d:prop><d:getetag>"etag-3"</d:getetag></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/dav/calendars/personal/</d:href>
+    <d:propstat>
+      <d:prop><c:calendar-data>BEGIN:VCALENDAR</c:calendar-data></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href></d:href>
+    <d:propstat>
+      <d:prop><c:calendar-data>BEGIN:VCALENDAR</c:calendar-data></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>"#;
+
 #[test]
 fn list_items_maps_calendar_data_entries() {
-    let mut list = ListItems::new(
+    let mut list = CaldavItemList::new(
         &base(),
         &WebdavAuth::None,
         UA,
         "/dav/calendars/personal/",
         "<C:comp-filter name=\"VEVENT\" />",
     );
-    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+
+    let (request, ret) = expect_exchange(&mut list, &multistatus_response(ITEMS_XML));
+    assert!(request.starts_with("report /dav/calendars/personal/ http/1.1\r\n"));
+    assert!(request.contains("comp-filter name=\"vevent\""));
+
+    let items = ret.unwrap();
+    // NOTE: the data-less entry, the collection self-entry and the
+    // empty href are all skipped. Every surviving id is the href's last
+    // segment verbatim, no `.ics` stripped, so `event-1.ics` stays
+    // `event-1.ics` and the suffix-less `event-2` stays `event-2`.
+    assert_eq!(items.len(), 2);
+    let first = items.iter().find(|item| item.id == "event-1.ics").unwrap();
+    assert_eq!(first.etag.as_deref(), Some("etag-1"));
+    assert!(first.data.starts_with(b"BEGIN:VCALENDAR"));
+    let second = items.iter().find(|item| item.id == "event-2").unwrap();
+    assert_eq!(second.etag.as_deref(), Some("etag-2"));
+}
+
+#[test]
+fn enum_items_returns_etag_only_references() {
+    let mut enumerate = CaldavItemEnum::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "",
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
         <d:href>/dav/calendars/personal/event-1.ics</d:href>
         <d:propstat>
-          <d:prop>
-            <d:getetag>"etag-1"</d:getetag>
-            <c:calendar-data>BEGIN:VCALENDAR
-END:VCALENDAR</c:calendar-data>
-          </d:prop>
-          <d:status>HTTP/1.1 200 OK</d:status>
-        </d:propstat>
-      </d:response>
-      <d:response>
-        <d:href>/dav/calendars/personal/no-data.ics</d:href>
-        <d:propstat>
-          <d:prop><d:getetag>"etag-2"</d:getetag></d:prop>
-          <d:status>HTTP/1.1 200 OK</d:status>
-        </d:propstat>
-      </d:response>
-      <d:response>
-        <d:href>/</d:href>
-        <d:propstat>
-          <d:prop><c:calendar-data>X</c:calendar-data></d:prop>
+          <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
           <d:status>HTTP/1.1 200 OK</d:status>
         </d:propstat>
       </d:response>
     </d:multistatus>"#;
 
-    let (request, ret) = expect_exchange(&mut list, &multistatus_response(xml));
-    assert!(request.starts_with("report /dav/calendars/personal/ http/1.1\r\n"));
-    assert!(request.contains("comp-filter name=\"vevent\""));
+    let (request, ret) = expect_exchange(&mut enumerate, &multistatus_response(xml));
+    assert!(request.contains("<d:getetag/>"));
+    assert!(!request.contains("calendar-data"));
 
-    let items = ret.unwrap();
-    // NOTE: the data-less entry and the empty-id root href are skipped.
-    assert_eq!(items.len(), 1);
-    let item = items.first().unwrap();
-    assert_eq!(item.id, "event-1");
-    assert_eq!(item.etag.as_deref(), Some("etag-1"));
-    assert!(item.data.starts_with(b"BEGIN:VCALENDAR"));
+    let refs = ret.unwrap();
+    assert_eq!(refs.len(), 1);
+    let first = refs.first().unwrap();
+    // the id is the href's last segment verbatim, `.ics` included
+    assert_eq!(first.id, "event-1.ics");
+    assert_eq!(first.etag.as_deref(), Some("etag-1"));
 }
 
 #[test]
-fn read_item_returns_body_and_etag() {
-    let mut read = ReadItem::new(
+fn enum_items_skips_the_collection_self_entry_and_empty_hrefs() {
+    // iCloud echoes the calendar collection itself (its href ends in a
+    // slash) in the calendar-query response; it must not enter the
+    // spine as a bogus item named after the collection. An href with no
+    // last segment at all yields no addressable id either.
+    let mut enumerate = CaldavItemEnum::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/17170244959/calendars/work/",
+        "",
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/17170244959/calendars/work/</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"coll-etag"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href></d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"empty-href"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/17170244959/calendars/work/5d18175a.ics</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_request, ret) = expect_exchange(&mut enumerate, &multistatus_response(xml));
+
+    let refs = ret.unwrap();
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs.first().unwrap().id, "5d18175a.ics");
+}
+
+#[test]
+fn multiget_items_requests_each_href() {
+    let mut multiget = CaldavItemMultiget::new(
         &base(),
         &WebdavAuth::None,
         UA,
         "/dav/calendars/personal/",
-        "event-1",
+        &["event-1.ics", "event-2"],
+    );
+    let (request, ret) = expect_exchange(&mut multiget, &multistatus_response(ITEMS_XML));
+    assert!(request.starts_with("report /dav/calendars/personal/ http/1.1\r\n"));
+    assert!(request.contains("depth: 0\r\n"));
+    assert!(request.contains("<d:href>/dav/calendars/personal/event-1.ics</d:href>"));
+    assert!(request.contains("<d:href>/dav/calendars/personal/event-2</d:href>"));
+
+    let items = ret.unwrap();
+    assert_eq!(items.len(), 2);
+}
+
+#[test]
+fn read_item_returns_body_and_etag() {
+    let mut read = CaldavItemRead::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "event-1.ics",
     );
     let reply = http_response("200 OK", &[("ETag", "\"etag-1\"")], "BEGIN:VCALENDAR");
     let (request, ret) = expect_exchange(&mut read, &reply);
@@ -266,8 +436,11 @@ fn read_item_returns_body_and_etag() {
 }
 
 #[test]
-fn create_item_puts_with_if_none_match() {
-    let mut create = CreateItem::new(
+fn create_item_uses_the_id_verbatim() {
+    // The id is the resource name. io-webdav never appends `.ics`, so
+    // a bare `event-1` is PUT at `.../event-1`, not `.../event-1.ics`.
+    // The caller owns the whole name and picks its own extension.
+    let mut create = CaldavItemCreate::new(
         &base(),
         &WebdavAuth::None,
         UA,
@@ -275,10 +448,13 @@ fn create_item_puts_with_if_none_match() {
         "event-1",
         b"BEGIN:VCALENDAR".to_vec(),
     );
+    // No `Location` in the reply → the returned id falls back to the
+    // caller's name.
     let reply = http_response("201 Created", &[("ETag", "\"etag-1\"")], "");
     let (request, ret) = expect_exchange(&mut create, &reply);
-    assert!(request.starts_with("put /dav/calendars/personal/event-1.ics http/1.1\r\n"));
+    assert!(request.starts_with("put /dav/calendars/personal/event-1 http/1.1\r\n"));
     assert!(request.contains("if-none-match: *\r\n"));
+    assert!(request.contains("content-type: text/calendar; charset=utf-8\r\n"));
 
     let ok = ret.unwrap();
     assert_eq!(ok.id, "event-1");
@@ -286,37 +462,102 @@ fn create_item_puts_with_if_none_match() {
 }
 
 #[test]
-fn update_item_puts_with_the_known_etag() {
-    let mut update = UpdateItem::new(
+fn create_item_prefers_the_location_id_when_the_server_relocates() {
+    // A server may store the item under a name of its own and report it
+    // in `Location`: the returned id is then that name, not the
+    // caller's, while the PUT still targets the caller's name.
+    let mut create = CaldavItemCreate::new(
         &base(),
         &WebdavAuth::None,
         UA,
         "/dav/calendars/personal/",
-        "event-1",
+        "client-name.ics",
+        b"BEGIN:VCALENDAR".to_vec(),
+    );
+    let reply = http_response(
+        "201 Created",
+        &[
+            ("ETag", "\"etag-1\""),
+            (
+                "Location",
+                "https://dav.example.org/dav/calendars/personal/server-9f8e7d.ics",
+            ),
+        ],
+        "",
+    );
+    let (request, ret) = expect_exchange(&mut create, &reply);
+    assert!(request.starts_with("put /dav/calendars/personal/client-name.ics http/1.1\r\n"));
+
+    let ok = ret.unwrap();
+    assert_eq!(ok.id, "server-9f8e7d.ics");
+    assert_eq!(ok.etag.as_deref(), Some("etag-1"));
+}
+
+#[test]
+fn update_item_puts_with_the_known_etag() {
+    let mut update = CaldavItemUpdate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "event-1.ics",
         b"BEGIN:VCALENDAR".to_vec(),
         Some("etag-1"),
     );
     // NOTE: no ETag header in the reply, so the outcome carries none.
     let (request, ret) = expect_exchange(&mut update, &http_response("204 No Content", &[], ""));
+    assert!(request.starts_with("put /dav/calendars/personal/event-1.ics http/1.1\r\n"));
     assert!(request.contains("if-match: \"etag-1\"\r\n"));
 
     let ok = ret.unwrap();
-    assert_eq!(ok.id, "event-1");
+    assert_eq!(ok.id, "event-1.ics");
     assert!(ok.etag.is_none());
 }
 
 #[test]
 fn delete_item_targets_the_resource() {
-    let mut delete = DeleteItem::new(
+    let mut delete = CaldavItemDelete::new(
         &base(),
         &WebdavAuth::None,
         UA,
         "/dav/calendars/personal/",
-        "event-1",
+        "event-1.ics",
         Some("etag-1"),
     );
     let (request, ret) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
     assert!(request.starts_with("delete /dav/calendars/personal/event-1.ics http/1.1\r\n"));
     assert!(request.contains("if-match: \"etag-1\"\r\n"));
+    ret.unwrap();
+}
+
+#[test]
+fn a_listed_item_id_round_trips_through_read() {
+    // Regression: a consumer takes an item's listed id and reads it
+    // back. The id must address the very resource the server
+    // enumerated, with no extension added or stripped in between. That
+    // asymmetry broke read, update and delete on every server: the
+    // listed id was `.ics`-stripped, and the GET path re-suffixed it,
+    // so an id that did not end in `.ics` addressed nothing.
+    let mut list = CaldavItemList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "",
+    );
+    let (_request, ret) = expect_exchange(&mut list, &multistatus_response(ITEMS_XML));
+    let items = ret.unwrap();
+    let second = items.iter().find(|item| item.id == "event-2").unwrap();
+
+    let mut read = CaldavItemRead::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        &second.id,
+    );
+    let reply = http_response("200 OK", &[("ETag", "\"etag-2\"")], "BEGIN:VCALENDAR");
+    let (request, ret) = expect_exchange(&mut read, &reply);
+    assert!(request.starts_with("get /dav/calendars/personal/event-2 http/1.1\r\n"));
     ret.unwrap();
 }
