@@ -73,7 +73,10 @@ impl CaldavCalendarUpdate {
     ) -> Self {
         let path = join_path(home_set_path, &calendar.id);
         let set = property_set(calendar);
-        let proppatch = WebdavProppatch::new(base_url, auth, user_agent, &path, &set);
+        // NOTE: set-only, so a property this calendar leaves empty stays
+        // as it is on the server. The CardDAV twin takes a patch that
+        // can also remove; this one follows when calendula needs it.
+        let proppatch = WebdavProppatch::new(base_url, auth, user_agent, &path, &set, &[]);
         Self {
             state: State::WebdavProppatch(proppatch),
         }

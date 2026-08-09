@@ -1,7 +1,8 @@
 //! Generic `PROPPATCH` coroutine (RFC 4918 §9.2).
 //!
-//! Sets each `(property, value)` pair against `path`; the request body
-//! is generated from the pairs. The multistatus body is not surfaced.
+//! Sets each `(property, value)` pair against `path` and removes each
+//! property listed for removal; the request body is generated from the
+//! two lists. The multistatus body is not surfaced.
 //!
 //! # Example
 //!
@@ -24,7 +25,8 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let set = [(DISPLAYNAME, WebdavPropValue::Text("Renamed"))];
-//! let mut coroutine = WebdavProppatch::new(&base_url, &auth, "io-webdav", "/dav/collection/", &set);
+//! let mut coroutine =
+//!     WebdavProppatch::new(&base_url, &auth, "io-webdav", "/dav/collection/", &set, &[]);
 //! let mut arg = None;
 //!
 //! loop {
@@ -63,17 +65,19 @@ pub struct WebdavProppatch {
 
 impl WebdavProppatch {
     /// Builds a new `PROPPATCH` coroutine setting each `(property,
-    /// value)` pair against `path`.
+    /// value)` pair against `path` and removing each property in
+    /// `remove`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         path: &str,
         set: &[(WebdavProperty, WebdavPropValue<'_>)],
+        remove: &[WebdavProperty],
     ) -> Self {
         let request = WebdavRequest::proppatch(base_url, auth, user_agent, path)
             .content_type_xml()
-            .body(proppatch_body(set));
+            .body(proppatch_body(set, remove));
         Self {
             state: State::Send(WebdavSendRaw::new(request)),
         }

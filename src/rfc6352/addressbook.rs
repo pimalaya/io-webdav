@@ -41,6 +41,25 @@ pub struct CarddavAddressbook {
     pub sync_token: Option<String>,
 }
 
+/// A partial update over a [`CarddavAddressbook`]'s properties.
+///
+/// Each property is doubly optional, which is what a `PROPPATCH` needs
+/// and a flat [`CarddavAddressbook`] cannot express: [`None`] leaves
+/// the property alone, `Some(None)` removes it (`DAV:remove`, RFC 4918
+/// §9.2) and `Some(Some(value))` sets it (`DAV:set`).
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
+pub struct CarddavAddressbookPatch {
+    /// Identifier of the addressbook to patch: the last non-empty path
+    /// segment of its collection URL.
+    pub id: String,
+    /// New human-readable display name (DAV:displayname).
+    pub display_name: Option<Option<String>>,
+    /// New free-form description (RFC 6352 §6.2.1).
+    pub description: Option<Option<String>>,
+    /// New display color (custom inf-it.com extension).
+    pub color: Option<Option<String>>,
+}
+
 /// CardDAV namespace (RFC 6352 §4).
 pub const CARDDAV: WebdavNamespace = WebdavNamespace {
     uri: "urn:ietf:params:xml:ns:carddav",
@@ -107,7 +126,7 @@ pub fn join_path(home: &str, id: &str) -> String {
 }
 
 /// The present display name / color / description of `addressbook` as
-/// `PROPPATCH` / `MKCOL` set pairs.
+/// `MKCOL` set pairs.
 pub fn property_set(
     addressbook: &CarddavAddressbook,
 ) -> Vec<(WebdavProperty, WebdavPropValue<'_>)> {
@@ -122,6 +141,34 @@ pub fn property_set(
         set.push((ADDRESSBOOK_DESCRIPTION, WebdavPropValue::Text(description)));
     }
     set
+}
+
+/// `patch` split into the `PROPPATCH` set pairs and the list of
+/// properties to remove.
+pub fn property_updates(
+    patch: &CarddavAddressbookPatch,
+) -> (
+    Vec<(WebdavProperty, WebdavPropValue<'_>)>,
+    Vec<WebdavProperty>,
+) {
+    let fields = [
+        (DISPLAYNAME, &patch.display_name),
+        (ADDRESSBOOK_COLOR, &patch.color),
+        (ADDRESSBOOK_DESCRIPTION, &patch.description),
+    ];
+
+    let mut set = Vec::new();
+    let mut remove = Vec::new();
+
+    for (property, field) in fields {
+        match field {
+            None => continue,
+            Some(None) => remove.push(property),
+            Some(Some(value)) => set.push((property, WebdavPropValue::Text(value))),
+        }
+    }
+
+    (set, remove)
 }
 
 /// Builds a CardDAV `addressbook-query` REPORT body requesting `props`,

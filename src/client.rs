@@ -79,9 +79,9 @@ use crate::{
     rfc5397::current_user_principal::WebdavCurrentUserPrincipal,
     rfc6352::{
         addressbook::{
-            CarddavAddressbook, create::CarddavAddressbookCreate, delete::CarddavAddressbookDelete,
-            home_set::CarddavAddressbookHomeSet, list::CarddavAddressbookList,
-            update::CarddavAddressbookUpdate,
+            CarddavAddressbook, CarddavAddressbookPatch, create::CarddavAddressbookCreate,
+            delete::CarddavAddressbookDelete, home_set::CarddavAddressbookHomeSet,
+            list::CarddavAddressbookList, update::CarddavAddressbookUpdate,
         },
         card::{
             CarddavCardEntry, CarddavCardRef,
@@ -674,10 +674,12 @@ impl WebdavClientStd {
         self.run(coroutine).map(|_| ())
     }
 
-    /// Updates an addressbook collection's properties.
+    /// Updates an addressbook collection's properties: sets the ones
+    /// `patch` carries a value for, removes the ones it clears and
+    /// leaves the rest alone.
     pub fn update_addressbook(
         &mut self,
-        addressbook: &CarddavAddressbook,
+        patch: &CarddavAddressbookPatch,
     ) -> Result<(), WebdavClientStdError> {
         let home = self
             .addressbook_home_set
@@ -690,7 +692,7 @@ impl WebdavClientStd {
             &self.auth,
             &self.user_agent,
             &path,
-            addressbook,
+            patch,
         );
         self.run(coroutine)
     }

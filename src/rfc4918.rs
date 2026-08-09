@@ -311,15 +311,45 @@ pub fn propfind_body(props: &[WebdavProperty]) -> Vec<u8> {
 }
 
 /// Builds a `PROPPATCH` request body (RFC 4918 §9.2) setting each
-/// `(property, value)` pair.
-pub fn proppatch_body(set: &[(WebdavProperty, WebdavPropValue<'_>)]) -> Vec<u8> {
-    prop_set_body(PROPERTYUPDATE, set)
+/// `(property, value)` pair and removing each property in `remove`.
+///
+/// A `DAV:propertyupdate` carries both instruction kinds, applied in
+/// document order, and only a `DAV:remove` deletes a property: omitting
+/// a property from the `set` list leaves it as it was. An empty
+/// instruction block is left out entirely.
+pub fn proppatch_body(
+    set: &[(WebdavProperty, WebdavPropValue<'_>)],
+    remove: &[WebdavProperty],
+) -> Vec<u8> {
+    let mut props: Vec<WebdavProperty> = set.iter().map(|(prop, _)| *prop).collect();
+    props.extend_from_slice(remove);
+    let mut nss = namespaces(&[], &props);
+    nss.push(PROPERTYUPDATE.ns);
+    let decls = xmlns_decls(&nss);
+    let open = qualified(PROPERTYUPDATE.ns, PROPERTYUPDATE.local);
+
+    let mut body = format!("{XML_DECL}<{open}{decls}>");
+    if !set.is_empty() {
+        body.push_str("<D:set><D:prop>");
+        for (prop, value) in set {
+            body.push_str(&value_element(*prop, value));
+        }
+        body.push_str("</D:prop></D:set>");
+    }
+    if !remove.is_empty() {
+        body.push_str("<D:remove>");
+        body.push_str(&prop_block(remove));
+        body.push_str("</D:remove>");
+    }
+    body.push_str(&format!("</{open}>"));
+    body.into_bytes()
 }
 
 /// Builds a `<root><set><prop>...</prop></set></root>` body setting each
-/// `(property, value)` pair, rooted at `root`. Backs both
-/// [`proppatch_body`] (`DAV:propertyupdate`) and CalDAV `MKCALENDAR`
-/// (`C:mkcalendar`, RFC 4791 §5.3.1).
+/// `(property, value)` pair, rooted at `root`. Backs the creation
+/// requests, which have nothing to remove: extended `MKCOL` (RFC 5689
+/// §3) and CalDAV `MKCALENDAR` (RFC 4791 §5.3.1). [`proppatch_body`]
+/// builds the update counterpart, which also carries `DAV:remove`.
 pub fn prop_set_body(
     root: WebdavProperty,
     set: &[(WebdavProperty, WebdavPropValue<'_>)],
@@ -721,13 +751,48 @@ mod tests {
 
     #[test]
     fn proppatch_body_wraps_values_in_propertyupdate() {
-        let body = proppatch_body(&[(DISPLAYNAME, WebdavPropValue::Text("Renamed"))]);
+        let body = proppatch_body(&[(DISPLAYNAME, WebdavPropValue::Text("Renamed"))], &[]);
         let xml = core::str::from_utf8(&body).unwrap();
         assert!(xml.contains("<D:propertyupdate xmlns:D=\"DAV:\">"));
         assert!(
             xml.contains("<D:set><D:prop><D:displayname>Renamed</D:displayname></D:prop></D:set>")
         );
+        assert!(!xml.contains("<D:remove>"));
         assert!(xml.ends_with("</D:propertyupdate>"));
+    }
+
+    #[test]
+    fn proppatch_body_removes_the_given_properties() {
+        const DESCRIPTION: WebdavProperty = WebdavProperty {
+            ns: CALDAV,
+            local: "calendar-description",
+        };
+        let body = proppatch_body(
+            &[(DISPLAYNAME, WebdavPropValue::Text("Renamed"))],
+            &[DESCRIPTION],
+        );
+        let xml = core::str::from_utf8(&body).unwrap();
+
+        // Both namespaces are declared on the root, and the two
+        // instructions are siblings: a set-only body would leave the
+        // removed property untouched, which is the whole point.
+        assert!(xml.contains("xmlns:C=\"urn:ietf:params:xml:ns:caldav\""));
+        assert!(
+            xml.contains("<D:set><D:prop><D:displayname>Renamed</D:displayname></D:prop></D:set>")
+        );
+        assert!(xml.contains("<D:remove><D:prop><C:calendar-description/></D:prop></D:remove>"));
+    }
+
+    #[test]
+    fn proppatch_body_leaves_out_empty_instruction_blocks() {
+        let body = proppatch_body(&[], &[DISPLAYNAME]);
+        let xml = core::str::from_utf8(&body).unwrap();
+        assert!(!xml.contains("<D:set>"));
+        assert!(xml.contains("<D:remove><D:prop><D:displayname/></D:prop></D:remove>"));
+
+        let body = proppatch_body(&[], &[]);
+        let xml = core::str::from_utf8(&body).unwrap();
+        assert!(xml.contains("<D:propertyupdate xmlns:D=\"DAV:\"></D:propertyupdate>"));
     }
 
     #[test]
@@ -753,7 +818,7 @@ mod tests {
             local: "supported-calendar-component-set",
         };
         let comps = WebdavPropValue::Raw("<C:comp name=\"VEVENT\"/>".to_string());
-        let body = proppatch_body(&[(COMPONENT_SET, comps)]);
+        let body = proppatch_body(&[(COMPONENT_SET, comps)], &[]);
         let xml = core::str::from_utf8(&body).unwrap();
         // Raw markup survives verbatim; escaping it would turn the
         // children into text and lose the property's whole value.

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `CaldavCalendar::components`, read from and written to `supported-calendar-component-set` (RFC 4791 §5.2.3), so a caller can tell whether a collection holds `VEVENT`, `VTODO` or `VJOURNAL`, and can declare it when creating one.
 - Added `WebdavPropValue`, the value side of a `PROPPATCH` / `MKCOL` / `MKCALENDAR` property set: `Text` for escaped content, `Raw` for a markup fragment such as the `<C:comp/>` children of a component set.
 - Added `WebdavPropChild`, carrying a property child's `name` attribute so attribute-valued properties can be read at all.
+- Added property removal to `PROPPATCH` (RFC 4918 §9.2): `proppatch_body` and `WebdavProppatch::new` take a list of properties to remove alongside the set pairs and emit a `DAV:remove` instruction for it, and an empty instruction block is left out of the body. Setting a property was the only thing a `PROPPATCH` could express before, so clearing one was not expressible at all.
+- Added `CarddavAddressbookPatch`, the partial update `CarddavAddressbookUpdate` now takes: each property is doubly optional, so `None` leaves it alone, `Some(None)` removes it and `Some(Some(value))` sets it. `property_updates` splits a patch into the set and remove lists. A flat `CarddavAddressbook` cannot tell "leave alone" from "remove", which is why a cleared property used to vanish on the way to the wire.
 
 ### Changed
 
@@ -32,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Property sets take a `WebdavPropValue` instead of a `&str`, so `property_set`, `proppatch_body`, `mkcol_body`, `prop_set_body`, `mkcalendar_body`, `WebdavProppatch::new` and `WebdavMkcol::new` all changed shape.
 
   **Breaking**: wrap text values in `WebdavPropValue::Text`.
+
+- `proppatch_body` and `WebdavProppatch::new` take the properties to remove as a second list, and no longer share their body builder with the creation requests: `prop_set_body` stays set-only, since `MKCOL` and `MKCALENDAR` have nothing to remove.
+
+  **Breaking**: pass `&[]` to keep the previous set-only behaviour.
+
+- `CarddavAddressbookUpdate::new` and `WebdavClient::update_addressbook` take a `CarddavAddressbookPatch` instead of a `CarddavAddressbook`. `property_set` is now only the `MKCOL` side.
+
+  **Breaking**: build a patch, wrapping each value you were setting in `Some(Some(…))`. Fields you used to leave `None` stay `None` and keep their server value, exactly as before, so an update that only sets properties behaves identically. A caller that read the current collection to refill unchanged fields can drop that round-trip.
 
 - `WebdavPropItem::children` holds `WebdavPropChild` values rather than bare local names.
 

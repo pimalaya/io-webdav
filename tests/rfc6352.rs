@@ -9,10 +9,10 @@ use io_webdav::{
     rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue},
     rfc6352::{
         addressbook::{
-            CarddavAddressbook, addressbook_multiget_body, addressbook_query_body,
-            create::CarddavAddressbookCreate, delete::CarddavAddressbookDelete,
-            home_set::CarddavAddressbookHomeSet, list::CarddavAddressbookList, property_set,
-            update::CarddavAddressbookUpdate,
+            CarddavAddressbook, CarddavAddressbookPatch, addressbook_multiget_body,
+            addressbook_query_body, create::CarddavAddressbookCreate,
+            delete::CarddavAddressbookDelete, home_set::CarddavAddressbookHomeSet,
+            list::CarddavAddressbookList, property_set, update::CarddavAddressbookUpdate,
         },
         card::{
             create::CarddavCardCreate, delete::CarddavCardDelete, enumerate::CarddavCardEnum,
@@ -154,17 +154,41 @@ fn create_addressbook_sends_the_extended_mkcol() {
 
 #[test]
 fn update_addressbook_sends_proppatch() {
-    let addressbook = CarddavAddressbook {
+    let patch = CarddavAddressbookPatch {
         id: "team".into(),
-        display_name: Some("Renamed".into()),
+        display_name: Some(Some("Renamed".into())),
         ..Default::default()
     };
     let mut update =
-        CarddavAddressbookUpdate::new(&base(), &WebdavAuth::None, UA, "/dav/books/", &addressbook);
+        CarddavAddressbookUpdate::new(&base(), &WebdavAuth::None, UA, "/dav/books/", &patch);
     let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
     let (request, ret) = expect_exchange(&mut update, &reply);
     assert!(request.starts_with("proppatch /dav/books/team/ http/1.1\r\n"));
     assert!(request.contains("<d:displayname>renamed</d:displayname>"));
+    assert!(!request.contains("<d:remove>"));
+    ret.unwrap();
+}
+
+#[test]
+fn update_addressbook_removes_the_properties_the_patch_clears() {
+    let patch = CarddavAddressbookPatch {
+        id: "team".into(),
+        display_name: Some(Some("Renamed".into())),
+        description: Some(None),
+        color: None,
+    };
+    let mut update =
+        CarddavAddressbookUpdate::new(&base(), &WebdavAuth::None, UA, "/dav/books/", &patch);
+    let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
+    let (request, ret) = expect_exchange(&mut update, &reply);
+
+    // The cleared description leaves as a removal, while the untouched
+    // color appears in neither instruction.
+    assert!(
+        request.contains("<d:set><d:prop><d:displayname>renamed</d:displayname></d:prop></d:set>")
+    );
+    assert!(request.contains("<d:remove><d:prop><c:addressbook-description/></d:prop></d:remove>"));
+    assert!(!request.contains("addressbook-color"));
     ret.unwrap();
 }
 

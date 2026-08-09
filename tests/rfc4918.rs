@@ -495,6 +495,7 @@ fn proppatch_sends_the_propertyupdate_body() {
         UA,
         "personal/",
         &[(DISPLAYNAME, WebdavPropValue::Text("Renamed"))],
+        &[GETETAG],
     );
     let (request, ret) = expect_exchange(
         &mut proppatch,
@@ -503,6 +504,7 @@ fn proppatch_sends_the_propertyupdate_body() {
     assert!(request.starts_with("proppatch /dav/personal/ http/1.1\r\n"));
     assert!(request.contains("<d:propertyupdate"));
     assert!(request.contains("<d:displayname>renamed</d:displayname>"));
+    assert!(request.contains("<d:remove><d:prop><d:getetag/></d:prop></d:remove>"));
     ret.unwrap();
 }
 

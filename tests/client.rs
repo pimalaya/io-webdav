@@ -17,7 +17,7 @@ use io_webdav::{
     client::{WebdavClientStd, WebdavClientStdError},
     rfc4791::calendar::CaldavCalendar,
     rfc4918::{WebdavAuth, send::WebdavSendError},
-    rfc6352::addressbook::CarddavAddressbook,
+    rfc6352::addressbook::{CarddavAddressbook, CarddavAddressbookPatch},
 };
 #[cfg(any(
     feature = "rustls-aws",
@@ -464,7 +464,9 @@ fn methods_require_the_home_set_cache() {
         WebdavClientStdError::MissingAddressbookHomeSet
     ));
     assert!(matches!(
-        client.update_addressbook(&addressbook).unwrap_err(),
+        client
+            .update_addressbook(&CarddavAddressbookPatch::default())
+            .unwrap_err(),
         WebdavClientStdError::MissingAddressbookHomeSet
     ));
     assert!(matches!(
@@ -610,8 +612,14 @@ fn addressbook_methods_run_their_coroutines() {
     client
         .create_addressbook(&addressbook)
         .expect("create addressbook");
+
+    let patch = CarddavAddressbookPatch {
+        id: "team".into(),
+        display_name: Some(Some("Team".into())),
+        ..Default::default()
+    };
     client
-        .update_addressbook(&addressbook)
+        .update_addressbook(&patch)
         .expect("update addressbook");
     client
         .delete_addressbook("team")

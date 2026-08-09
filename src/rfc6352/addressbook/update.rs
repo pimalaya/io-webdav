@@ -12,7 +12,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4918::WebdavAuth,
-//!     rfc6352::addressbook::{CarddavAddressbook, update::CarddavAddressbookUpdate},
+//!     rfc6352::addressbook::{CarddavAddressbookPatch, update::CarddavAddressbookUpdate},
 //! };
 //! use url::Url;
 //!
@@ -22,13 +22,17 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let addressbook = CarddavAddressbook {
+//!
+//! // Renames the addressbook and clears its description, leaving its
+//! // color untouched.
+//! let patch = CarddavAddressbookPatch {
 //!     id: "contacts".into(),
-//!     display_name: Some("My Contacts".into()),
+//!     display_name: Some(Some("My Contacts".into())),
+//!     description: Some(None),
 //!     ..Default::default()
 //! };
 //! let mut coroutine =
-//!     CarddavAddressbookUpdate::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/", &addressbook);
+//!     CarddavAddressbookUpdate::new(&base_url, &auth, "io-webdav", "/dav/addressbooks/", &patch);
 //! let mut arg = None;
 //!
 //! loop {
@@ -52,7 +56,7 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{WebdavAuth, proppatch::WebdavProppatch, send::WebdavSendError},
-    rfc6352::addressbook::{CarddavAddressbook, join_path, property_set},
+    rfc6352::addressbook::{CarddavAddressbookPatch, join_path, property_updates},
 };
 
 /// Coroutine that updates an addressbook collection's properties.
@@ -62,17 +66,19 @@ pub struct CarddavAddressbookUpdate {
 }
 
 impl CarddavAddressbookUpdate {
-    /// Builds a new `update-addressbook` coroutine.
+    /// Builds a new `update-addressbook` coroutine, setting the
+    /// properties `patch` carries a value for and removing the ones it
+    /// clears.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         home_set_path: &str,
-        addressbook: &CarddavAddressbook,
+        patch: &CarddavAddressbookPatch,
     ) -> Self {
-        let path = join_path(home_set_path, &addressbook.id);
-        let set = property_set(addressbook);
-        let proppatch = WebdavProppatch::new(base_url, auth, user_agent, &path, &set);
+        let path = join_path(home_set_path, &patch.id);
+        let (set, remove) = property_updates(patch);
+        let proppatch = WebdavProppatch::new(base_url, auth, user_agent, &path, &set, &remove);
         Self {
             state: State::WebdavProppatch(proppatch),
         }
