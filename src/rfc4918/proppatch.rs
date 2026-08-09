@@ -38,11 +38,20 @@
 //!             let n = stream.read(&mut buf).unwrap();
 //!             arg = Some(&buf[..n]);
 //!         }
-//!         WebdavCoroutineState::Complete(Ok(())) => break,
+//!         WebdavCoroutineState::Complete(Ok(out)) => {
+//!             // Each refused property is listed under `failures`, and
+//!             // `requested` is what the request asked to change.
+//!             println!("{:?}", out.multistatus.responses);
+//!             break;
+//!         }
 //!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
 //!     }
 //! }
 //! ```
+
+use core::mem;
+
+use alloc::{string::String, vec::Vec};
 
 use log::trace;
 use url::Url;
@@ -50,16 +59,30 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, WebdavPropValue, WebdavProperty, proppatch_body,
+        WebdavAuth, WebdavMultistatus, WebdavPropValue, WebdavProperty, parse_multistatus,
+        proppatch_body,
         request::WebdavRequest,
         send::{WebdavSendError, WebdavSendRaw},
     },
     webdav_try,
 };
 
+/// Outcome of a successful [`WebdavProppatch`] resume.
+#[derive(Clone, Debug, Default)]
+pub struct WebdavProppatchOk {
+    /// The parsed multistatus.
+    pub multistatus: WebdavMultistatus,
+    /// Local names of the properties the request asked to set or
+    /// remove. RFC 4918 §9.2.1 wants a propstat for each of them, so a
+    /// name missing from the response is a property the server said
+    /// nothing about, having changed nothing.
+    pub requested: Vec<&'static str>,
+}
+
 /// Coroutine that runs a `PROPPATCH`.
 #[derive(Debug)]
 pub struct WebdavProppatch {
+    requested: Vec<&'static str>,
     state: State,
 }
 
@@ -75,10 +98,16 @@ impl WebdavProppatch {
         set: &[(WebdavProperty, WebdavPropValue<'_>)],
         remove: &[WebdavProperty],
     ) -> Self {
+        let requested = set
+            .iter()
+            .map(|(prop, _)| prop.local)
+            .chain(remove.iter().map(|prop| prop.local))
+            .collect();
         let request = WebdavRequest::proppatch(base_url, auth, user_agent, path)
             .content_type_xml()
             .body(proppatch_body(set, remove));
         Self {
+            requested,
             state: State::Send(WebdavSendRaw::new(request)),
         }
     }
@@ -86,14 +115,19 @@ impl WebdavProppatch {
 
 impl WebdavCoroutine for WebdavProppatch {
     type Yield = WebdavYield;
-    type Return = Result<(), WebdavSendError>;
+    type Return = Result<WebdavProppatchOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
             State::Send(send) => {
-                webdav_try!(send, arg);
-                WebdavCoroutineState::Complete(Ok(()))
+                let ok = webdav_try!(send, arg);
+                let xml = String::from_utf8_lossy(&ok.body);
+                trace!("response body: {xml}");
+                WebdavCoroutineState::Complete(Ok(WebdavProppatchOk {
+                    multistatus: parse_multistatus(&xml),
+                    requested: mem::take(&mut self.requested),
+                }))
             }
         }
     }

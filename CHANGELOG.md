@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `WebdavPropValue`, the value side of a `PROPPATCH` / `MKCOL` / `MKCALENDAR` property set: `Text` for escaped content, `Raw` for a markup fragment such as the `<C:comp/>` children of a component set.
 - Added `WebdavPropChild`, carrying a property child's `name` attribute so attribute-valued properties can be read at all.
 - Added property removal to `PROPPATCH` (RFC 4918 §9.2): `proppatch_body` and `WebdavProppatch::new` take a list of properties to remove alongside the set pairs and emit a `DAV:remove` instruction for it, and an empty instruction block is left out of the body. Setting a property was the only thing a `PROPPATCH` could express before, so clearing one was not expressible at all.
+- Added `WebdavPropFailure` plus `WebdavResponseEntry::failures`, holding the properties a non-2xx propstat named with the status that refused them, next to the 2xx properties the parser already kept.
+- Added `WebdavProppatchOk`, returned by `WebdavProppatch` in place of `()`: the parsed multistatus plus the local names the request asked to set or remove. `WebdavClientStd::update_addressbook` and `update_calendar` now verify both, failing with `PropertiesRejected` when the server refused a property and `PropertiesIgnored` when it never mentioned one (RFC 4918 §9.2.1 wants a propstat for each). iCloud answers a PROPPATCH on a collection it does not have with a 200 propstat naming nothing, which used to read as success.
+- Added `summarize_body`, which boils an error body down to one line: its DAV `responsedescription`, else an HTML `title`, else the markup stripped, whitespace collapsed and length capped.
 - Added `CarddavAddressbookPatch`, the partial update `CarddavAddressbookUpdate` now takes: each property is doubly optional, so `None` leaves it alone, `Some(None)` removes it and `Some(Some(value))` sets it. `property_updates` splits a patch into the set and remove lists. A flat `CarddavAddressbook` cannot tell "leave alone" from "remove", which is why a cleared property used to vanish on the way to the wire.
 
 ### Changed
@@ -38,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `proppatch_body` and `WebdavProppatch::new` take the properties to remove as a second list, and no longer share their body builder with the creation requests: `prop_set_body` stays set-only, since `MKCOL` and `MKCALENDAR` have nothing to remove.
 
   **Breaking**: pass `&[]` to keep the previous set-only behaviour.
+
+- `WebdavSendError::HttpStatus` and `WebdavFollowRedirectsError::HttpStatus` are struct variants (`{ status, body }`) and render a summary of the body rather than the body itself, so a Fastmail 404 no longer prints its whole HTML page and an empty body no longer leaves a trailing colon. The raw body is unchanged on the value.
+
+  **Breaking**: destructure with `HttpStatus { status, body }`.
 
 - `CarddavAddressbookUpdate::new` and `WebdavClient::update_addressbook` take a `CarddavAddressbookPatch` instead of a `CarddavAddressbook`. `property_set` is now only the `MKCOL` side.
 

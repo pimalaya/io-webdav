@@ -121,6 +121,6 @@ fn other_failures_pass_through_as_send_errors() {
     let (_, ret) = expect_exchange(&mut sync, &http_response("403 Forbidden", &[], "denied"));
     assert!(matches!(
         ret.unwrap_err(),
-        WebdavSyncCollectionError::Send(WebdavSendError::HttpStatus(403, _))
+        WebdavSyncCollectionError::Send(WebdavSendError::HttpStatus { status: 403, .. })
     ));
 }

@@ -34,6 +34,8 @@ pub mod report;
 pub mod request;
 pub mod send;
 
+use core::fmt;
+
 use alloc::{
     format,
     string::{String, ToString},
@@ -133,6 +135,26 @@ pub struct WebdavResponseEntry {
     pub status: Option<u16>,
     /// Properties gathered from every 2xx `<propstat>` of this response.
     pub props: Vec<WebdavPropItem>,
+    /// Properties the server refused, each with the status of the
+    /// `<propstat>` that carried it. A `PROPPATCH` answers this way
+    /// (RFC 4918 §9.2): the request itself is a 207, and only the
+    /// propstat says whether the property actually changed.
+    pub failures: Vec<WebdavPropFailure>,
+}
+
+/// A property a server refused, and the status it refused it with.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WebdavPropFailure {
+    /// Status of the `<propstat>` that carried the property.
+    pub status: u16,
+    /// Local name of the refused property, e.g. `displayname`.
+    pub property: String,
+}
+
+impl fmt::Display for WebdavPropFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.property, self.status)
+    }
 }
 
 impl WebdavResponseEntry {
@@ -451,7 +473,7 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
     let mut stack: Vec<(String, String, Vec<WebdavPropChild>)> = Vec::new();
     let mut response: Option<WebdavResponseEntry> = None;
     let mut propstat_props: Vec<WebdavPropItem> = Vec::new();
-    let mut propstat_ok: Option<bool> = None;
+    let mut propstat_status: Option<u16> = None;
 
     loop {
         match reader.read_event() {
@@ -467,7 +489,7 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                     "response" => response = Some(WebdavResponseEntry::default()),
                     "propstat" => {
                         propstat_props.clear();
-                        propstat_ok = None;
+                        propstat_status = None;
                     }
                     _ => {}
                 }
@@ -539,17 +561,29 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                             }
                         }
                         "propstat" => {
-                            if propstat_ok == Some(true) {
-                                if let Some(entry) = response.as_mut() {
-                                    entry.props.append(&mut propstat_props);
+                            if let Some(entry) = response.as_mut() {
+                                match propstat_status {
+                                    Some(status) if status / 100 == 2 => {
+                                        entry.props.append(&mut propstat_props)
+                                    }
+                                    // NOTE: a refused propstat is where a
+                                    // PROPPATCH says it changed nothing, so
+                                    // its properties are kept as failures
+                                    // rather than dropped.
+                                    Some(status) => entry.failures.extend(
+                                        propstat_props.drain(..).map(|item| WebdavPropFailure {
+                                            status,
+                                            property: item.local,
+                                        }),
+                                    ),
+                                    None => {}
                                 }
                             }
                             propstat_props.clear();
-                            propstat_ok = None;
+                            propstat_status = None;
                         }
                         "status" if parent == Some("propstat") => {
-                            propstat_ok =
-                                Some(status_code(&text).is_some_and(|code| code / 100 == 2));
+                            propstat_status = status_code(&text);
                         }
                         "status" if parent == Some("response") => {
                             if let Some(entry) = response.as_mut() {
@@ -661,6 +695,74 @@ pub fn trace_unrecognized(entry: &WebdavResponseEntry, known: &[WebdavProperty])
 /// (e.g. `HTTP/1.1 404 Not Found`).
 fn status_code(text: &str) -> Option<u16> {
     text.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Maximum length of a summarised error body, in characters.
+const SUMMARY_LEN: usize = 200;
+
+/// Boils an error response body down to one readable line.
+///
+/// Servers answer an error with anything from a DAV XML condition to a
+/// full HTML page (Fastmail) to nothing at all (iCloud). The DAV
+/// `responsedescription` is the one part written for a human, so it
+/// wins, then an HTML `title`, which is the page's own summary of
+/// itself; failing both, the markup is stripped, the whitespace
+/// collapsed and the result capped. An empty body summarises to
+/// nothing, which lets a caller drop the separator rather than end its
+/// message on a colon.
+pub fn summarize_body(body: &str) -> String {
+    let text = element_text(body, "responsedescription")
+        .or_else(|| element_text(body, "title"))
+        .unwrap_or_else(|| strip_markup(body));
+    let text = text.trim();
+
+    match text.char_indices().nth(SUMMARY_LEN) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_string(),
+    }
+}
+
+/// The trimmed text of the first `<local>` element found, whatever its
+/// namespace prefix, when it carries any.
+fn element_text(body: &str, local: &str) -> Option<String> {
+    let open = format!("{local}>");
+    let start = body.find(&open)? + open.len();
+    let rest = &body[start..];
+    let end = rest.find("</")?;
+    let text = rest[..end].trim();
+
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// Drops every `<...>` tag and collapses the remaining whitespace.
+fn strip_markup(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut in_tag = false;
+
+    for ch in body.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if in_tag => continue,
+            ch if ch.is_whitespace() => {
+                if !out.ends_with(' ') {
+                    out.push(' ');
+                }
+            }
+            ch => out.push(ch),
+        }
+    }
+
+    out
+}
+
+/// Renders a summarised body as an error-message suffix: `": <summary>"`,
+/// or nothing at all when there is no summary to show.
+pub fn summarized(body: &str) -> String {
+    match summarize_body(body) {
+        summary if summary.is_empty() => String::new(),
+        summary => format!(": {summary}"),
+    }
 }
 
 /// Collects `DAV:` plus `extra` plus every property namespace.

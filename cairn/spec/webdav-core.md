@@ -21,7 +21,18 @@ The DAV namespace SHALL be emitted with the D prefix, never as the default names
 A property set pair SHALL carry a WebdavPropValue, either text that is XML-escaped on the way out, or a raw markup fragment emitted verbatim. Raw exists for properties whose value is child elements rather than text, which escaping would destroy.
 
 ### Requirement: Multistatus parsing
-The parser SHALL be vocabulary-agnostic, matching by local name and ignoring namespace prefixes. It SHALL keep properties from 2xx propstats only, while still surfacing responses carrying no 2xx propstat as entries with empty props and their response-level status. It SHALL read the top-level sync-token. Predefined and numeric character references SHALL be resolved, unknown entity references kept verbatim, and malformed input SHALL yield whatever parsed before the error.
+The parser SHALL be vocabulary-agnostic, matching by local name and ignoring namespace prefixes. It SHALL keep properties from 2xx propstats only, recording the properties of non-2xx propstats as failures carrying their status, while still surfacing responses carrying no 2xx propstat as entries with empty props and their response-level status. It SHALL read the top-level sync-token. Predefined and numeric character references SHALL be resolved, unknown entity references kept verbatim, and malformed input SHALL yield whatever parsed before the error.
+
+### Requirement: A property update is verified, not assumed
+A `PROPPATCH` SHALL return its parsed multistatus together with the properties the request asked to change, and the client SHALL fail unless every one of them came back accepted. A property the server refused fails the call, and so does one it never mentioned: RFC 4918 §9.2.1 wants a propstat per requested property, and a server that names none of them (iCloud, for a collection that does not exist) changed nothing while answering 207.
+
+#### Scenario: A collection that does not exist
+- GIVEN a PROPPATCH against a collection the server does not have
+- WHEN the server answers 207 with an empty prop and a 200 status
+- THEN the client fails, naming the properties the server ignored
+
+### Requirement: An HTTP error is summarised, not dumped
+A non-2xx status SHALL render as a summary of the body: its DAV responsedescription when it carries one, else an HTML title, else the body with markup stripped, whitespace collapsed and length capped. An empty body SHALL render as the status alone. The raw body SHALL remain available on the error value for consumers that inspect it.
 
 ### Requirement: Property children
 A parsed property SHALL expose its direct child elements, each carrying its local name and its name attribute when it has one. Attribute-valued properties like supported-calendar-component-set are unreadable otherwise.

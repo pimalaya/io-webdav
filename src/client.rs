@@ -73,8 +73,9 @@ use crate::{
         },
     },
     rfc4918::{
-        GETETAG, WebdavAuth, coroutine::WebdavRedirectYield,
-        follow_redirects::WebdavFollowRedirectsError, send::WebdavSendError,
+        GETETAG, WebdavAuth, WebdavPropFailure, coroutine::WebdavRedirectYield,
+        follow_redirects::WebdavFollowRedirectsError, proppatch::WebdavProppatchOk,
+        send::WebdavSendError,
     },
     rfc5397::current_user_principal::WebdavCurrentUserPrincipal,
     rfc6352::{
@@ -156,6 +157,69 @@ pub enum WebdavClientStdError {
     /// must run first.
     #[error("WebDAV client missing addressbook home-set; call `addressbook_home_set` first")]
     MissingAddressbookHomeSet,
+    /// The server refused one or more properties of a `PROPPATCH`
+    /// (RFC 4918 §9.2). The request itself succeeded, since a
+    /// `PROPPATCH` answers 207 whatever it decided, so only the
+    /// multistatus tells whether anything changed.
+    #[error("WebDAV server rejected the property update: {}", join_failures(.0))]
+    PropertiesRejected(Vec<WebdavPropFailure>),
+    /// The server answered a `PROPPATCH` without mentioning the
+    /// properties it was asked to change. RFC 4918 §9.2.1 wants a
+    /// propstat for each of them, so a silent response is a change that
+    /// did not happen (iCloud answers this way for a collection that
+    /// does not exist).
+    #[error("WebDAV server ignored the property update: {}", .0.join(", "))]
+    PropertiesIgnored(Vec<String>),
+}
+
+/// Renders refused properties as `name (status), name (status)`.
+fn join_failures(failures: &[WebdavPropFailure]) -> String {
+    failures
+        .iter()
+        .map(WebdavPropFailure::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Turns a `PROPPATCH` outcome into a result: a property the server
+/// refused fails the call, and so does one it never mentioned, since
+/// RFC 4918 §9.2.1 wants a propstat for every property the request
+/// carried.
+fn check_properties_accepted(out: WebdavProppatchOk) -> Result<(), WebdavClientStdError> {
+    let WebdavProppatchOk {
+        multistatus,
+        requested,
+    } = out;
+
+    let mut acknowledged: BTreeSet<String> = BTreeSet::new();
+    let mut failures: Vec<WebdavPropFailure> = Vec::new();
+
+    for response in multistatus.responses {
+        acknowledged.extend(response.props.into_iter().map(|prop| prop.local));
+        acknowledged.extend(
+            response
+                .failures
+                .iter()
+                .map(|failure| failure.property.clone()),
+        );
+        failures.extend(response.failures);
+    }
+
+    if !failures.is_empty() {
+        return Err(WebdavClientStdError::PropertiesRejected(failures));
+    }
+
+    let ignored: Vec<String> = requested
+        .into_iter()
+        .filter(|local| !acknowledged.contains(*local))
+        .map(ToString::to_string)
+        .collect();
+
+    if !ignored.is_empty() {
+        return Err(WebdavClientStdError::PropertiesIgnored(ignored));
+    }
+
+    Ok(())
 }
 
 /// Std-blocking WebDAV client wrapping a single blocking stream.
@@ -444,7 +508,9 @@ impl WebdavClientStd {
             &path,
             calendar,
         );
-        self.run(coroutine)
+        let multistatus = self.run(coroutine)?;
+
+        check_properties_accepted(multistatus)
     }
 
     /// Deletes a calendar collection.
@@ -694,7 +760,9 @@ impl WebdavClientStd {
             &path,
             patch,
         );
-        self.run(coroutine)
+        let multistatus = self.run(coroutine)?;
+
+        check_properties_accepted(multistatus)
     }
 
     /// Deletes an addressbook collection.

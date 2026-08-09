@@ -64,7 +64,7 @@ use io_http::{
 use log::trace;
 use thiserror::Error;
 
-use crate::coroutine::*;
+use crate::{coroutine::*, rfc4918::summarized};
 
 /// Successful terminal output of a WebDAV send coroutine.
 #[derive(Debug)]
@@ -80,9 +80,16 @@ pub struct WebdavSendOk<T> {
 /// Failure causes during a WebDAV send.
 #[derive(Debug, Error)]
 pub enum WebdavSendError {
-    /// The server returned a non-2xx HTTP status.
-    #[error("WebDAV server returned HTTP {0}: {1}")]
-    HttpStatus(u16, String),
+    /// The server returned a non-2xx HTTP status. The body is kept
+    /// verbatim for callers that inspect it, but renders as a summary:
+    /// see [`summarize_body`](crate::rfc4918::summarize_body).
+    #[error("WebDAV server returned HTTP {status}{}", summarized(body))]
+    HttpStatus {
+        /// The non-2xx status the server answered with.
+        status: u16,
+        /// The response body, verbatim.
+        body: String,
+    },
     /// The server returned a redirect where none was expected.
     #[error("WebDAV server returned unexpected redirect")]
     UnexpectedRedirect,
@@ -142,7 +149,10 @@ impl WebdavCoroutine for WebdavSendRaw {
 
                 if !response.status.is_success() {
                     let body = String::from_utf8_lossy(&response.body).into_owned();
-                    let err = WebdavSendError::HttpStatus(*response.status, body);
+                    let err = WebdavSendError::HttpStatus {
+                        status: *response.status,
+                        body,
+                    };
                     return WebdavCoroutineState::Complete(Err(err));
                 }
 

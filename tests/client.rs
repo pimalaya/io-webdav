@@ -168,6 +168,16 @@ const ITEM_SYNC_XML: &str = r#"<d:multistatus xmlns:d="DAV:">
   <d:sync-token>http://example.org/ns/sync/7</d:sync-token>
 </d:multistatus>"#;
 
+const PROPPATCH_OK_XML: &str = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+  <d:response>
+    <d:href>/dav/books/team/</d:href>
+    <d:propstat>
+      <d:prop><d:displayname/><c:calendar-description/></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>"#;
+
 const ADDRESSBOOKS_XML: &str = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
   <d:response>
     <d:href>/dav/books/contacts/</d:href>
@@ -485,7 +495,7 @@ fn http_failures_surface_as_send_errors() {
     let err = client.list_calendars().unwrap_err();
     assert!(matches!(
         err,
-        WebdavClientStdError::Send(WebdavSendError::HttpStatus(403, _))
+        WebdavClientStdError::Send(WebdavSendError::HttpStatus { status: 403, .. })
     ));
 }
 
@@ -519,7 +529,7 @@ fn calendar_methods_run_their_coroutines() {
     let mut client = discovered_client(vec![
         multistatus_response(CALENDARS_XML),
         http_response("201 Created", &[], ""),
-        multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>"),
+        multistatus_response(PROPPATCH_OK_XML),
         http_response("204 No Content", &[], ""),
     ]);
 
@@ -597,7 +607,7 @@ fn addressbook_methods_run_their_coroutines() {
     let mut client = discovered_client(vec![
         multistatus_response(ADDRESSBOOKS_XML),
         http_response("201 Created", &[], ""),
-        multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>"),
+        multistatus_response(PROPPATCH_OK_XML),
         http_response("204 No Content", &[], ""),
     ]);
 
@@ -624,6 +634,80 @@ fn addressbook_methods_run_their_coroutines() {
     client
         .delete_addressbook("team")
         .expect("delete addressbook");
+}
+
+#[test]
+fn a_refused_property_fails_the_update() {
+    // NOTE: the request itself is a 207, so only the propstat says the
+    // property never changed. iCloud answers this way for a collection
+    // that does not exist.
+    let refused = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/books/nope/</d:href>
+        <d:propstat>
+          <d:prop><d:displayname/></d:prop>
+          <d:status>HTTP/1.1 403 Forbidden</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+    let mut client = discovered_client(vec![
+        multistatus_response(refused),
+        multistatus_response(refused),
+    ]);
+
+    let patch = CarddavAddressbookPatch {
+        id: "nope".into(),
+        display_name: Some(Some("Renamed".into())),
+        ..Default::default()
+    };
+    let err = client.update_addressbook(&patch).unwrap_err();
+    assert!(matches!(
+        err,
+        WebdavClientStdError::PropertiesRejected(ref failures) if failures.len() == 1
+    ));
+    assert!(err.to_string().contains("displayname (403)"));
+
+    let calendar = CaldavCalendar {
+        id: "nope".into(),
+        display_name: Some("Renamed".into()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        client.update_calendar(&calendar).unwrap_err(),
+        WebdavClientStdError::PropertiesRejected(_)
+    ));
+}
+
+#[test]
+fn a_property_the_server_never_mentions_fails_the_update() {
+    // NOTE: iCloud answers a PROPPATCH on a collection that does not
+    // exist with a 200 propstat carrying an empty prop, naming nothing,
+    // where RFC 4918 §9.2.1 wants a propstat per requested property.
+    let silent = r#"<multistatus xmlns="DAV:">
+      <response>
+        <href>/dav/books/nope/</href>
+        <propstat>
+          <prop></prop>
+          <status>HTTP/1.1 200 OK</status>
+        </propstat>
+      </response>
+    </multistatus>"#;
+    let mut client = discovered_client(vec![multistatus_response(silent)]);
+
+    let patch = CarddavAddressbookPatch {
+        id: "nope".into(),
+        display_name: Some(Some("Renamed".into())),
+        description: Some(None),
+        ..Default::default()
+    };
+    let err = client.update_addressbook(&patch).unwrap_err();
+
+    assert!(matches!(
+        err,
+        WebdavClientStdError::PropertiesIgnored(ref ignored) if ignored.len() == 2
+    ));
+    assert!(err.to_string().contains("displayname"));
+    assert!(err.to_string().contains("addressbook-description"));
 }
 
 #[test]

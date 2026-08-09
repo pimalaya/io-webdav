@@ -74,6 +74,6 @@ fn discovery_maps_failure_statuses() {
         expect_redirect_exchange(&mut discovery, &http_response("401 Unauthorized", &[], ""));
     assert!(matches!(
         ret.unwrap_err(),
-        WebdavFollowRedirectsError::HttpStatus(401, _)
+        WebdavFollowRedirectsError::HttpStatus { status: 401, .. }
     ));
 }

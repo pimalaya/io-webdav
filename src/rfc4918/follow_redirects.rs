@@ -72,15 +72,21 @@ use thiserror::Error;
 
 use crate::{
     coroutine::*,
-    rfc4918::{coroutine::WebdavRedirectYield, send::WebdavSendOk},
+    rfc4918::{coroutine::WebdavRedirectYield, send::WebdavSendOk, summarized},
 };
 
 /// Failure causes during a redirect-aware WebDAV send.
 #[derive(Debug, Error)]
 pub enum WebdavFollowRedirectsError {
-    /// The server returned a non-2xx, non-redirect HTTP status.
-    #[error("WebDAV server returned HTTP {0}: {1}")]
-    HttpStatus(u16, String),
+    /// The server returned a non-2xx, non-redirect HTTP status. The
+    /// body is kept verbatim but renders as a summary.
+    #[error("WebDAV server returned HTTP {status}{}", summarized(body))]
+    HttpStatus {
+        /// The non-2xx status the server answered with.
+        status: u16,
+        /// The response body, verbatim.
+        body: String,
+    },
     /// The underlying HTTP/1.1 send failed.
     #[error(transparent)]
     Send(#[from] Http11SendError),
@@ -130,7 +136,10 @@ impl WebdavCoroutine for WebdavFollowRedirects {
 
                 if !response.status.is_success() {
                     let body = String::from_utf8_lossy(&response.body).into_owned();
-                    let err = WebdavFollowRedirectsError::HttpStatus(*response.status, body);
+                    let err = WebdavFollowRedirectsError::HttpStatus {
+                        status: *response.status,
+                        body,
+                    };
                     return WebdavCoroutineState::Complete(Err(err));
                 }
 

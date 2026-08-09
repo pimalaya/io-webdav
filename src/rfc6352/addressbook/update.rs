@@ -44,7 +44,12 @@
 //!             let n = stream.read(&mut buf).unwrap();
 //!             arg = Some(&buf[..n]);
 //!         }
-//!         WebdavCoroutineState::Complete(Ok(())) => break,
+//!         WebdavCoroutineState::Complete(Ok(out)) => {
+//!             // Each refused property is listed under `failures`, and
+//!             // `requested` is what the request asked to change.
+//!             println!("{:?}", out.multistatus.responses);
+//!             break;
+//!         }
 //!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
 //!     }
 //! }
@@ -55,7 +60,11 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{WebdavAuth, proppatch::WebdavProppatch, send::WebdavSendError},
+    rfc4918::{
+        WebdavAuth,
+        proppatch::{WebdavProppatch, WebdavProppatchOk},
+        send::WebdavSendError,
+    },
     rfc6352::addressbook::{CarddavAddressbookPatch, join_path, property_updates},
 };
 
@@ -87,7 +96,7 @@ impl CarddavAddressbookUpdate {
 
 impl WebdavCoroutine for CarddavAddressbookUpdate {
     type Yield = WebdavYield;
-    type Return = Result<(), WebdavSendError>;
+    type Return = Result<WebdavProppatchOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");

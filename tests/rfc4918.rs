@@ -7,8 +7,8 @@ mod common;
 
 use common::*;
 use io_webdav::rfc4918::{
-    DAV, DISPLAYNAME, GETETAG, RESOURCETYPE, WebdavAuth, WebdavNamespace, WebdavPropItem,
-    WebdavPropValue, WebdavProperty, WebdavResponseEntry,
+    DAV, DISPLAYNAME, GETETAG, RESOURCETYPE, WebdavAuth, WebdavNamespace, WebdavPropFailure,
+    WebdavPropItem, WebdavPropValue, WebdavProperty, WebdavResponseEntry,
     copy::WebdavCopy as CopyResource,
     delete::WebdavDelete,
     follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
@@ -26,7 +26,7 @@ use io_webdav::rfc4918::{
     request::WebdavRequest,
     resolve, resolve_href,
     send::{WebdavSendError, WebdavSendRaw},
-    trace_unrecognized, xmlns_decls,
+    summarize_body, trace_unrecognized, xmlns_decls,
 };
 use url::Url;
 
@@ -131,6 +131,65 @@ fn parse_multistatus_ignores_unparsable_status_lines() {
 }
 
 #[test]
+fn parse_multistatus_keeps_refused_properties_as_failures() {
+    // NOTE: what a PROPPATCH answers when it changed nothing: a 207
+    // whose propstats carry the refusal.
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/contacts/</d:href>
+        <d:propstat>
+          <d:prop><d:displayname/></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+        <d:propstat>
+          <d:prop><c:addressbook-description/><d:getetag/></d:prop>
+          <d:status>HTTP/1.1 403 Forbidden</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let ms = parse_multistatus(xml);
+    let entry = &ms.responses[0];
+
+    assert_eq!(entry.props.len(), 1);
+    assert_eq!(entry.props[0].local, "displayname");
+
+    let failures: Vec<String> = entry
+        .failures
+        .iter()
+        .map(WebdavPropFailure::to_string)
+        .collect();
+    assert_eq!(failures, ["addressbook-description (403)", "getetag (403)"]);
+}
+
+#[test]
+fn summarize_body_prefers_the_response_description() {
+    let body = r#"<?xml version="1.0"?>
+      <d:error xmlns:d="DAV:">
+        <c:valid-address-data xmlns:c="urn:ietf:params:xml:ns:carddav"/>
+        <d:responsedescription>Missing mandatory UID property</d:responsedescription>
+      </d:error>"#;
+    assert_eq!(summarize_body(body), "Missing mandatory UID property");
+}
+
+#[test]
+fn summarize_body_strips_markup_and_caps_the_rest() {
+    let html = "<html>\n  <head><title>404 Not Found</title></head>\n  <body><h1>Not Found</h1></body>\n</html>";
+    assert_eq!(summarize_body(html), "404 Not Found");
+
+    // NOTE: no description and no title, so the markup is stripped.
+    assert_eq!(summarize_body("<p>Denied</p>  <p>twice</p>"), "Denied twice");
+
+    assert!(summarize_body("").is_empty());
+    assert!(summarize_body("   \n ").is_empty());
+
+    let long = "x".repeat(500);
+    let summary = summarize_body(&long);
+    assert!(summary.ends_with('…'));
+    assert_eq!(summary.chars().count(), 201);
+}
+
+#[test]
 fn parse_multistatus_survives_malformed_xml() {
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
@@ -171,6 +230,7 @@ fn response_entry_helpers_handle_missing_data() {
     let entry = WebdavResponseEntry {
         href: String::new(),
         status: None,
+        failures: Vec::new(),
         props: vec![WebdavPropItem {
             local: "unknown-prop".into(),
             text: "   ".into(),
@@ -313,7 +373,7 @@ fn send_raw_maps_failure_statuses_to_http_status() {
 
     let (_, ret) = expect_exchange(&mut send, &http_response("404 Not Found", &[], "nope"));
     let err = ret.unwrap_err();
-    let WebdavSendError::HttpStatus(status, body) = err else {
+    let WebdavSendError::HttpStatus { status, body } = err else {
         panic!("expected HttpStatus, got {err:?}");
     };
     assert_eq!(status, 404);
@@ -374,7 +434,7 @@ fn follow_redirects_maps_failure_statuses_and_transport_errors() {
     let mut send = WebdavFollowRedirects::new(request);
     let (_, ret) = expect_redirect_exchange(&mut send, &http_response("403 Forbidden", &[], "no"));
     let err = ret.unwrap_err();
-    let WebdavFollowRedirectsError::HttpStatus(status, body) = err else {
+    let WebdavFollowRedirectsError::HttpStatus { status, body } = err else {
         panic!("expected HttpStatus, got {err:?}");
     };
     assert_eq!(status, 403);

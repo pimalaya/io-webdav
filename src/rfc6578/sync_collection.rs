@@ -155,9 +155,10 @@ impl WebdavCoroutine for WebdavSyncCollection {
                     WebdavCoroutineState::Yielded(yielded) => {
                         return WebdavCoroutineState::Yielded(yielded);
                     }
-                    WebdavCoroutineState::Complete(Err(WebdavSendError::HttpStatus(403, body)))
-                        if body.contains("valid-sync-token") =>
-                    {
+                    WebdavCoroutineState::Complete(Err(WebdavSendError::HttpStatus {
+                        status: 403,
+                        body,
+                    })) if body.contains("valid-sync-token") => {
                         let err = WebdavSyncCollectionError::InvalidSyncToken;
                         return WebdavCoroutineState::Complete(Err(err));
                     }
