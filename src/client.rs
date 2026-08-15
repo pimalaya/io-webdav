@@ -9,7 +9,7 @@
 //! TCP and TLS themselves. With one of the TLS feature flags enabled
 //! (`rustls-ring`, `rustls-aws`, `native-tls`), [`connect`] is also available
 //! and handles `https://` URLs end-to-end via
-//! [`pimalaya_stream::std::stream::StreamStd`].
+//! [`pimalaya_stream::stream::Stream`].
 //!
 //! Discovery flows top-down from the configured [`base_url`] (the DAV
 //! context root, resolved by io-pim-discovery's RFC 6764 flow upstream):
@@ -49,7 +49,10 @@ use std::io::{self, Read, Write};
     feature = "rustls-ring",
     feature = "native-tls"
 ))]
-use pimalaya_stream::{std::stream::StreamStd, tls::Tls};
+use pimalaya_stream::{
+    stream::{Stream, TcpConnectOptions, TlsConnectOptions},
+    tls::Tls,
+};
 use thiserror::Error;
 use url::Url;
 
@@ -316,8 +319,19 @@ impl WebdavClientStd {
             .ok_or_else(|| WebdavClientStdError::UrlMissingHost(url.to_string()))?;
 
         let stream = match url.scheme() {
-            "http" => StreamStd::connect_tcp(host, url.port().unwrap_or(80))?,
-            "https" => StreamStd::connect_tls(host, url.port().unwrap_or(443), tls)?,
+            "http" => {
+                let port = url.port().unwrap_or(80);
+                Stream::connect_tcp(host, port, TcpConnectOptions::default())?
+            }
+            "https" => {
+                let port = url.port().unwrap_or(443);
+                let opts = TlsConnectOptions {
+                    tls: tls.clone(),
+                    ..Default::default()
+                };
+
+                Stream::connect_tls(host, port, opts)?
+            }
             scheme => {
                 return Err(WebdavClientStdError::UrlUnsupportedScheme(
                     url.to_string(),

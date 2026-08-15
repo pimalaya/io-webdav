@@ -178,7 +178,10 @@ fn summarize_body_strips_markup_and_caps_the_rest() {
     assert_eq!(summarize_body(html), "404 Not Found");
 
     // NOTE: no description and no title, so the markup is stripped.
-    assert_eq!(summarize_body("<p>Denied</p>  <p>twice</p>"), "Denied twice");
+    assert_eq!(
+        summarize_body("<p>Denied</p>  <p>twice</p>"),
+        "Denied twice"
+    );
 
     assert!(summarize_body("").is_empty());
     assert!(summarize_body("   \n ").is_empty());

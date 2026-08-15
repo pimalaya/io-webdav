@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-15
+
 ### Added
 
 - Added the CalDAV read-side sync coroutines, bringing calendars level with address books: `CaldavItemEnum` (ETag-only enumeration returning `CaldavItemRef` rows), `CaldavItemMultiget` (`calendar-multiget` batch fetch, RFC 4791 §7.9) and the matching `enum_items` / `multiget_items` / `sync_items` client methods, the last running a `sync-collection` REPORT (RFC 6578) against a calendar.
@@ -21,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `CarddavAddressbookPatch`, the partial update `CarddavAddressbookUpdate` now takes: each property is doubly optional, so `None` leaves it alone, `Some(None)` removes it and `Some(Some(value))` sets it. `property_updates` splits a patch into the set and remove lists. A flat `CarddavAddressbook` cannot tell "leave alone" from "remove", which is why a cleared property used to vanish on the way to the wire.
 
 ### Changed
+
+- Bumped io-http to 0.5. The coroutines take and yield its types, so a consumer bumps in step for a single version to resolve.
+- Raised the minimum supported Rust version from 1.87 to 1.88, following pimalaya-stream and io-http.
+
+- Bumped pimalaya-stream to 0.3, whose `Read` and `Write` retry a stream reporting it is not ready. **Behaviour change.**
+
+  A blocking socket is not supposed to report `EAGAIN`, yet callers saw one surface mid-exchange and end the exchange with a bare `Resource temporarily unavailable (os error 35)`, macOS especially and the more readily the longer the exchange ran. The transport now retries such a failure for a minute before giving up with a `TimedOut` naming the budget, and arms a socket read deadline at connect time so a server going silent on a healthy connection stops blocking the caller forever. Its `StreamStd` is renamed `stream::Stream` and its connects take a per-transport options struct, which is what this crate now calls.
+
+- Bumped pimalaya-stream to 0.2, whose only change here is the removal of its SASL module: this crate uses the blocking stream and the TLS options, neither of which moved.
 
 - Collapsed `CarddavCardRef`/`CarddavCardEntry` to a single verbatim `id` (the href's last path segment), stopped `CarddavCardCreate` appending `.vcf`, and renamed `CarddavCardUpdateOk.uri` to `id`.
 
@@ -99,5 +110,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.1.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.2.0..HEAD
+[0.2.0]: https://github.com/pimalaya/io-webdav/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/pimalaya/io-webdav/compare/root..v0.1.0
