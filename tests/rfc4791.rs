@@ -1,6 +1,6 @@
-//! Offline coverage of the CalDAV layer (RFC 4791): the calendar and
-//! item vocabularies, the request-body helpers and every coroutine,
-//! resumed against scripted HTTP response bytes.
+//! Offline coverage of the CalDAV layer (RFC 4791): the calendar and item
+//! vocabularies, the request-body helpers and every coroutine, resumed against
+//! scripted HTTP response bytes.
 
 mod common;
 
@@ -29,7 +29,7 @@ fn base() -> Url {
     Url::parse("https://dav.example.org/").unwrap()
 }
 
-// --- vocabulary and body helpers -----------------------------------------
+// --- vocabulary and body helpers ---
 
 #[test]
 fn property_set_keeps_only_the_present_fields() {
@@ -49,8 +49,8 @@ fn property_set_keeps_only_the_present_fields() {
 
 #[test]
 fn property_set_carries_the_time_zone_and_the_component_set() {
-    // Both are read back by a listing, so both have to be writable, or
-    // a calendar cannot be round-tripped through create.
+    // NOTE: both are read back by a listing, so both have to be writable, or a
+    // calendar cannot be round-tripped through create.
     let calendar = CaldavCalendar {
         id: "personal".into(),
         components: ["VEVENT".to_string(), "VTODO".to_string()].into(),
@@ -60,8 +60,8 @@ fn property_set_carries_the_time_zone_and_the_component_set() {
     let body = mkcalendar_body(&property_set(&calendar));
     let xml = core::str::from_utf8(&body).unwrap();
     assert!(xml.contains("<C:calendar-timezone>BEGIN:VTIMEZONE"));
-    // The component set is markup, not text: escaping it would leave
-    // the server with a property whose value is a literal string.
+    // NOTE: the component set is markup, not text: escaping it would leave the
+    // server with a property whose value is a literal string.
     assert!(xml.contains(
         "<C:supported-calendar-component-set><C:comp name=\"VEVENT\"/><C:comp name=\"VTODO\"/></C:supported-calendar-component-set>"
     ));
@@ -109,7 +109,7 @@ fn item_join_path_keeps_the_resource_name_verbatim() {
     );
 }
 
-// --- calendar coroutines ---------------------------------------------------
+// --- calendar coroutines ---
 
 #[test]
 fn list_calendars_maps_calendar_collections_only() {
@@ -157,8 +157,8 @@ fn list_calendars_maps_calendar_collections_only() {
     assert!(request.contains("depth: 1\r\n"));
 
     let calendars = ret.unwrap();
-    // NOTE: the home itself (no calendar resourcetype) and the empty-id
-    // root href are both skipped.
+    // NOTE: the home itself (no calendar resourcetype) and the empty-id root
+    // href are both skipped.
     assert_eq!(calendars.len(), 1);
     let calendar = calendars.first().unwrap();
     assert_eq!(calendar.id, "personal");
@@ -248,7 +248,7 @@ fn calendar_home_set_yields_none_on_an_empty_multistatus() {
     assert!(ret.unwrap().is_none());
 }
 
-// --- item coroutines --------------------------------------------------------
+// --- item coroutines ---
 
 const ITEMS_XML: &str = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
   <d:response>
@@ -311,10 +311,10 @@ fn list_items_maps_calendar_data_entries() {
     assert!(request.contains("comp-filter name=\"vevent\""));
 
     let items = ret.unwrap();
-    // NOTE: the data-less entry, the collection self-entry and the
-    // empty href are all skipped. Every surviving id is the href's last
-    // segment verbatim, no `.ics` stripped, so `event-1.ics` stays
-    // `event-1.ics` and the suffix-less `event-2` stays `event-2`.
+    // NOTE: the data-less entry, the collection self-entry and the empty href
+    // are all skipped. Every surviving id is the href's last segment verbatim,
+    // no `.ics` stripped, so `event-1.ics` stays `event-1.ics` and the
+    // suffix-less `event-2` stays `event-2`.
     assert_eq!(items.len(), 2);
     let first = items.iter().find(|item| item.id == "event-1.ics").unwrap();
     assert_eq!(first.etag.as_deref(), Some("etag-1"));
@@ -349,17 +349,17 @@ fn enum_items_returns_etag_only_references() {
     let refs = ret.unwrap();
     assert_eq!(refs.len(), 1);
     let first = refs.first().unwrap();
-    // the id is the href's last segment verbatim, `.ics` included
+    // NOTE: the id is the href's last segment verbatim, `.ics` included
     assert_eq!(first.id, "event-1.ics");
     assert_eq!(first.etag.as_deref(), Some("etag-1"));
 }
 
 #[test]
 fn enum_items_skips_the_collection_self_entry_and_empty_hrefs() {
-    // iCloud echoes the calendar collection itself (its href ends in a
-    // slash) in the calendar-query response; it must not enter the
-    // spine as a bogus item named after the collection. An href with no
-    // last segment at all yields no addressable id either.
+    // NOTE: iCloud echoes the calendar collection itself (its href ends in a
+    // slash) in the calendar-query response; it must not enter the spine as a
+    // bogus item named after the collection. An href with no last segment at
+    // all yields no addressable id either.
     let mut enumerate = CaldavItemEnum::new(
         &base(),
         &WebdavAuth::None,
@@ -437,9 +437,9 @@ fn read_item_returns_body_and_etag() {
 
 #[test]
 fn create_item_uses_the_id_verbatim() {
-    // The id is the resource name. io-webdav never appends `.ics`, so
-    // a bare `event-1` is PUT at `.../event-1`, not `.../event-1.ics`.
-    // The caller owns the whole name and picks its own extension.
+    // NOTE: the id is the resource name. io-webdav never appends `.ics`, so a
+    // bare `event-1` is PUT at `.../event-1`, not `.../event-1.ics`. The caller
+    // owns the whole name and picks its own extension.
     let mut create = CaldavItemCreate::new(
         &base(),
         &WebdavAuth::None,
@@ -448,7 +448,7 @@ fn create_item_uses_the_id_verbatim() {
         "event-1",
         b"BEGIN:VCALENDAR".to_vec(),
     );
-    // No `Location` in the reply → the returned id falls back to the
+    // NOTE: no `Location` in the reply → the returned id falls back to the
     // caller's name.
     let reply = http_response("201 Created", &[("ETag", "\"etag-1\"")], "");
     let (request, ret) = expect_exchange(&mut create, &reply);
@@ -463,9 +463,9 @@ fn create_item_uses_the_id_verbatim() {
 
 #[test]
 fn create_item_prefers_the_location_id_when_the_server_relocates() {
-    // A server may store the item under a name of its own and report it
-    // in `Location`: the returned id is then that name, not the
-    // caller's, while the PUT still targets the caller's name.
+    // NOTE: a server may store the item under a name of its own and report it
+    // in `Location`: the returned id is then that name, not the caller's, while
+    // the PUT still targets the caller's name.
     let mut create = CaldavItemCreate::new(
         &base(),
         &WebdavAuth::None,
@@ -532,12 +532,9 @@ fn delete_item_targets_the_resource() {
 
 #[test]
 fn a_listed_item_id_round_trips_through_read() {
-    // Regression: a consumer takes an item's listed id and reads it
-    // back. The id must address the very resource the server
-    // enumerated, with no extension added or stripped in between. That
-    // asymmetry broke read, update and delete on every server: the
-    // listed id was `.ics`-stripped, and the GET path re-suffixed it,
-    // so an id that did not end in `.ics` addressed nothing.
+    // NOTE: a listed id must address the very resource the server enumerated,
+    // with no extension added or stripped in between. That asymmetry broke
+    // read, update and delete on every server.
     let mut list = CaldavItemList::new(
         &base(),
         &WebdavAuth::None,

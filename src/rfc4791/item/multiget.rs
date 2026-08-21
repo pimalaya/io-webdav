@@ -1,9 +1,9 @@
-//! `multiget-items` coroutine: REPORT `calendar-multiget` against a
-//! calendar collection (RFC 4791 §7.9).
+//! `multiget-items` coroutine: REPORT `calendar-multiget` against a calendar
+//! collection (RFC 4791 §7.9).
 //!
-//! Fetches a batch of item bodies by resource name in a single
-//! round-trip, instead of one GET per item. Stays byte-oriented: the
-//! iCalendar payload is returned as raw bytes.
+//! Fetches a batch of item bodies by resource name in a single round-trip,
+//! instead of one GET per item. Stays byte-oriented: the iCalendar payload is
+//! returned as raw bytes.
 //!
 //! # Example
 //!
@@ -20,7 +20,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -67,18 +67,18 @@ use crate::{
     webdav_try,
 };
 
-/// Coroutine that batch-fetches calendar items by resource name via
-/// REPORT `calendar-multiget`.
+/// Coroutine that batch-fetches calendar items by resource name via REPORT
+/// `calendar-multiget`.
 #[derive(Debug)]
 pub struct CaldavItemMultiget {
     state: State,
 }
 
 impl CaldavItemMultiget {
-    /// Builds a new `multiget-items` coroutine fetching each item of
-    /// `ids` (resource ids as the server returned them, used verbatim)
-    /// inside `calendar_path`. The `Depth` header is pinned to 0: RFC
-    /// 4791 §7.9 only defines the report for that value.
+    /// Builds a new `multiget-items` coroutine fetching each item of `ids`
+    /// (resource ids as the server returned them, used verbatim) inside
+    /// `calendar_path`. The `Depth` header is pinned to 0: RFC 4791 §7.9 only
+    /// defines the report for that value.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

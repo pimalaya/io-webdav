@@ -1,9 +1,8 @@
 //! CalDAV calendar collections (RFC 4791 §4).
 //!
-//! Holds the shared [`CaldavCalendar`] type, the CalDAV property vocabulary,
-//! and the crate-internal request-body helpers reused across the
-//! calendar coroutines. Each coroutine (create, delete, home_set, list,
-//! update) is its own submodule.
+//! Holds the shared [`CaldavCalendar`] type, the CalDAV property vocabulary and
+//! the request-body helpers the calendar coroutines reuse. Each coroutine is
+//! its own submodule.
 
 pub mod create;
 pub mod delete;
@@ -23,8 +22,8 @@ use crate::rfc4918::{
 /// A CalDAV calendar collection (RFC 4791 §4).
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub struct CaldavCalendar {
-    /// Calendar identifier: the last non-empty path segment of the
-    /// calendar collection URL.
+    /// Calendar identifier: the last non-empty path segment of the calendar
+    /// collection URL.
     pub id: String,
     /// Human-readable display name (DAV:displayname).
     pub display_name: Option<String>,
@@ -32,21 +31,20 @@ pub struct CaldavCalendar {
     pub description: Option<String>,
     /// Display color, expressed as a CSS hex string (RFC 7986 §5.9).
     pub color: Option<String>,
-    /// Component types the calendar holds (RFC 4791 §5.2.3), e.g.
-    /// `VEVENT`, `VTODO`, `VJOURNAL`. Empty when the server advertises
-    /// no restriction, which the RFC defines as accepting any type.
+    /// Component types the calendar holds (RFC 4791 §5.2.3), e.g. `VEVENT`,
+    /// `VTODO`, `VJOURNAL`, empty when the server advertises no restriction and
+    /// therefore accepts any type.
     ///
     /// A server fixes this at creation time and refuses to change it
-    /// afterwards, so setting it is only meaningful on create.
+    /// afterwards, so setting it only means something on create.
     pub components: BTreeSet<String>,
-    /// Collection change tag (CalendarServer ctag extension);
-    /// incremented on every change to the calendar.
+    /// Collection change tag (CalendarServer ctag extension), bumped on every
+    /// change to the calendar.
     pub ctag: Option<String>,
-    /// Collection sync token (RFC 6578 §4), the checkpoint fed back to
-    /// a `sync-collection` REPORT.
+    /// Collection sync token (RFC 6578 §4), the checkpoint fed back to a
+    /// `sync-collection` REPORT.
     pub sync_token: Option<String>,
-    /// Default time zone, expressed as a VTIMEZONE block (RFC 4791
-    /// §5.2.2).
+    /// Default time zone, expressed as a VTIMEZONE block (RFC 4791 §5.2.2).
     pub tz: Option<String>,
 }
 
@@ -124,27 +122,26 @@ pub const LIST_PROPS: &[WebdavProperty] = &[
     CALENDAR_TIMEZONE,
 ];
 
-/// Joins a home-set path with a calendar id into a collection path
-/// (trailing slash included).
+/// Joins a home-set path with a calendar id into a collection path (trailing
+/// slash included).
 pub fn join_path(home: &str, id: &str) -> String {
     let home = home.trim_end_matches('/');
     let id = id.trim_start_matches('/');
     format!("{home}/{id}/")
 }
 
-/// Builds a CalDAV `MKCALENDAR` request body (RFC 4791 §5.3.1) setting
-/// the given properties. CalDAV servers require this dedicated method
-/// for calendars rather than the extended `MKCOL` used for plain
-/// collections.
+/// Builds a CalDAV `MKCALENDAR` request body (RFC 4791 §5.3.1) setting the
+/// given properties, calendars requiring this dedicated method rather than the
+/// extended `MKCOL` of plain collections.
 pub fn mkcalendar_body(set: &[(WebdavProperty, WebdavPropValue<'_>)]) -> Vec<u8> {
     prop_set_body(MKCALENDAR, set)
 }
 
-/// The present display name / color / description / time zone /
-/// component set of `calendar` as `PROPPATCH` / `MKCALENDAR` set pairs.
+/// Turns the display name, color, description, time zone and component set of
+/// `calendar` into `PROPPATCH` or `MKCALENDAR` set pairs.
 ///
-/// A [`None`] field is left out entirely rather than sent empty, so a
-/// partially filled [`CaldavCalendar`] patches only what it carries.
+/// A [`None`] field is left out rather than sent empty, so a partially filled
+/// [`CaldavCalendar`] patches only what it carries.
 pub fn property_set(calendar: &CaldavCalendar) -> Vec<(WebdavProperty, WebdavPropValue<'_>)> {
     let mut set = Vec::new();
     if let Some(name) = &calendar.display_name {
@@ -162,9 +159,8 @@ pub fn property_set(calendar: &CaldavCalendar) -> Vec<(WebdavProperty, WebdavPro
     if !calendar.components.is_empty() {
         let mut comps = String::new();
         for component in &calendar.components {
-            // NOTE: an attribute value, so the double quote needs
-            // escaping on top of what escape_text covers. The literal
-            // `C:` is CALDAV's prefix, as everywhere in this module.
+            // NOTE: an attribute value, so the double quote needs escaping on
+            // top of what escape_text covers.
             let name = escape_text(component).replace('"', "&quot;");
             comps.push_str(&format!("<C:comp name=\"{name}\"/>"));
         }
@@ -176,8 +172,8 @@ pub fn property_set(calendar: &CaldavCalendar) -> Vec<(WebdavProperty, WebdavPro
     set
 }
 
-/// Builds a CalDAV `calendar-multiget` REPORT body (RFC 4791 §7.9)
-/// requesting `props` for each given href.
+/// Builds a CalDAV `calendar-multiget` REPORT body (RFC 4791 §7.9) requesting
+/// `props` for each given href.
 pub fn calendar_multiget_body(hrefs: &[String], props: &[WebdavProperty]) -> Vec<u8> {
     let mut fragment = String::new();
     for href in hrefs {
@@ -188,9 +184,8 @@ pub fn calendar_multiget_body(hrefs: &[String], props: &[WebdavProperty]) -> Vec
 
 /// Builds a CalDAV `calendar-query` REPORT body requesting `props`.
 ///
-/// `comp_filter` is the optional VCALENDAR child filter (e.g.
-/// `<C:comp-filter name="VEVENT" />`); pass an empty string to list
-/// every component type.
+/// `comp_filter` is the optional VCALENDAR child filter (e.g. `<C:comp-filter
+/// name="VEVENT" />`), an empty string listing every component type.
 pub fn calendar_query_body(props: &[WebdavProperty], comp_filter: &str) -> Vec<u8> {
     let filter = format!(
         "<C:filter><C:comp-filter name=\"VCALENDAR\">{comp_filter}</C:comp-filter></C:filter>"

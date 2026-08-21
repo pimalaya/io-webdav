@@ -1,14 +1,13 @@
-//! `create-item` coroutine: PUT raw iCalendar bytes against
-//! `<calendar>/<id>`.
+//! `create-item` coroutine: PUT raw iCalendar bytes against `<calendar>/<id>`.
 //!
-//! The `id` is the resource name, used verbatim. io-webdav never
-//! appends a file extension, so the caller owns the whole name. The
-//! returned [`CaldavItemCreateOk::id`] is the caller's name, or the server's
-//! own when it relocates the resource and reports it in a `Location`
-//! header. Either way it is what read, update and delete address.
+//! The `id` is the resource name, used verbatim. io-webdav never appends a file
+//! extension, so the caller owns the whole name. The returned
+//! [`CaldavItemCreateOk::id`] is the caller's name, or the server's own when it
+//! relocates the resource and reports it in a `Location` header. Either way it
+//! is what read, update and delete address.
 //!
-//! Uses `If-None-Match: *` so the server rejects the PUT when a
-//! resource with the same id already exists (RFC 4791 §5.3.2).
+//! Uses `If-None-Match: *` so the server rejects the PUT when a resource with
+//! the same id already exists (RFC 4791 §5.3.2).
 //!
 //! # Example
 //!
@@ -25,7 +24,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -89,8 +88,7 @@ pub struct CaldavItemCreate {
 }
 
 impl CaldavItemCreate {
-    /// Builds a new `create-item` coroutine targeting
-    /// `<calendar_path>/<id>`.
+    /// Builds a new `create-item` coroutine targeting `<calendar_path>/<id>`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -142,13 +140,12 @@ enum State {
     WebdavPut(WebdavPut),
 }
 
-/// Outcome of a successful
-/// [`CaldavItemCreate`] resume.
+/// Outcome of a successful [`CaldavItemCreate`] resume.
 #[derive(Clone, Debug)]
 pub struct CaldavItemCreateOk {
-    /// Item resource id: the `Location` header's last path segment when
-    /// the server returns one (its own name for the resource), otherwise
-    /// the caller-supplied name, verbatim.
+    /// Item resource id: the `Location` header's last path segment when the
+    /// server returns one (its own name for the resource), otherwise the
+    /// caller-supplied name, verbatim.
     pub id: String,
     /// Entity tag returned by the server, when present.
     pub etag: Option<String>,

@@ -1,7 +1,6 @@
-//! Offline coverage of the WebDAV core layer (RFC 4918): the request
-//! builder, the XML body generators, the multistatus parser, the shared
-//! helpers and every generic coroutine, all resumed against scripted
-//! HTTP response bytes.
+//! Offline coverage of the WebDAV core layer (RFC 4918): the request builder,
+//! the XML body generators, the multistatus parser, the shared helpers and
+//! every generic coroutine, all resumed against scripted HTTP response bytes.
 
 mod common;
 
@@ -45,7 +44,7 @@ fn base() -> Url {
     Url::parse("https://dav.example.org/dav/").unwrap()
 }
 
-// --- XML generators ------------------------------------------------------
+// --- XML generators ---
 
 #[test]
 fn xmlns_decls_dedupes_and_supports_the_default_namespace() {
@@ -76,7 +75,7 @@ fn report_query_body_supports_an_unprefixed_root() {
     assert!(xml.contains("<D:prop><D:getetag/></D:prop><x/>"));
 }
 
-// --- multistatus parser --------------------------------------------------
+// --- multistatus parser ---
 
 #[test]
 fn parse_multistatus_reads_cdata_and_resolves_entities() {
@@ -98,8 +97,8 @@ fn parse_multistatus_reads_cdata_and_resolves_entities() {
     let entry = &ms.responses[0];
     assert_eq!(entry.href, "/dav/books/contacts/");
     assert_eq!(entry.id(), "contacts");
-    // NOTE: predefined and numeric references resolve; the unknown
-    // entity is kept verbatim.
+    // NOTE: predefined and numeric references resolve; the unknown entity is
+    // kept verbatim.
     assert_eq!(entry.text(DISPLAYNAME), Some("A & B <> \"' ! &bogus;"));
 
     let etag = entry.prop(GETETAG).expect("empty getetag kept as a prop");
@@ -123,8 +122,8 @@ fn parse_multistatus_ignores_unparsable_status_lines() {
 
     let ms = parse_multistatus(xml);
     let entry = &ms.responses[0];
-    // NOTE: unparsable statuses resolve to no code, so the propstat is
-    // not 2xx and its props are dropped; the blank sync-token is ignored.
+    // NOTE: unparsable statuses resolve to no code, so the propstat is not 2xx
+    // and its props are dropped; the blank sync-token is ignored.
     assert_eq!(entry.status, None);
     assert!(entry.props.is_empty());
     assert!(ms.sync_token.is_none());
@@ -132,8 +131,8 @@ fn parse_multistatus_ignores_unparsable_status_lines() {
 
 #[test]
 fn parse_multistatus_keeps_refused_properties_as_failures() {
-    // NOTE: what a PROPPATCH answers when it changed nothing: a 207
-    // whose propstats carry the refusal.
+    // NOTE: what a PROPPATCH answers when it changed nothing: a 207 whose
+    // propstats carry the refusal.
     let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
       <d:response>
         <d:href>/dav/books/contacts/</d:href>
@@ -208,8 +207,8 @@ fn parse_multistatus_survives_malformed_xml() {
     assert_eq!(ms.responses.len(), 1);
     assert_eq!(ms.responses[0].text(DISPLAYNAME), Some("A"));
 
-    // NOTE: a stray entity reference before the root element must not
-    // derail the parse either.
+    // NOTE: a stray entity reference before the root element must not derail
+    // the parse either.
     let ms = parse_multistatus("&amp;<d:multistatus xmlns:d=\"DAV:\"/>");
     assert!(ms.responses.is_empty());
 }
@@ -254,7 +253,7 @@ fn response_entry_helpers_handle_missing_data() {
     trace_unrecognized(&entry, &[DISPLAYNAME]);
 }
 
-// --- request builder and path resolution ---------------------------------
+// --- request builder and path resolution ---
 
 #[test]
 fn request_carries_host_port_auth_and_conditional_headers() {
@@ -354,7 +353,7 @@ fn resolve_href_joins_relative_and_rejects_invalid() {
     assert!(resolve_href(&base(), "http://exa mple.org/x").is_none());
 }
 
-// --- send coroutines ------------------------------------------------------
+// --- send coroutines ---
 
 #[test]
 fn send_raw_returns_the_response_body() {
@@ -401,8 +400,8 @@ fn send_raw_surfaces_transport_errors() {
     let request = WebdavRequest::get(&base(), &WebdavAuth::None, UA, "x").body(Vec::new());
     let mut send = WebdavSendRaw::new(request);
 
-    // NOTE: an immediate EOF while reading the response head surfaces
-    // the underlying HTTP/1.1 send error.
+    // NOTE: an immediate EOF while reading the response head surfaces the
+    // underlying HTTP/1.1 send error.
     let (_, ret) = expect_exchange(&mut send, b"");
     assert!(matches!(ret.unwrap_err(), WebdavSendError::Send(_)));
 }
@@ -452,7 +451,7 @@ fn follow_redirects_maps_failure_statuses_and_transport_errors() {
     ));
 }
 
-// --- generic method coroutines ---------------------------------------------
+// --- generic method coroutines ---
 
 #[test]
 fn get_returns_the_raw_body() {

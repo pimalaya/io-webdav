@@ -1,5 +1,5 @@
-//! `create-calendar` coroutine: `MKCALENDAR` (RFC 4791 §5.3.1) against
-//! the calendar home-set URL.
+//! `create-calendar` coroutine: `MKCALENDAR` (RFC 4791 §5.3.1) against the
+//! calendar home-set URL.
 //!
 //! # Example
 //!
@@ -16,7 +16,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -67,8 +67,8 @@ pub struct CaldavCalendarCreate {
 }
 
 impl CaldavCalendarCreate {
-    /// Builds a new `create-calendar` coroutine targeting
-    /// `home_set_path` joined with `calendar.id`.
+    /// Builds a new `create-calendar` coroutine targeting `home_set_path`
+    /// joined with `calendar.id`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

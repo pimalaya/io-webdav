@@ -1,10 +1,9 @@
 //! Send coroutine that surfaces 3xx redirects to the caller.
 //!
 //! Runs an HTTP/1.1 exchange and turns the underlying
-//! `HttpSendYield::WantsRedirect` into a
-//! [`WebdavRedirectYield::WantsRedirect`] so the client can rebuild its
-//! connection and restart the operation against the new target URL. The
-//! success body is returned raw; callers parse it with
+//! `HttpSendYield::WantsRedirect` into a [`WebdavRedirectYield::WantsRedirect`]
+//! so the client can rebuild its connection and restart the operation against
+//! the new target URL. The success body is returned raw; callers parse it with
 //! `parse_multistatus`.
 //!
 //! [`WebdavRedirectYield::WantsRedirect`]: crate::rfc4918::coroutine::WebdavRedirectYield::WantsRedirect
@@ -28,7 +27,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -78,8 +77,8 @@ use crate::{
 /// Failure causes during a redirect-aware WebDAV send.
 #[derive(Debug, Error)]
 pub enum WebdavFollowRedirectsError {
-    /// The server returned a non-2xx, non-redirect HTTP status. The
-    /// body is kept verbatim but renders as a summary.
+    /// The server returned a non-2xx, non-redirect HTTP status. The body is
+    /// kept verbatim but renders as a summary.
     #[error("WebDAV server returned HTTP {status}{}", summarized(body))]
     HttpStatus {
         /// The non-2xx status the server answered with.
@@ -92,17 +91,17 @@ pub enum WebdavFollowRedirectsError {
     Send(#[from] Http11SendError),
 }
 
-/// I/O-free coroutine that sends a WebDAV request, surfaces 3xx
-/// redirects via [`WebdavRedirectYield::WantsRedirect`] and returns the
-/// success body as raw bytes.
+/// I/O-free coroutine that sends a WebDAV request, surfaces 3xx redirects via
+/// [`WebdavRedirectYield::WantsRedirect`] and returns the success body as raw
+/// bytes.
 #[derive(Debug)]
 pub struct WebdavFollowRedirects {
     state: State,
 }
 
 impl WebdavFollowRedirects {
-    /// Builds a new redirect-aware send coroutine. `request` must
-    /// already carry its body bytes.
+    /// Builds a new redirect-aware send coroutine. `request` must already carry
+    /// its body bytes.
     pub fn new(request: HttpRequest) -> Self {
         Self {
             state: State::Send(Http11Send::new(request)),

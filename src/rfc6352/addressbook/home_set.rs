@@ -1,7 +1,7 @@
 //! `addressbook-home-set` discovery (RFC 6352 §7.1.1).
 //!
-//! Runs a PROPFIND against the principal URL and surfaces the
-//! discovered addressbook-home-set URL.
+//! Runs a PROPFIND against the principal URL and surfaces the discovered
+//! addressbook-home-set URL.
 //!
 //! # Example
 //!
@@ -18,7 +18,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -67,8 +67,8 @@ use crate::{
     webdav_try,
 };
 
-/// I/O-free coroutine that discovers the addressbook-home-set URL.
-/// Yields [`None`] when the server returned an empty multistatus.
+/// I/O-free coroutine that discovers the addressbook-home-set URL. Yields
+/// [`None`] when the server returned an empty multistatus.
 #[derive(Debug)]
 pub struct CarddavAddressbookHomeSet {
     base_url: Url,

@@ -1,9 +1,8 @@
 //! `multiget-cards` coroutine: REPORT `addressbook-multiget` against an
 //! addressbook collection (RFC 6352 §8.7).
 //!
-//! Fetches a batch of card bodies by resource name in a single
-//! round-trip, instead
-//! of one GET per card. Stays byte-oriented: the vCard payload is
+//! Fetches a batch of card bodies by resource name in a single round-trip,
+//! instead of one GET per card. Stays byte-oriented: the vCard payload is
 //! returned as raw bytes.
 //!
 //! # Example
@@ -21,7 +20,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -76,10 +75,10 @@ pub struct CarddavCardMultiget {
 }
 
 impl CarddavCardMultiget {
-    /// Builds a new `multiget-cards` coroutine fetching each card of
-    /// `ids` (resource ids as the server returned them, used verbatim)
-    /// inside `addressbook_path`. The `Depth` header is pinned to 0: RFC
-    /// 6352 §8.7 only defines the report for that value.
+    /// Builds a new `multiget-cards` coroutine fetching each card of `ids`
+    /// (resource ids as the server returned them, used verbatim) inside
+    /// `addressbook_path`. The `Depth` header is pinned to 0: RFC 6352 §8.7
+    /// only defines the report for that value.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

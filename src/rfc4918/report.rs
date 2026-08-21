@@ -1,9 +1,9 @@
 //! Generic `REPORT` coroutine (RFC 3253 §3.6).
 //!
-//! Sends a `REPORT` against `path` with a caller-built query body (e.g.
-//! a CalDAV `calendar-query` from
-//! [`calendar_query_body`](crate::rfc4791::calendar::calendar_query_body))
-//! and parses the response into a [`WebdavMultistatus`].
+//! Sends a `REPORT` against `path` with a caller-built query body (e.g. a
+//! CalDAV `calendar-query` from
+//! [`calendar_query_body`](crate::rfc4791::calendar::calendar_query_body)) and
+//! parses the response into a [`WebdavMultistatus`].
 //!
 //! # Example
 //!
@@ -20,7 +20,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -70,8 +70,8 @@ pub struct WebdavReport {
 }
 
 impl WebdavReport {
-    /// Builds a new `REPORT` coroutine against `path` with the given
-    /// `Depth` and query `body`.
+    /// Builds a new `REPORT` coroutine against `path` with the given `Depth`
+    /// and query `body`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

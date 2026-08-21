@@ -1,8 +1,7 @@
 //! End-to-end CalDAV + CardDAV tests against Fastmail.
 //!
-//! Fastmail exposes both protocols over HTTPS behind HTTP Basic auth;
-//! generate an app password (with the calendars + contacts scopes) and
-//! run with:
+//! Fastmail exposes both protocols over HTTPS behind HTTP Basic auth; generate
+//! an app password (with the calendars + contacts scopes) and run with:
 //!
 //! ```sh
 //! FASTMAIL_EMAIL=test@fastmail.com \

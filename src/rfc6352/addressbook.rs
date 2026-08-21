@@ -1,9 +1,8 @@
 //! CardDAV addressbook collections (RFC 6352 §5).
 //!
 //! Holds the shared [`CarddavAddressbook`] type, the CardDAV property
-//! vocabulary, and the crate-internal request-body helpers reused across
-//! the addressbook coroutines. Each coroutine (create, delete, home_set,
-//! list, update) is its own submodule.
+//! vocabulary and the request-body helpers the addressbook coroutines reuse.
+//! Each coroutine is its own submodule.
 
 pub mod create;
 pub mod delete;
@@ -30,27 +29,26 @@ pub struct CarddavAddressbook {
     pub display_name: Option<String>,
     /// Free-form description (RFC 6352 §6.2.1).
     pub description: Option<String>,
-    /// Display color (custom inf-it.com extension, widely supported by
-    /// CardDAV clients).
+    /// Display color (custom inf-it.com extension, widely supported by CardDAV
+    /// clients).
     pub color: Option<String>,
-    /// Collection change tag (CalendarServer ctag extension); bumped on
-    /// every change to the addressbook.
+    /// Collection change tag (CalendarServer ctag extension), bumped on every
+    /// change to the addressbook.
     pub ctag: Option<String>,
-    /// Collection sync token (RFC 6578 §4), the checkpoint fed back to
-    /// a `sync-collection` REPORT.
+    /// Collection sync token (RFC 6578 §4), the checkpoint fed back to a
+    /// `sync-collection` REPORT.
     pub sync_token: Option<String>,
 }
 
 /// A partial update over a [`CarddavAddressbook`]'s properties.
 ///
-/// Each property is doubly optional, which is what a `PROPPATCH` needs
-/// and a flat [`CarddavAddressbook`] cannot express: [`None`] leaves
-/// the property alone, `Some(None)` removes it (`DAV:remove`, RFC 4918
-/// §9.2) and `Some(Some(value))` sets it (`DAV:set`).
+/// Each property is doubly optional, which a flat [`CarddavAddressbook`] cannot
+/// express: [`None`] leaves the property alone, `Some(None)` removes it
+/// (`DAV:remove`, RFC 4918 §9.2) and `Some(Some(value))` sets it (`DAV:set`).
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub struct CarddavAddressbookPatch {
-    /// Identifier of the addressbook to patch: the last non-empty path
-    /// segment of its collection URL.
+    /// Identifier of the addressbook to patch: the last non-empty path segment
+    /// of its collection URL.
     pub id: String,
     /// New human-readable display name (DAV:displayname).
     pub display_name: Option<Option<String>>,
@@ -125,8 +123,8 @@ pub fn join_path(home: &str, id: &str) -> String {
     format!("{home}/{id}/")
 }
 
-/// The present display name / color / description of `addressbook` as
-/// `MKCOL` set pairs.
+/// Turns the display name, color and description of `addressbook` into `MKCOL`
+/// set pairs.
 pub fn property_set(
     addressbook: &CarddavAddressbook,
 ) -> Vec<(WebdavProperty, WebdavPropValue<'_>)> {
@@ -143,8 +141,7 @@ pub fn property_set(
     set
 }
 
-/// `patch` split into the `PROPPATCH` set pairs and the list of
-/// properties to remove.
+/// Splits `patch` into the `PROPPATCH` set pairs and the properties to remove.
 pub fn property_updates(
     patch: &CarddavAddressbookPatch,
 ) -> (
@@ -171,14 +168,13 @@ pub fn property_updates(
     (set, remove)
 }
 
-/// Builds a CardDAV `addressbook-query` REPORT body requesting `props`,
-/// with a match-all filter.
+/// Builds a CardDAV `addressbook-query` REPORT body requesting `props`, with a
+/// match-all filter.
 ///
-/// RFC 6352 §8.6 requires the `C:filter` element; an empty `allof`
-/// filter matches every card (an empty conjunction is true). Strict
-/// servers (Google) reject a missing filter with HTTP 400 and treat an
-/// empty `anyof` (the schema default) as matching nothing, so `allof`
-/// is the portable match-all form.
+/// RFC 6352 §8.6 requires the `C:filter` element, and an empty `allof` filter
+/// matches every card, an empty conjunction being true. Strict servers (Google)
+/// answer HTTP 400 to a missing filter and treat the default empty `anyof` as
+/// matching nothing, which leaves `allof` as the portable match-all form.
 pub fn addressbook_query_body(props: &[WebdavProperty]) -> Vec<u8> {
     let filter = "<C:filter test=\"allof\"></C:filter>";
     report_query_body(ADDRESSBOOK_QUERY, &[CARDDAV], props, filter)

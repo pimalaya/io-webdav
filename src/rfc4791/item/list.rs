@@ -1,8 +1,8 @@
 //! `list-items` coroutine: REPORT `calendar-query` against a calendar
 //! collection.
 //!
-//! Stays byte-oriented: the iCalendar payload is returned as raw bytes
-//! and parsed upstream (ical).
+//! Stays byte-oriented: the iCalendar payload is returned as raw bytes and
+//! parsed upstream (ical).
 //!
 //! # Example
 //!
@@ -19,7 +19,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -66,8 +66,7 @@ use crate::{
     webdav_try,
 };
 
-/// Coroutine that lists items inside a calendar via REPORT
-/// `calendar-query`.
+/// Coroutine that lists items inside a calendar via REPORT `calendar-query`.
 #[derive(Debug)]
 pub struct CaldavItemList {
     state: State,
@@ -76,10 +75,9 @@ pub struct CaldavItemList {
 impl CaldavItemList {
     /// Builds a new `list-items` coroutine.
     ///
-    /// `calendar_path` is the calendar collection path. `comp_filter`
-    /// is the optional VCALENDAR child filter (e.g.
-    /// `<C:comp-filter name="VEVENT" />`); pass an empty string to
-    /// list every component type.
+    /// `calendar_path` is the calendar collection path, `comp_filter` the
+    /// optional VCALENDAR child filter, an empty string listing every component
+    /// type.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

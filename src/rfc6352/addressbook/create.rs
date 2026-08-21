@@ -1,5 +1,5 @@
-//! `create-addressbook` coroutine: extended `MKCOL` (RFC 5689)
-//! against the addressbook home-set URL.
+//! `create-addressbook` coroutine: extended `MKCOL` (RFC 5689) against the
+//! addressbook home-set URL.
 //!
 //! # Example
 //!
@@ -16,7 +16,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!

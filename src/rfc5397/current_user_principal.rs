@@ -1,11 +1,9 @@
 //! `current-user-principal` discovery (RFC 5397).
 //!
-//! Runs a `PROPFIND` against the base URL with the
-//! `<DAV:current-user-principal>` property request and surfaces the
-//! discovered principal URL. The base URL must point at a DAV resource
-//! (the server root for servers that serve DAV at `/`, or the DAV
-//! context path such as `/dav/` otherwise). Yields [`WantsRedirect`]
-//! when the server redirects to the actual DAV root.
+//! Runs a `PROPFIND` for `<DAV:current-user-principal>` against the base URL and
+//! surfaces the discovered principal URL. That URL must point at a DAV resource,
+//! the server root or the DAV context path such as `/dav/`, and a server
+//! redirecting to its actual DAV root yields [`WantsRedirect`].
 //!
 //! [`WantsRedirect`]: crate::rfc4918::coroutine::WebdavRedirectYield::WantsRedirect
 //!
@@ -24,7 +22,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -77,8 +75,8 @@ pub const CURRENT_USER_PRINCIPAL: WebdavProperty = WebdavProperty {
     local: "current-user-principal",
 };
 
-/// I/O-free coroutine that discovers the current user principal URL.
-/// Yields [`None`] when the server returned an empty multistatus.
+/// I/O-free coroutine that discovers the current user principal URL. Yields
+/// [`None`] when the server returned an empty multistatus.
 #[derive(Debug)]
 pub struct WebdavCurrentUserPrincipal {
     base_url: Url,
@@ -86,8 +84,8 @@ pub struct WebdavCurrentUserPrincipal {
 }
 
 impl WebdavCurrentUserPrincipal {
-    /// Builds a new `current-user-principal` coroutine targeting
-    /// `base_url`'s own path.
+    /// Builds a new `current-user-principal` coroutine targeting `base_url`'s
+    /// own path.
     pub fn new(base_url: &Url, auth: &WebdavAuth, user_agent: &str) -> Self {
         let request = WebdavRequest::propfind(base_url, auth, user_agent, "")
             .depth(0)

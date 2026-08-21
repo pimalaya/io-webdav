@@ -1,7 +1,7 @@
 //! `read-item` coroutine: GET a calendar item by its resource name.
 //!
-//! Stays byte-oriented: returns raw iCalendar bytes plus the
-//! response's `ETag`, leaving the parse to ical upstream.
+//! Stays byte-oriented: returns raw iCalendar bytes plus the response's `ETag`,
+//! leaving the parse to ical upstream.
 //!
 //! # Example
 //!
@@ -18,7 +18,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -69,9 +69,8 @@ pub struct CaldavItemRead {
 }
 
 impl CaldavItemRead {
-    /// Builds a new `read-item` coroutine. `id` is the resource id
-    /// exactly as the server returned it (`CaldavItemEntry::id`), used
-    /// verbatim.
+    /// Builds a new `read-item` coroutine. `id` is the resource id exactly as
+    /// the server returned it (`CaldavItemEntry::id`), used verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -107,8 +106,7 @@ enum State {
     WebdavGet(WebdavGet),
 }
 
-/// Item body plus optional ETag returned by
-/// [`CaldavItemRead`].
+/// Item body plus optional ETag returned by [`CaldavItemRead`].
 #[derive(Clone, Debug)]
 pub struct CaldavItemBody {
     /// Raw iCalendar bytes.

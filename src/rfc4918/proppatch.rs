@@ -1,8 +1,8 @@
 //! Generic `PROPPATCH` coroutine (RFC 4918 §9.2).
 //!
-//! Sets each `(property, value)` pair against `path` and removes each
-//! property listed for removal; the request body is generated from the
-//! two lists. The multistatus body is not surfaced.
+//! Sets each `(property, value)` pair against `path` and removes each property
+//! listed for removal; the request body is generated from the two lists. The
+//! multistatus body is not surfaced.
 //!
 //! # Example
 //!
@@ -18,7 +18,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -72,10 +72,11 @@ use crate::{
 pub struct WebdavProppatchOk {
     /// The parsed multistatus.
     pub multistatus: WebdavMultistatus,
-    /// Local names of the properties the request asked to set or
-    /// remove. RFC 4918 §9.2.1 wants a propstat for each of them, so a
-    /// name missing from the response is a property the server said
-    /// nothing about, having changed nothing.
+    /// Local names of the properties the request asked to set or remove.
+    ///
+    /// RFC 4918 §9.2.1 wants a propstat for each of them, so a name missing
+    /// from the response is a property the server said nothing about, having
+    /// changed nothing.
     pub requested: Vec<&'static str>,
 }
 
@@ -87,9 +88,8 @@ pub struct WebdavProppatch {
 }
 
 impl WebdavProppatch {
-    /// Builds a new `PROPPATCH` coroutine setting each `(property,
-    /// value)` pair against `path` and removing each property in
-    /// `remove`.
+    /// Builds a new `PROPPATCH` coroutine setting each `(property, value)` pair
+    /// against `path` and removing each property in `remove`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

@@ -1,5 +1,5 @@
-//! `update-addressbook` coroutine: `PROPPATCH` against an
-//! addressbook collection.
+//! `update-addressbook` coroutine: `PROPPATCH` against an addressbook
+//! collection.
 //!
 //! # Example
 //!
@@ -16,7 +16,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -75,9 +75,8 @@ pub struct CarddavAddressbookUpdate {
 }
 
 impl CarddavAddressbookUpdate {
-    /// Builds a new `update-addressbook` coroutine, setting the
-    /// properties `patch` carries a value for and removing the ones it
-    /// clears.
+    /// Builds a new `update-addressbook` coroutine, setting the properties
+    /// `patch` carries a value for and removing the ones it clears.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

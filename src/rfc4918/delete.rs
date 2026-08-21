@@ -1,8 +1,8 @@
 //! Generic `DELETE` coroutine (RFC 4918 §9.6).
 //!
-//! Sends a `DELETE` against `path`. Servers may return 204 No Content
-//! (empty body) or a multistatus when the deletion partially failed;
-//! callers inspect the response status to disambiguate.
+//! Sends a `DELETE` against `path`. Servers may return 204 No Content (empty
+//! body) or a multistatus when the deletion partially failed; callers inspect
+//! the response status to disambiguate.
 //!
 //! # Example
 //!
@@ -18,7 +18,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!

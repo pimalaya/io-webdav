@@ -1,8 +1,7 @@
 //! Generic `GET` coroutine (RFC 9110 §9.3.1).
 //!
-//! Sends a `GET` against `path` and returns the response body as raw
-//! bytes. iCalendar and vCard parsing happens upstream, in ical and
-//! vcard.
+//! Sends a `GET` against `path` and returns the response body as raw bytes.
+//! iCalendar and vCard parsing happens upstream, in ical and vcard.
 //!
 //! # Example
 //!
@@ -18,7 +17,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!

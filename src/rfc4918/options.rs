@@ -1,7 +1,7 @@
 //! Generic `OPTIONS` coroutine (RFC 4918 §9.1, §15).
 //!
-//! Sends an `OPTIONS` against `path` and returns the raw response so
-//! the caller can inspect the `DAV` and `Allow` headers.
+//! Sends an `OPTIONS` against `path` and returns the raw response so the caller
+//! can inspect the `DAV` and `Allow` headers.
 //!
 //! # Example
 //!
@@ -17,7 +17,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!

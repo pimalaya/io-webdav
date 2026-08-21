@@ -1,8 +1,8 @@
-//! `enum-items` coroutine: REPORT `calendar-query` requesting ETags
-//! only, against a calendar collection.
+//! `enum-items` coroutine: REPORT `calendar-query` requesting ETags only,
+//! against a calendar collection.
 //!
-//! Enumerates the full item spine (id plus ETag) without downloading
-//! any iCalendar body; bodies are then batch-fetched with
+//! Enumerates the full item spine (id plus ETag) without downloading any
+//! iCalendar body; bodies are then batch-fetched with
 //! [`CaldavItemMultiget`](crate::rfc4791::item::multiget::CaldavItemMultiget).
 //!
 //! # Example
@@ -20,7 +20,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -69,8 +69,8 @@ use crate::{
 
 const ENUM_PROPS: &[WebdavProperty] = &[GETETAG];
 
-/// Coroutine that enumerates item references (id plus ETag, no body)
-/// inside a calendar via REPORT `calendar-query`.
+/// Coroutine that enumerates item references (id plus ETag, no body) inside a
+/// calendar via REPORT `calendar-query`.
 #[derive(Debug)]
 pub struct CaldavItemEnum {
     state: State,
@@ -79,10 +79,9 @@ pub struct CaldavItemEnum {
 impl CaldavItemEnum {
     /// Builds a new `enum-items` coroutine.
     ///
-    /// `calendar_path` is the calendar collection path. `comp_filter`
-    /// is the optional VCALENDAR child filter (e.g.
-    /// `<C:comp-filter name="VEVENT" />`); pass an empty string to
-    /// enumerate every component type.
+    /// `calendar_path` is the calendar collection path, `comp_filter` the
+    /// optional VCALENDAR child filter, an empty string enumerating every
+    /// component type.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -119,10 +118,9 @@ impl WebdavCoroutine for CaldavItemEnum {
 }
 
 fn from_entry(entry: &WebdavResponseEntry) -> Option<CaldavItemRef> {
-    // Skip the collection self-entry: a calendar object resource never
-    // ends in a slash, but some servers (iCloud) echo the calendar
-    // itself in the query response, which would otherwise enter the
-    // spine as a bogus item named after the collection.
+    // NOTE: an item href never ends in a slash, but some servers (iCloud) echo
+    // the calendar itself, which would otherwise enter the spine as a bogus
+    // item named after the collection.
     if entry.href.ends_with('/') {
         return None;
     }

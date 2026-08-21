@@ -1,8 +1,8 @@
-//! `list-cards` coroutine: REPORT `addressbook-query` against an
-//! addressbook collection.
+//! `list-cards` coroutine: REPORT `addressbook-query` against an addressbook
+//! collection.
 //!
-//! Stays byte-oriented: the vCard payload is returned as raw bytes
-//! and parsed upstream (vcard).
+//! Stays byte-oriented: the vCard payload is returned as raw bytes and parsed
+//! upstream (vcard).
 //!
 //! # Example
 //!
@@ -19,7 +19,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!

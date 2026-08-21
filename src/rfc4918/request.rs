@@ -1,13 +1,10 @@
 //! WebDAV request builder.
 //!
-//! Wraps [`io_http::rfc9110::request::HttpRequest`] with the WebDAV
-//! method shortcuts (`PROPFIND`, `PROPPATCH`, `MKCOL`, `REPORT`,
-//! `COPY`, `MOVE`, `OPTIONS`) plus the `Depth`, `Destination`,
-//! `Overwrite`, `If-Match`, `If-None-Match` and content-type headers
-//! every CalDAV/CardDAV coroutine touches.
-//!
-//! Builds on [`url::Url::join`] for path composition via
-//! `resolve`.
+//! Wraps [`io_http::rfc9110::request::HttpRequest`] with the WebDAV method
+//! shortcuts (`PROPFIND`, `PROPPATCH`, `MKCOL`, `REPORT`, `COPY`, `MOVE`,
+//! `OPTIONS`) plus the `Depth`, `Destination`, `Overwrite`, `If-Match`,
+//! `If-None-Match` and content-type headers every CalDAV and CardDAV coroutine
+//! touches. Paths are composed by [`crate::rfc4918::resolve`].
 
 use alloc::{
     format,
@@ -28,10 +25,11 @@ pub struct WebdavRequest {
 }
 
 impl WebdavRequest {
-    /// Builds a request targeting `path` (relative to `base_url`) with
-    /// the given HTTP method. Sets `Host` from `base_url` and the
-    /// optional `Authorization` header from `auth`. `user_agent` is
-    /// emitted as the `User-Agent` header.
+    /// Builds a request targeting `path`, relative to `base_url`, with the
+    /// given HTTP method.
+    ///
+    /// Sets `Host` from `base_url`, `User-Agent` from `user_agent` and the
+    /// optional `Authorization` header from `auth`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -137,8 +135,7 @@ impl WebdavRequest {
         self
     }
 
-    /// Sets the `If-None-Match` header (RFC 9110 §13.1.2) to the given
-    /// ETag.
+    /// Sets the `If-None-Match` header (RFC 9110 §13.1.2) to the given ETag.
     pub fn if_none_match(mut self, etag: &str) -> Self {
         self.inner = self.inner.header("If-None-Match", entity_tag(etag));
         self
@@ -165,12 +162,12 @@ impl WebdavRequest {
         self.content_type("text/vcard; charset=utf-8")
     }
 
-    /// Finalizes the request with the given body and returns the
-    /// underlying [`HttpRequest`] ready for [`crate::rfc4918::send`].
+    /// Finalizes the request with the given body and returns the underlying
+    /// [`HttpRequest`], ready for [`crate::rfc4918::send`].
     ///
-    /// Trace-logs the body: WebDAV request bodies are always UTF-8 text
-    /// (XML, iCalendar or vCard), so io-webdav can safely render them,
-    /// whereas io-http (which cannot know the content type) does not.
+    /// Trace-logs the body, which io-http cannot do: a WebDAV body is always
+    /// UTF-8 text (XML, iCalendar or vCard), a content type only this crate
+    /// knows.
     pub fn body(mut self, body: Vec<u8>) -> HttpRequest {
         if !body.is_empty() {
             trace!("request body: {}", String::from_utf8_lossy(&body));
@@ -180,9 +177,9 @@ impl WebdavRequest {
     }
 }
 
-/// Formats an ETag as a conditional-header entity-tag (RFC 9110 §8.8.3):
-/// a bare strong tag gets wrapped in double quotes; `*`, weak (`W/...`)
-/// and already-quoted values pass through unchanged.
+/// Formats an ETag as a conditional-header entity-tag (RFC 9110 §8.8.3): a bare
+/// strong tag gets double quotes, while `*`, weak (`W/...`) and already-quoted
+/// values pass through unchanged.
 fn entity_tag(etag: &str) -> String {
     if etag == "*" || etag.starts_with('"') || etag.starts_with("W/") {
         etag.to_string()

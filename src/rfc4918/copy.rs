@@ -14,7 +14,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -67,9 +67,9 @@ pub struct WebdavCopy {
 }
 
 impl WebdavCopy {
-    /// Builds a new `COPY` coroutine. `depth` is the `Depth` header
-    /// (typically `0` for resources, `infinity` is encoded by the
-    /// server, expose only the `0` / `1` case here).
+    /// Builds a new `COPY` coroutine. `depth` is the `Depth` header (typically
+    /// `0` for resources, `infinity` is encoded by the server, expose only the
+    /// `0` / `1` case here).
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

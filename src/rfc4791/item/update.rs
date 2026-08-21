@@ -1,8 +1,8 @@
-//! `update-item` coroutine: PUT raw iCalendar bytes against an
-//! existing calendar item.
+//! `update-item` coroutine: PUT raw iCalendar bytes against an existing
+//! calendar item.
 //!
-//! Supports the optional `If-Match` precondition so callers can gate
-//! the write on the last-known ETag (RFC 9110 §13.1.1).
+//! Supports the optional `If-Match` precondition so callers can gate the write
+//! on the last-known ETag (RFC 9110 §13.1.1).
 //!
 //! # Example
 //!
@@ -19,7 +19,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -84,9 +84,8 @@ pub struct CaldavItemUpdate {
 }
 
 impl CaldavItemUpdate {
-    /// Builds a new `update-item` coroutine. `id` is the resource id
-    /// exactly as the server returned it (`CaldavItemEntry::id`), used
-    /// verbatim.
+    /// Builds a new `update-item` coroutine. `id` is the resource id exactly as
+    /// the server returned it (`CaldavItemEntry::id`), used verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -136,8 +135,7 @@ enum State {
     WebdavPut(WebdavPut),
 }
 
-/// Outcome of a successful
-/// [`CaldavItemUpdate`] resume.
+/// Outcome of a successful [`CaldavItemUpdate`] resume.
 #[derive(Clone, Debug)]
 pub struct CaldavItemUpdateOk {
     /// Item resource id (the resource name supplied by the caller, used

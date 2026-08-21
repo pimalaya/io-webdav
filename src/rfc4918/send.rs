@@ -1,13 +1,10 @@
-//! Base coroutine every higher-level WebDAV coroutine delegates to:
-//! runs an HTTP/1.1 exchange and returns the raw response body. Higher
-//! layers parse the multistatus with
-//! `parse_multistatus` or keep the
-//! bytes as-is (`GET` / `PUT` of an iCal/vCard resource).
+//! Base coroutine every higher-level WebDAV coroutine delegates to: runs an
+//! HTTP/1.1 exchange and returns the raw response body, which higher layers
+//! either parse as a multistatus or keep as-is.
 //!
-//! All I/O is hoisted: the coroutine yields [`WebdavYield`] and the
-//! caller owns the stream work. 3xx redirects surface as
-//! [`WebdavSendError::UnexpectedRedirect`]; redirect-aware coroutines use
-//! [`crate::rfc4918::follow_redirects`] instead.
+//! All I/O is hoisted: the coroutine yields [`WebdavYield`] and the caller owns
+//! the stream work. A 3xx surfaces as [`WebdavSendError::UnexpectedRedirect`];
+//! redirect-aware coroutines use [`crate::rfc4918::follow_redirects`] instead.
 //!
 //! # Example
 //!
@@ -23,7 +20,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -80,9 +77,9 @@ pub struct WebdavSendOk<T> {
 /// Failure causes during a WebDAV send.
 #[derive(Debug, Error)]
 pub enum WebdavSendError {
-    /// The server returned a non-2xx HTTP status. The body is kept
-    /// verbatim for callers that inspect it, but renders as a summary:
-    /// see [`summarize_body`](crate::rfc4918::summarize_body).
+    /// The server returned a non-2xx HTTP status. The body is kept verbatim for
+    /// callers inspecting it, but renders as a
+    /// [summary](crate::rfc4918::summarize_body).
     #[error("WebDAV server returned HTTP {status}{}", summarized(body))]
     HttpStatus {
         /// The non-2xx status the server answered with.
@@ -98,16 +95,16 @@ pub enum WebdavSendError {
     Send(#[from] Http11SendError),
 }
 
-/// I/O-free coroutine that sends a WebDAV request and returns the
-/// response body as raw bytes.
+/// I/O-free coroutine sending a WebDAV request and returning the response body
+/// as raw bytes.
 #[derive(Debug)]
 pub struct WebdavSendRaw {
     state: State,
 }
 
 impl WebdavSendRaw {
-    /// Builds a new `WebdavSendRaw` coroutine. `request` must already carry
-    /// its body bytes (via [`crate::rfc4918::request::WebdavRequest::body`]).
+    /// Builds a new coroutine from a request already carrying its body bytes
+    /// (see [`request`](crate::rfc4918::request)).
     pub fn new(request: HttpRequest) -> Self {
         Self {
             state: State::Send(Http11Send::new(request)),

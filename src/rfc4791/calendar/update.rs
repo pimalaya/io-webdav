@@ -1,5 +1,4 @@
-//! `update-calendar` coroutine: `PROPPATCH` against a calendar
-//! collection.
+//! `update-calendar` coroutine: `PROPPATCH` against a calendar collection.
 //!
 //! # Example
 //!
@@ -16,7 +15,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -71,8 +70,8 @@ pub struct CaldavCalendarUpdate {
 }
 
 impl CaldavCalendarUpdate {
-    /// Builds a new `update-calendar` coroutine targeting
-    /// `home_set_path` joined with `calendar.id`.
+    /// Builds a new `update-calendar` coroutine targeting `home_set_path`
+    /// joined with `calendar.id`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -82,9 +81,9 @@ impl CaldavCalendarUpdate {
     ) -> Self {
         let path = join_path(home_set_path, &calendar.id);
         let set = property_set(calendar);
-        // NOTE: set-only, so a property this calendar leaves empty stays
-        // as it is on the server. The CardDAV twin takes a patch that
-        // can also remove; this one follows when calendula needs it.
+        // NOTE: set-only, so a property this calendar leaves empty stays as it
+        // is on the server. The CardDAV twin takes a patch that can also
+        // remove; this one follows when calendula needs it.
         let proppatch = WebdavProppatch::new(base_url, auth, user_agent, &path, &set, &[]);
         Self {
             state: State::WebdavProppatch(proppatch),

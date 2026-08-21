@@ -1,6 +1,6 @@
-//! `list-addressbooks` coroutine: PROPFIND Depth:1 against the
-//! addressbook home-set URL, collecting every child collection whose
-//! resourcetype is `<C:addressbook/>`.
+//! `list-addressbooks` coroutine: PROPFIND Depth:1 against the addressbook
+//! home-set URL, collecting every child collection whose resourcetype is
+//! `<C:addressbook/>`.
 //!
 //! # Example
 //!
@@ -17,7 +17,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!

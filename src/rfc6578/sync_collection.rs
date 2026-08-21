@@ -1,9 +1,9 @@
-//! `sync-collection` REPORT coroutine (RFC 6578 §3.2): incremental
-//! enumeration of a collection against a sync token.
+//! `sync-collection` REPORT coroutine (RFC 6578 §3.2): incremental enumeration
+//! of a collection against a sync token.
 //!
-//! An initial sync (no token) returns every member; a subsequent sync
-//! returns only the members changed or removed since the given token,
-//! plus the next token to checkpoint. A rejected token surfaces as
+//! An initial sync (no token) returns every member; a subsequent sync returns
+//! only the members changed or removed since the given token, plus the next
+//! token to checkpoint. A rejected token surfaces as
 //! [`WebdavSyncCollectionError::InvalidSyncToken`] so the consumer can fall
 //! back to a full enumeration.
 //!
@@ -22,7 +22,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -79,14 +79,14 @@ use crate::{
 pub struct WebdavSyncDelta {
     /// Members created or updated since the request token.
     pub changed: Vec<WebdavSyncChange>,
-    /// Hrefs of the members removed since the request token (404
-    /// response-level status, RFC 6578 §3.4).
+    /// Hrefs of the members removed since the request token (404 response-level
+    /// status, RFC 6578 §3.4).
     pub vanished: Vec<String>,
     /// The next checkpoint token, fed back to the following sync.
     pub sync_token: Option<String>,
-    /// Whether the server truncated the result set (a 507 row was
-    /// present, RFC 6578 §3.6); the consumer must run the report again
-    /// from [`sync_token`](Self::sync_token) to drain the rest.
+    /// Whether the server truncated the result set with a 507 row (RFC 6578
+    /// §3.6), leaving the consumer to run the report again from
+    /// [`sync_token`](Self::sync_token) to drain the rest.
     pub truncated: bool,
 }
 
@@ -110,22 +110,23 @@ pub enum WebdavSyncCollectionError {
     Send(#[from] WebdavSendError),
 }
 
-/// Coroutine that runs a `sync-collection` REPORT (RFC 6578 §3.2) and
-/// returns the parsed [`WebdavSyncDelta`].
+/// Coroutine that runs a `sync-collection` REPORT (RFC 6578 §3.2) and returns
+/// the parsed [`WebdavSyncDelta`].
 #[derive(Debug)]
 pub struct WebdavSyncCollection {
     state: State,
-    /// The collection path, without a trailing slash, so its own
-    /// self-entry can be told apart from member resources.
+    /// The collection path, without a trailing slash, so its own self-entry can
+    /// be told apart from member resources.
     collection: String,
 }
 
 impl WebdavSyncCollection {
-    /// Builds a new `sync-collection` coroutine against the collection
-    /// at `path`, requesting `props` on each changed member. Pass
-    /// [`None`] as `sync_token` for an initial sync. The `Depth` header
-    /// is pinned to 0 as required by RFC 6578 §3.3; the scope is
-    /// carried by the sync-level element instead.
+    /// Builds a new `sync-collection` coroutine against the collection at
+    /// `path`, requesting `props` on each changed member and taking [`None`] as
+    /// `sync_token` for an initial sync.
+    ///
+    /// The `Depth` header is pinned to 0 as RFC 6578 §3.3 requires, the scope
+    /// being carried by the sync-level element instead.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -175,9 +176,9 @@ impl WebdavCoroutine for WebdavSyncCollection {
     }
 }
 
-/// Builds a `sync-collection` REPORT body (RFC 6578 §6.1): the request
-/// token (an empty element for an initial sync), sync-level 1 and the
-/// requested `props`, in DTD order.
+/// Builds a `sync-collection` REPORT body (RFC 6578 §6.1): the request token
+/// (an empty element for an initial sync), sync-level 1 and the requested
+/// `props`, in DTD order.
 pub fn sync_collection_body(sync_token: Option<&str>, props: &[WebdavProperty]) -> Vec<u8> {
     let mut nss = vec![DAV];
     nss.extend(props.iter().map(|prop| prop.ns));
@@ -197,9 +198,9 @@ pub fn sync_collection_body(sync_token: Option<&str>, props: &[WebdavProperty]) 
 
 /// Sorts the multistatus rows into a [`WebdavSyncDelta`]: 404 rows are
 /// removals, a 507 row flags truncation, everything else is a change.
-/// `collection` is the request-target path (trailing slash trimmed), so
-/// the collection's own self-entry can be dropped rather than mistaken
-/// for a member resource.
+///
+/// `collection` is the request-target path, against which the collection's own
+/// self-entry is recognised and dropped rather than taken for a member.
 fn from_multistatus(multistatus: WebdavMultistatus, collection: &str) -> WebdavSyncDelta {
     let mut delta = WebdavSyncDelta {
         sync_token: multistatus.sync_token,
@@ -216,11 +217,9 @@ fn from_multistatus(multistatus: WebdavMultistatus, collection: &str) -> WebdavS
                     entry.href
                 );
             }
-            // Skip the collection self-entry: some servers (iCloud) echo
-            // the collection itself in the sync report, as its own path
-            // (with or without a trailing slash). It is not a member
-            // resource and would otherwise enter the spine as a bogus
-            // card named after the collection.
+            // NOTE: some servers (iCloud) echo the collection itself in the
+            // sync report, which is not a member resource and would otherwise
+            // enter the spine as a bogus member named after the collection.
             _ if entry.href.trim_end_matches('/') == collection.trim_end_matches('/') => {
                 trace!("skip sync-collection self-entry {}", entry.href);
             }
@@ -305,9 +304,8 @@ mod tests {
 
     #[test]
     fn delta_skips_the_collection_self_entry() {
-        // iCloud echoes the addressbook collection itself in the initial
-        // sync report, as its own path with no trailing slash; it must
-        // not enter the spine as a bogus card named after the collection.
+        // NOTE: iCloud echoes the addressbook collection itself, as its own
+        // path with no trailing slash.
         let xml = r#"<?xml version="1.0"?>
         <d:multistatus xmlns:d="DAV:">
           <d:response>

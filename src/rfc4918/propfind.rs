@@ -1,8 +1,8 @@
 //! Generic `PROPFIND` coroutine (RFC 4918 §9.1).
 //!
-//! Requests `props` against `path` at the given `Depth`; the request
-//! body is generated from the selector and the response is parsed into
-//! a [`WebdavMultistatus`].
+//! Requests `props` against `path` at the given `Depth`; the request body is
+//! generated from the selector and the response is parsed into a
+//! [`WebdavMultistatus`].
 //!
 //! # Example
 //!
@@ -18,7 +18,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -69,8 +69,8 @@ pub struct WebdavPropfind {
 }
 
 impl WebdavPropfind {
-    /// Builds a new `PROPFIND` coroutine requesting `props` against
-    /// `path` (relative to `base_url`) with the given `depth`.
+    /// Builds a new `PROPFIND` coroutine requesting `props` against `path`
+    /// (relative to `base_url`) with the given `depth`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

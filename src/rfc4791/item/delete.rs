@@ -1,8 +1,7 @@
-//! `delete-item` coroutine: `DELETE` a calendar item by its resource
-//! name.
+//! `delete-item` coroutine: `DELETE` a calendar item by its resource name.
 //!
-//! Supports the optional `If-Match` precondition so callers can gate
-//! the deletion on the last-known ETag (RFC 9110 §13.1.1).
+//! Supports the optional `If-Match` precondition so callers can gate the
+//! deletion on the last-known ETag (RFC 9110 §13.1.1).
 //!
 //! # Example
 //!
@@ -19,7 +18,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -72,8 +71,8 @@ pub struct CaldavItemDelete {
 }
 
 impl CaldavItemDelete {
-    /// Builds a new `delete-item` coroutine. `id` is the resource id
-    /// exactly as the server returned it (`CaldavItemRef::id`), used verbatim.
+    /// Builds a new `delete-item` coroutine. `id` is the resource id exactly as
+    /// the server returned it (`CaldavItemRef::id`), used verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

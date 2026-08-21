@@ -7,8 +7,8 @@
 //! cargo test --test radicale -- --ignored
 //! ```
 //!
-//! The bootstrap script runs Radicale in a container with a single
-//! htpasswd user (`test` / `test`) over plain HTTP on host port 5232.
+//! The bootstrap script runs Radicale in a container with a single htpasswd
+//! user (`test` / `test`) over plain HTTP on host port 5232.
 
 mod common;
 

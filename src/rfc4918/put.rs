@@ -1,12 +1,10 @@
 //! Generic `PUT` coroutine (RFC 4918 §9.7).
 //!
-//! Sends a `PUT` against `path` with the caller-supplied body bytes
-//! and content type. Stays byte-oriented: callers parse iCal/vCard
-//! upstream.
+//! Sends a `PUT` against `path` with the caller-supplied body bytes and content
+//! type. Stays byte-oriented: callers parse iCal/vCard upstream.
 //!
-//! Supports the optional `If-Match` (RFC 9110 §13.1.1) and
-//! `If-None-Match` (RFC 9110 §13.1.2) preconditions so callers can
-//! gate the write on a known ETag.
+//! Supports the optional `If-Match` and `If-None-Match` preconditions
+//! (RFC 9110 §13.1) so callers can gate the write on a known ETag.
 //!
 //! # Example
 //!
@@ -25,7 +23,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -76,9 +74,9 @@ use crate::{
 
 /// Build inputs for a [`WebdavPut`] coroutine.
 ///
-/// Uses a struct rather than positional arguments so callers can
-/// build the request literal-style and skip the two optional
-/// precondition fields without juggling positional `None`s.
+/// Uses a struct rather than positional arguments so callers can build the
+/// request literal-style and skip the two optional precondition fields without
+/// juggling positional `None`s.
 #[derive(Clone, Debug)]
 pub struct WebdavPutArgs<'a> {
     /// Base URL the request path is resolved against.

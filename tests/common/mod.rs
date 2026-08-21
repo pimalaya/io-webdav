@@ -1,31 +1,28 @@
 //! Shared helpers for the integration tests.
 //!
-//! Two families live here. The scripted-coroutine helpers
-//! ([`http_response`] plus the `expect_*` steps) let the offline suites
-//! (rfc4918, rfc4791, rfc5397, rfc6352, rfc6578, client) resume any
-//! I/O-free coroutine against canned HTTP response bytes, following the
-//! io-imap canonical layout. The provider helpers below them run live
-//! CalDAV / CardDAV flows.
+//! Two families live here. The scripted-coroutine helpers ([`http_response`]
+//! plus the `expect_*` steps) let the offline suites (rfc4918, rfc4791,
+//! rfc5397, rfc6352, rfc6578, client) resume any I/O-free coroutine against
+//! canned HTTP response bytes, following the io-imap canonical layout. The
+//! provider helpers below them run live CalDAV / CardDAV flows.
 //!
-//! Each provider test drives [`WebdavClientStd`] against a live CalDAV
-//! / CardDAV server. Call [`caldav`] for a full calendar CRUD flow, [`carddav`]
-//! for a full addressbook CRUD flow, or [`caldav_readonly`] for the
-//! discovery + list subset that providers without `MKCALENDAR` support
-//! (e.g. Google) still satisfy.
+//! Each provider test drives [`WebdavClientStd`] against a live CalDAV /
+//! CardDAV server. Call [`caldav`] for a full calendar CRUD flow, [`carddav`]
+//! for a full addressbook CRUD flow, or [`caldav_readonly`] for the discovery +
+//! list subset that providers without `MKCALENDAR` support (e.g. Google) still
+//! satisfy.
 //!
-//! Providers that forbid collection creation (iCloud rejects both
-//! `MKCALENDAR` and `MKCOL` with 403, exposing only the collections it
-//! provisions) get [`caldav_items`] / [`carddav_cards`]: item / card
-//! CRUD inside a caller-named existing collection, with no collection
-//! create or delete.
+//! Providers that forbid collection creation (iCloud rejects both `MKCALENDAR`
+//! and `MKCOL` with 403, exposing only the collections it provisions) get
+//! [`caldav_items`] / [`carddav_cards`]: item / card CRUD inside a caller-named
+//! existing collection, with no collection create or delete.
 //!
-//! A fresh stream is opened before every request, so the flows do not
-//! depend on the server honouring HTTP keep-alive across operations.
+//! A fresh stream is opened before every request, so the flows do not depend on
+//! the server honouring HTTP keep-alive across operations.
 //!
-//! These flows write to real production accounts, so everything a run
-//! creates is torn down through [`with_cleanup`], on the failing path
-//! as much as on the passing one. Read that function before adding a
-//! step that creates anything.
+//! These flows write to real production accounts, so everything a run creates
+//! is torn down through [`with_cleanup`], on the failing path as much as on the
+//! passing one. Read that function before adding a step that creates anything.
 //!
 //! The full CalDAV flow exercises:
 //!
@@ -47,19 +44,18 @@
 //!   → DELETE collection   (teardown, runs however the guard exits)
 //! ```
 //!
-//! The full CardDAV flow mirrors it for addressbooks and vCards. Both
-//! exercise the sync read-side: etag-only enumeration, the protocol's
-//! multiget batch fetch, and an initial plus incremental
-//! `sync-collection` REPORT (RFC 6578) that must report the deleted
-//! resource as vanished.
+//! The full CardDAV flow mirrors it for addressbooks and vCards. Both exercise
+//! the sync read-side: etag-only enumeration, the protocol's multiget batch
+//! fetch, and an initial plus incremental `sync-collection` REPORT (RFC 6578)
+//! that must report the deleted resource as vanished.
 //!
-//! The item-only flows are guarded the same way, from the moment the
-//! event or card is created, since the collection holding it belongs to
-//! the account rather than to the run.
+//! The item-only flows are guarded the same way, from the moment the event or
+//! card is created, since the collection holding it belongs to the account
+//! rather than to the run.
 //!
-//! Each integration test compiles this module on its own and only
-//! exercises a subset of these helpers, so the rest end up flagged as
-//! dead code; suppress the noise at the module level.
+//! Each integration test compiles this module on its own and only exercises a
+//! subset of these helpers, so the rest end up flagged as dead code; suppress
+//! the noise at the module level.
 
 #![allow(dead_code)]
 
@@ -87,10 +83,10 @@ use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName}
 use rustls_platform_verifier::ConfigVerifierExt;
 use url::Url;
 
-// --- scripted-coroutine helpers ---------------------------------------
+// --- scripted-coroutine helpers ---
 
-/// Serializes an HTTP/1.1 response: the given status line, the extra
-/// headers, a correct `Content-Length` and the body.
+/// Serializes an HTTP/1.1 response: the given status line, the extra headers, a
+/// correct `Content-Length` and the body.
 pub fn http_response(status: &str, extra: &[(&str, &str)], body: &str) -> Vec<u8> {
     let mut out = format!("HTTP/1.1 {status}\r\n");
     for (name, value) in extra {
@@ -129,8 +125,7 @@ where
     }
 }
 
-/// Feeds `reply` to a standard-shape coroutine and returns its terminal
-/// value.
+/// Feeds `reply` to a standard-shape coroutine and returns its terminal value.
 pub fn expect_complete<C, R>(cor: &mut C, reply: &[u8]) -> R
 where
     C: WebdavCoroutine<Yield = WebdavYield, Return = R>,
@@ -180,8 +175,7 @@ where
     }
 }
 
-/// Feeds `reply` to a redirect-shape coroutine and returns its terminal
-/// value.
+/// Feeds `reply` to a redirect-shape coroutine and returns its terminal value.
 pub fn expect_redirect_complete<C, R>(cor: &mut C, reply: &[u8]) -> R
 where
     C: WebdavCoroutine<Yield = WebdavRedirectYield, Return = R>,
@@ -194,8 +188,8 @@ where
 }
 
 /// Runs the canonical write/read/reply sequence against a redirect-shape
-/// coroutine: returns the written request bytes (lowercased) plus the
-/// terminal value.
+/// coroutine: returns the written request bytes (lowercased) plus the terminal
+/// value.
 pub fn expect_redirect_exchange<C, R>(cor: &mut C, reply: &[u8]) -> (String, R)
 where
     C: WebdavCoroutine<Yield = WebdavRedirectYield, Return = R>,
@@ -224,7 +218,7 @@ where
     }
 }
 
-// --- live provider helpers ---------------------------------------------
+// --- live provider helpers ---
 
 /// A stream that is either a plain TCP connection or a TLS-wrapped one.
 enum WebdavStream {
@@ -262,14 +256,14 @@ pub fn basic_auth(username: &str, password: &str) -> WebdavAuth {
     WebdavAuth::Basic(HttpAuthBasic::new(username, password))
 }
 
-/// Builds an HTTP Bearer [`WebdavAuth`] (RFC 6750), e.g. an OAuth2
-/// access token.
+/// Builds an HTTP Bearer [`WebdavAuth`] (RFC 6750), e.g. an OAuth2 access
+/// token.
 pub fn bearer_auth(token: &str) -> WebdavAuth {
     WebdavAuth::Bearer(HttpAuthBearer::new(token))
 }
 
-/// Opens a fresh stream to `url`'s authority: plain TCP for `http`,
-/// TLS for `https` (ALPN left at the server default).
+/// Opens a fresh stream to `url`'s authority: plain TCP for `http`, TLS for
+/// `https` (ALPN left at the server default).
 fn connect(url: &Url) -> WebdavStream {
     let host = url.host_str().expect("base URL has a host").to_owned();
 
@@ -291,8 +285,8 @@ fn connect(url: &Url) -> WebdavStream {
     }
 }
 
-/// Milliseconds since the Unix epoch, used to mint unique collection
-/// and resource ids per run.
+/// Milliseconds since the Unix epoch, used to mint unique collection and
+/// resource ids per run.
 fn unix_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -303,17 +297,16 @@ fn unix_millis() -> u128 {
 /// Runs `body`, then `cleanup` whichever way `body` went, and only then
 /// re-raises a panic `body` may have raised.
 ///
-/// These flows run against real production accounts. Every step panics
-/// on failure, so a cleanup written as the last statements of a flow is
-/// skipped the moment anything goes wrong, and each failed run leaves a
-/// collection or a resource behind in the account for good. Whatever a
-/// run created has to be torn down on the failing path too, which is
-/// the one where it matters.
+/// These flows run against real production accounts. Every step panics on
+/// failure, so a cleanup written as the last statements of a flow is skipped
+/// the moment anything goes wrong, and each failed run leaves a collection or a
+/// resource behind in the account for good. Whatever a run created has to be
+/// torn down on the failing path too, which is the one where it matters.
 ///
-/// `cleanup` is best-effort on purpose. It is caught too, because it
-/// reconnects and every connection step panics on failure: a teardown
-/// that cannot reach the server any more must report that and step
-/// aside, never replace the failure the run was about to report.
+/// `cleanup` is best-effort on purpose. It is caught too, because it reconnects
+/// and every connection step panics on failure: a teardown that cannot reach
+/// the server any more must report that and step aside, never replace the
+/// failure the run was about to report.
 fn with_cleanup<T, B, C>(state: &mut T, body: B, cleanup: C)
 where
     B: FnOnce(&mut T),
@@ -330,8 +323,8 @@ where
     }
 }
 
-/// Reports a failed teardown without panicking, naming what was left
-/// behind so it can be removed by hand.
+/// Reports a failed teardown without panicking, naming what was left behind so
+/// it can be removed by hand.
 fn report_leftover(what: &str, id: &str, err: &dyn Debug) {
     eprintln!("WARNING: could not clean up {what} `{id}`, remove it by hand: {err:?}");
 }
@@ -342,7 +335,7 @@ pub fn caldav(base_url: &str, auth: WebdavAuth) {
     let base = Url::parse(base_url).expect("parse base URL");
     let mut client = WebdavClientStd::new(connect(&base), auth, base.clone());
 
-    // ── DISCOVERY ─────────────────────────────────────────────────────────────
+    // --- discovery ---
 
     client.set_stream(connect(&base));
     let principal = client
@@ -359,11 +352,11 @@ pub fn caldav(base_url: &str, auth: WebdavAuth) {
     let ts = unix_millis();
     let cal_id = format!("io-webdav-test-{ts}");
     let item_id = format!("event-{ts}");
-    // The caller owns the whole resource name, extension included; the
+    // NOTE: the caller owns the whole resource name, extension included; the
     // same name is the item's id everywhere afterwards.
     let item_name = format!("{item_id}.ics");
 
-    // ── MKCALENDAR create ───────────────────────────────────────────────────────
+    // --- MKCALENDAR create ---
 
     let calendar = CaldavCalendar {
         id: cal_id.clone(),
@@ -375,7 +368,7 @@ pub fn caldav(base_url: &str, auth: WebdavAuth) {
     client.set_stream(connect(&base));
     client.create_calendar(&calendar).expect("create calendar");
 
-    // From here on the account holds a real collection, so every exit
+    // NOTE: from here on the account holds a real collection, so every exit
     // path has to remove it. See with_cleanup.
     with_cleanup(
         &mut client,
@@ -398,7 +391,7 @@ fn caldav_body(
     item_id: &str,
     item_name: &str,
 ) {
-    // ── PROPFIND list (verify creation) ─────────────────────────────────────────
+    // --- PROPFIND list (verify creation) ---
 
     client.set_stream(connect(base));
     let calendars = client.list_calendars().expect("list calendars");
@@ -406,16 +399,16 @@ fn caldav_body(
         .iter()
         .find(|c| c.id == cal_id)
         .unwrap_or_else(|| panic!("created calendar {cal_id} missing from list"));
-    // The component set was sent at MKCALENDAR time, so a server that
-    // honours it reports it back; one that advertises nothing at all is
-    // saying "any type", which is not a mismatch.
+    // NOTE: the component set was sent at MKCALENDAR time, so a server that
+    // honours it reports it back; one that advertises nothing at all is saying
+    // "any type", which is not a mismatch.
     assert!(
         created_calendar.components.is_empty() || created_calendar.components.contains("VEVENT"),
         "created calendar dropped the VEVENT component: {:?}",
         created_calendar.components
     );
 
-    // ── PUT create event ────────────────────────────────────────────────────────
+    // --- PUT create event ---
 
     client.set_stream(connect(base));
     let created = client
@@ -427,19 +420,19 @@ fn caldav_body(
         .expect("create item");
     assert_eq!(created.id, item_name, "create item id mismatch");
 
-    // ── REPORT list items (verify present) ──────────────────────────────────────
+    // --- REPORT list items (verify present) ---
 
     client.set_stream(connect(base));
     let items = client.list_items(cal_id, "").expect("list items");
-    // An item is addressed by its id, i.e. the resource name the server
-    // enumerates, used verbatim: we created `<item_id>.ics`, so that is
-    // its id everywhere (io-webdav never adds nor strips an extension).
+    // NOTE: an item is addressed by its id, i.e. the resource name the server
+    // enumerates, used verbatim: we created `<item_id>.ics`, so that is its id
+    // everywhere (io-webdav never adds nor strips an extension).
     assert!(
         items.iter().any(|i| i.id == item_name),
         "created event {item_name} missing from REPORT"
     );
 
-    // ── REPORT enum item refs (etag-only spine) ─────────────────────────────────
+    // --- REPORT enum item refs (ETag-only spine) ---
 
     client.set_stream(connect(base));
     let refs = client.enum_items(cal_id, "").expect("enum items");
@@ -448,7 +441,7 @@ fn caldav_body(
         "created event {item_name} missing from etag-only enumeration"
     );
 
-    // ── REPORT multiget (batch bodies) ──────────────────────────────────────────
+    // --- REPORT multiget (batch bodies) ---
 
     client.set_stream(connect(base));
     let fetched = client
@@ -461,7 +454,7 @@ fn caldav_body(
         "multiget returned no body for event {item_name}"
     );
 
-    // ── REPORT sync-collection (initial sync) ───────────────────────────────────
+    // --- REPORT sync-collection (initial sync) ---
 
     client.set_stream(connect(base));
     let initial = client.sync_items(cal_id, None).expect("initial sync");
@@ -471,13 +464,13 @@ fn caldav_body(
     );
     let sync_token = initial.sync_token.expect("initial sync returned no token");
 
-    // ── GET read item ───────────────────────────────────────────────────────────
+    // --- GET read item ---
 
     client.set_stream(connect(base));
     let body = client.read_item(cal_id, item_name).expect("read item");
     assert!(!body.data.is_empty(), "read item returned empty body");
 
-    // ── PUT update item ─────────────────────────────────────────────────────────
+    // --- PUT update item ---
 
     client.set_stream(connect(base));
     client
@@ -489,14 +482,14 @@ fn caldav_body(
         )
         .expect("update item");
 
-    // ── DELETE item (the removal the next sync must report) ─────────────────────
+    // --- DELETE item (the removal the next sync must report) ---
 
     client.set_stream(connect(base));
     client
         .delete_item(cal_id, item_name, None)
         .expect("delete item");
 
-    // ── REPORT sync-collection (incremental sync reports the removal) ───────────
+    // --- REPORT sync-collection (incremental sync reports the removal) ---
 
     client.set_stream(connect(base));
     let delta = client
@@ -508,8 +501,8 @@ fn caldav_body(
     );
 }
 
-/// Read-only CalDAV flow for providers without `MKCALENDAR` support
-/// (e.g. Google): discover the home-set and list calendars.
+/// Read-only CalDAV flow for providers without `MKCALENDAR` support (e.g.
+/// Google): discover the home-set and list calendars.
 pub fn caldav_readonly(base_url: &str, auth: WebdavAuth) {
     let _ = env_logger::try_init();
     let base = Url::parse(base_url).expect("parse base URL");
@@ -535,8 +528,8 @@ pub fn caldav_readonly(base_url: &str, auth: WebdavAuth) {
     );
 }
 
-/// Read-only CardDAV flow for providers without `MKCOL` support (e.g.
-/// Google): discover the home-set and list addressbooks.
+/// Read-only CardDAV flow for providers without `MKCOL` support (e.g. Google):
+/// discover the home-set and list addressbooks.
 pub fn carddav_readonly(base_url: &str, auth: WebdavAuth) {
     let _ = env_logger::try_init();
     let base = Url::parse(base_url).expect("parse base URL");
@@ -562,14 +555,13 @@ pub fn carddav_readonly(base_url: &str, auth: WebdavAuth) {
     );
 }
 
-/// Resolves Google's CardDAV context root by issuing an authenticated
-/// PROPFIND to `https://www.googleapis.com/.well-known/carddav` and
-/// returning the `Location` it 301-redirects to.
+/// Resolves Google's CardDAV context root by issuing an authenticated PROPFIND
+/// to `https://www.googleapis.com/.well-known/carddav` and returning the
+/// `Location` it 301-redirects to.
 ///
-/// Google's `.well-known` only redirects for an authenticated PROPFIND;
-/// a plain GET (or an unauthenticated request) 404s. So this reuses the
-/// HTTP well-known request builder, swaps the method to PROPFIND, and
-/// adds the OAuth2 bearer.
+/// Google's `.well-known` only redirects for an authenticated PROPFIND; a plain
+/// GET (or an unauthenticated request) 404s. So this reuses the HTTP well-known
+/// request builder, swaps the method to PROPFIND, and adds the OAuth2 bearer.
 pub fn google_carddav_base(token: &str) -> Url {
     let origin = "https://www.googleapis.com/";
 
@@ -607,16 +599,16 @@ pub fn google_carddav_base(token: &str) -> Url {
         .expect("well-known should 301 to a context root")
 }
 
-/// CalDAV item CRUD inside the existing calendar `calendar_id`, for
-/// providers that reject `MKCALENDAR` (e.g. iCloud): discover, confirm
-/// the calendar is present, then create/list/read/update/delete an
-/// event. The collection itself is never created nor deleted.
+/// CalDAV item CRUD inside the existing calendar `calendar_id`, for providers
+/// that reject `MKCALENDAR` (e.g. iCloud): discover, confirm the calendar is
+/// present, then create/list/read/update/delete an event. The collection itself
+/// is never created nor deleted.
 pub fn caldav_items(base_url: &str, auth: WebdavAuth, calendar_id: &str) {
     let _ = env_logger::try_init();
     let base = Url::parse(base_url).expect("parse base URL");
     let mut client = WebdavClientStd::new(connect(&base), auth, base.clone());
 
-    // ── DISCOVERY ─────────────────────────────────────────────────────────────
+    // --- discovery ---
 
     client.set_stream(connect(&base));
     let principal = client
@@ -630,7 +622,7 @@ pub fn caldav_items(base_url: &str, auth: WebdavAuth, calendar_id: &str) {
         .expect("calendar-home-set discovery");
     assert!(!home.path().is_empty(), "empty calendar home-set path");
 
-    // ── PROPFIND list (confirm the target calendar exists) ──────────────────────
+    // --- PROPFIND list (confirm the target calendar exists) ---
 
     client.set_stream(connect(&base));
     let calendars = client.list_calendars().expect("list calendars");
@@ -640,11 +632,11 @@ pub fn caldav_items(base_url: &str, auth: WebdavAuth, calendar_id: &str) {
     );
 
     let item_id = format!("event-{}", unix_millis());
-    // The caller owns the whole resource name, extension included; the
+    // NOTE: the caller owns the whole resource name, extension included; the
     // same name is the item's id everywhere afterwards.
     let item_name = format!("{item_id}.ics");
 
-    // ── PUT create event ────────────────────────────────────────────────────────
+    // --- PUT create event ---
 
     client.set_stream(connect(&base));
     let created = client
@@ -656,8 +648,8 @@ pub fn caldav_items(base_url: &str, auth: WebdavAuth, calendar_id: &str) {
         .expect("create item");
     assert_eq!(created.id, item_name, "create item id mismatch");
 
-    // The event now exists in a calendar this flow does not own, so
-    // every exit path has to remove it. See with_cleanup.
+    // NOTE: the event now exists in a calendar this flow does not own, so every
+    // exit path has to remove it. See with_cleanup.
     with_cleanup(
         &mut client,
         |client| caldav_items_body(client, &base, calendar_id, &item_id, &item_name),
@@ -670,9 +662,8 @@ pub fn caldav_items(base_url: &str, auth: WebdavAuth, calendar_id: &str) {
     );
 }
 
-/// The body of the item-only CalDAV flow, everything that runs once the
-/// test event exists. Split out so [`with_cleanup`] can own the
-/// teardown.
+/// The body of the item-only CalDAV flow, everything that runs once the test
+/// event exists. Split out so [`with_cleanup`] can own the teardown.
 fn caldav_items_body(
     client: &mut WebdavClientStd,
     base: &Url,
@@ -680,19 +671,19 @@ fn caldav_items_body(
     item_id: &str,
     item_name: &str,
 ) {
-    // ── REPORT list items (verify present) ──────────────────────────────────────
+    // --- REPORT list items (verify present) ---
 
     client.set_stream(connect(base));
     let items = client.list_items(calendar_id, "").expect("list items");
-    // An item is addressed by its id, i.e. the resource name the server
-    // enumerates, used verbatim: we created `<item_id>.ics`, so that is
-    // its id everywhere (io-webdav never adds nor strips an extension).
+    // NOTE: an item is addressed by its id, i.e. the resource name the server
+    // enumerates, used verbatim: we created `<item_id>.ics`, so that is its id
+    // everywhere (io-webdav never adds nor strips an extension).
     assert!(
         items.iter().any(|i| i.id == item_name),
         "created event {item_name} missing from REPORT"
     );
 
-    // ── REPORT enum item refs (etag-only spine) ─────────────────────────────────
+    // --- REPORT enum item refs (ETag-only spine) ---
 
     client.set_stream(connect(base));
     let refs = client.enum_items(calendar_id, "").expect("enum items");
@@ -701,7 +692,7 @@ fn caldav_items_body(
         "created event {item_name} missing from etag-only enumeration"
     );
 
-    // ── REPORT multiget (batch bodies) ──────────────────────────────────────────
+    // --- REPORT multiget (batch bodies) ---
 
     client.set_stream(connect(base));
     let fetched = client
@@ -714,13 +705,13 @@ fn caldav_items_body(
         "multiget returned no body for event {item_name}"
     );
 
-    // ── GET read item ───────────────────────────────────────────────────────────
+    // --- GET read item ---
 
     client.set_stream(connect(base));
     let body = client.read_item(calendar_id, item_name).expect("read item");
     assert!(!body.data.is_empty(), "read item returned empty body");
 
-    // ── PUT update item ─────────────────────────────────────────────────────────
+    // --- PUT update item ---
 
     client.set_stream(connect(base));
     client
@@ -739,7 +730,7 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
     let base = Url::parse(base_url).expect("parse base URL");
     let mut client = WebdavClientStd::new(connect(&base), auth, base.clone());
 
-    // ── DISCOVERY ─────────────────────────────────────────────────────────────
+    // --- discovery ---
 
     client.set_stream(connect(&base));
     let principal = client
@@ -756,11 +747,11 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
     let ts = unix_millis();
     let book_id = format!("io-webdav-test-{ts}");
     let card_id = format!("card-{ts}");
-    // The caller owns the whole resource name, extension included; the
+    // NOTE: the caller owns the whole resource name, extension included; the
     // same name is the card's id everywhere afterwards.
     let card_name = format!("{card_id}.vcf");
 
-    // ── MKCOL create ────────────────────────────────────────────────────────────
+    // --- MKCOL create ---
 
     let addressbook = CarddavAddressbook {
         id: book_id.clone(),
@@ -773,7 +764,7 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
         .create_addressbook(&addressbook)
         .expect("create addressbook");
 
-    // From here on the account holds a real collection, so every exit
+    // NOTE: from here on the account holds a real collection, so every exit
     // path has to remove it. See with_cleanup.
     with_cleanup(
         &mut client,
@@ -787,9 +778,8 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
     );
 }
 
-/// The body of the full CardDAV flow, everything that runs once the
-/// test addressbook exists. Split out so [`with_cleanup`] can own the
-/// teardown.
+/// The body of the full CardDAV flow, everything that runs once the test
+/// addressbook exists. Split out so [`with_cleanup`] can own the teardown.
 fn carddav_body(
     client: &mut WebdavClientStd,
     base: &Url,
@@ -797,7 +787,7 @@ fn carddav_body(
     card_id: &str,
     card_name: &str,
 ) {
-    // ── PROPFIND list (verify creation) ─────────────────────────────────────────
+    // --- PROPFIND list (verify creation) ---
 
     client.set_stream(connect(base));
     let addressbooks = client.list_addressbooks().expect("list addressbooks");
@@ -806,7 +796,7 @@ fn carddav_body(
         "created addressbook {book_id} missing from list"
     );
 
-    // ── PUT create card ─────────────────────────────────────────────────────────
+    // --- PUT create card ---
 
     client.set_stream(connect(base));
     let created = client
@@ -818,19 +808,19 @@ fn carddav_body(
         .expect("create card");
     assert_eq!(created.id, card_name, "create card id mismatch");
 
-    // ── REPORT list cards (verify present) ──────────────────────────────────────
+    // --- REPORT list cards (verify present) ---
 
     client.set_stream(connect(base));
     let cards = client.list_cards(book_id).expect("list cards");
-    // A card is addressed by its id, i.e. the resource name the server
-    // enumerates, used verbatim: we created `<card_id>.vcf`, so that is
-    // its id everywhere (io-webdav never adds nor strips an extension).
+    // NOTE: a card is addressed by its id, i.e. the resource name the server
+    // enumerates, used verbatim: we created `<card_id>.vcf`, so that is its id
+    // everywhere (io-webdav never adds nor strips an extension).
     assert!(
         cards.iter().any(|c| c.id == card_name),
         "created card {card_name} missing from REPORT"
     );
 
-    // ── REPORT enum card refs (etag-only spine) ─────────────────────────────────
+    // --- REPORT enum card refs (ETag-only spine) ---
 
     client.set_stream(connect(base));
     let refs = client.enum_cards(book_id).expect("enum cards");
@@ -839,7 +829,7 @@ fn carddav_body(
         "created card {card_name} missing from etag-only enumeration"
     );
 
-    // ── REPORT multiget (batch bodies) ──────────────────────────────────────────
+    // --- REPORT multiget (batch bodies) ---
 
     client.set_stream(connect(base));
     let fetched = client
@@ -852,7 +842,7 @@ fn carddav_body(
         "multiget returned no body for card {card_name}"
     );
 
-    // ── REPORT sync-collection (initial sync) ───────────────────────────────────
+    // --- REPORT sync-collection (initial sync) ---
 
     client.set_stream(connect(base));
     let initial = client.sync_cards(book_id, None).expect("initial sync");
@@ -862,13 +852,13 @@ fn carddav_body(
     );
     let sync_token = initial.sync_token.expect("initial sync returned no token");
 
-    // ── GET read card ───────────────────────────────────────────────────────────
+    // --- GET read card ---
 
     client.set_stream(connect(base));
     let body = client.read_card(book_id, card_name).expect("read card");
     assert!(!body.data.is_empty(), "read card returned empty body");
 
-    // ── PUT update card ─────────────────────────────────────────────────────────
+    // --- PUT update card ---
 
     client.set_stream(connect(base));
     client
@@ -880,14 +870,14 @@ fn carddav_body(
         )
         .expect("update card");
 
-    // ── CLEANUP: delete card then collection ────────────────────────────────────
+    // --- cleanup: DELETE card then collection ---
 
     client.set_stream(connect(base));
     client
         .delete_card(book_id, card_name, None)
         .expect("delete card");
 
-    // ── REPORT sync-collection (incremental sync reports the removal) ───────────
+    // --- REPORT sync-collection (incremental sync reports the removal) ---
 
     client.set_stream(connect(base));
     let delta = client
@@ -899,17 +889,17 @@ fn carddav_body(
     );
 }
 
-/// CardDAV card CRUD inside the existing addressbook `addressbook_id`,
-/// for providers that reject `MKCOL` (e.g. iCloud, which exposes a
-/// single fixed `card` addressbook): discover, confirm the addressbook
-/// is present, then create/list/read/update/delete a vCard. The
-/// collection itself is never created nor deleted.
+/// CardDAV card CRUD inside the existing addressbook `addressbook_id`, for
+/// providers that reject `MKCOL` (e.g. iCloud, which exposes a single fixed
+/// `card` addressbook): discover, confirm the addressbook is present, then
+/// create/list/read/update/delete a vCard. The collection itself is never
+/// created nor deleted.
 pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
     let _ = env_logger::try_init();
     let base = Url::parse(base_url).expect("parse base URL");
     let mut client = WebdavClientStd::new(connect(&base), auth, base.clone());
 
-    // ── DISCOVERY ─────────────────────────────────────────────────────────────
+    // --- discovery ---
 
     client.set_stream(connect(&base));
     let principal = client
@@ -923,7 +913,7 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
         .expect("addressbook-home-set discovery");
     assert!(!home.path().is_empty(), "empty addressbook home-set path");
 
-    // ── PROPFIND list (confirm the target addressbook exists) ───────────────────
+    // --- PROPFIND list (confirm the target addressbook exists) ---
 
     client.set_stream(connect(&base));
     let addressbooks = client.list_addressbooks().expect("list addressbooks");
@@ -933,11 +923,11 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
     );
 
     let card_id = format!("card-{}", unix_millis());
-    // The caller owns the whole resource name, extension included; the
+    // NOTE: the caller owns the whole resource name, extension included; the
     // same name is the card's id everywhere afterwards.
     let card_name = format!("{card_id}.vcf");
 
-    // ── PUT create card ─────────────────────────────────────────────────────────
+    // --- PUT create card ---
 
     client.set_stream(connect(&base));
     let created = client
@@ -949,7 +939,7 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
         .expect("create card");
     assert_eq!(created.id, card_name, "create card id mismatch");
 
-    // The card now exists in an addressbook this flow does not own, so
+    // NOTE: the card now exists in an addressbook this flow does not own, so
     // every exit path has to remove it. See with_cleanup.
     with_cleanup(
         &mut client,
@@ -963,9 +953,8 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
     );
 }
 
-/// The body of the card-only CardDAV flow, everything that runs once
-/// the test card exists. Split out so [`with_cleanup`] can own the
-/// teardown.
+/// The body of the card-only CardDAV flow, everything that runs once the test
+/// card exists. Split out so [`with_cleanup`] can own the teardown.
 fn carddav_cards_body(
     client: &mut WebdavClientStd,
     base: &Url,
@@ -973,19 +962,19 @@ fn carddav_cards_body(
     card_id: &str,
     card_name: &str,
 ) {
-    // ── REPORT list cards (verify present) ──────────────────────────────────────
+    // --- REPORT list cards (verify present) ---
 
     client.set_stream(connect(base));
     let cards = client.list_cards(addressbook_id).expect("list cards");
-    // A card is addressed by its id, i.e. the resource name the server
-    // enumerates, used verbatim: we created `<card_id>.vcf`, so that is
-    // its id everywhere (io-webdav never adds nor strips an extension).
+    // NOTE: a card is addressed by its id, i.e. the resource name the server
+    // enumerates, used verbatim: we created `<card_id>.vcf`, so that is its id
+    // everywhere (io-webdav never adds nor strips an extension).
     assert!(
         cards.iter().any(|c| c.id == card_name),
         "created card {card_name} missing from REPORT"
     );
 
-    // ── REPORT enum card refs (etag-only spine) ─────────────────────────────────
+    // --- REPORT enum card refs (ETag-only spine) ---
 
     client.set_stream(connect(base));
     let refs = client.enum_cards(addressbook_id).expect("enum cards");
@@ -994,7 +983,7 @@ fn carddav_cards_body(
         "created card {card_name} missing from etag-only enumeration"
     );
 
-    // ── REPORT multiget (batch bodies) ──────────────────────────────────────────
+    // --- REPORT multiget (batch bodies) ---
 
     client.set_stream(connect(base));
     let fetched = client
@@ -1007,7 +996,7 @@ fn carddav_cards_body(
         "multiget returned no body for card {card_name}"
     );
 
-    // ── GET read card ───────────────────────────────────────────────────────────
+    // --- GET read card ---
 
     client.set_stream(connect(base));
     let body = client
@@ -1015,7 +1004,7 @@ fn carddav_cards_body(
         .expect("read card");
     assert!(!body.data.is_empty(), "read card returned empty body");
 
-    // ── PUT update card ─────────────────────────────────────────────────────────
+    // --- PUT update card ---
 
     client.set_stream(connect(base));
     client
@@ -1028,8 +1017,8 @@ fn carddav_cards_body(
         .expect("update card");
 }
 
-/// Builds a minimal single-event iCalendar object (CRLF line endings,
-/// as required by RFC 5545 §3.1).
+/// Builds a minimal single-event iCalendar object (CRLF line endings, as
+/// required by RFC 5545 §3.1).
 fn build_ics(uid: &str, summary: &str) -> String {
     [
         "BEGIN:VCALENDAR",
@@ -1047,8 +1036,8 @@ fn build_ics(uid: &str, summary: &str) -> String {
     .join("\r\n")
 }
 
-/// Builds a minimal vCard 3.0 object (CRLF line endings, as required by
-/// RFC 6350 §3.2).
+/// Builds a minimal vCard 3.0 object, with the CRLF line endings RFC 6350 §3.2
+/// requires.
 fn build_vcf(uid: &str, name: &str) -> String {
     [
         "BEGIN:VCARD",

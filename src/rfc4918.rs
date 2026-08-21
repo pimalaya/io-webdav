@@ -1,23 +1,19 @@
-//! RFC 4918: HTTP Extensions for Web Distributed Authoring and
-//! Versioning (WebDAV).
+//! RFC 4918: HTTP Extensions for Web Distributed Authoring and Versioning
+//! (WebDAV).
 //!
 //! <https://www.rfc-editor.org/rfc/rfc4918>
 //!
-//! This module carries the WebDAV vocabulary shared across every RFC
-//! layer: the authentication scheme, the namespace and property model,
-//! the generic parsed multistatus body, and the generic `DAV:` property
-//! constants. Alongside them live the crate-internal helpers every
-//! coroutine reuses: the XML request-body generators (PROPFIND,
-//! PROPPATCH, MKCOL, REPORT), the multistatus parser, and the
-//! `Authorization` header emitter, request-path resolution and `ETag`
-//! extraction. Each WebDAV method is its own submodule.
+//! This module carries the WebDAV vocabulary shared across every RFC layer: the
+//! authentication scheme, the namespace and property model, the parsed
+//! multistatus body and the `DAV:` property constants. Next to them live the
+//! helpers every coroutine reuses: the XML request-body generators, the
+//! multistatus parser, the `Authorization` header emitter, request-path
+//! resolution and `ETag` extraction. Each WebDAV method is its own submodule.
 //!
-//! Request bodies are generated from a [`WebdavProperty`] selector rather than
-//! hard-coded templates: callers choose the properties and values they
-//! need. Each [`WebdavProperty`] carries its [`WebdavNamespace`] (URI plus preferred
-//! prefix), so the generators emit XML without a central namespace
-//! table; every RFC layer owns the namespaces and property constants it
-//! speaks.
+//! Bodies are generated from [`WebdavProperty`] selectors rather than
+//! hard-coded templates, each selector carrying its [`WebdavNamespace`], so the
+//! generators need no central namespace table: every RFC layer owns the
+//! namespaces and constants it speaks.
 
 pub mod copy;
 pub mod coroutine;
@@ -54,11 +50,9 @@ use url::Url;
 
 /// Authentication scheme used by the WebDAV client.
 ///
-/// Covers the three modes the CalDAV/CardDAV deployments handle in
-/// practice: no auth, HTTP Basic (RFC 7617) and HTTP Bearer (RFC 6750),
-/// reusing the io-http credential types. Higher-level coroutines never
-/// observe the credential directly; they only see the pre-formatted
-/// header value from `emit_header`.
+/// Covers the three modes CalDAV and CardDAV deployments handle in practice,
+/// reusing the io-http credential types. Higher-level coroutines never observe
+/// a credential, only the header value [`emit_header`] formats out of it.
 #[derive(Clone, Debug, Default)]
 pub enum WebdavAuth {
     /// No authentication; no `Authorization` header is emitted.
@@ -70,17 +64,16 @@ pub enum WebdavAuth {
     Bearer(HttpAuthBearer),
 }
 
-/// An XML namespace: its URI plus the preferred prefix used when
-/// serializing request bodies (the empty prefix means the default
-/// namespace).
+/// An XML namespace: its URI plus the prefix used when serializing request
+/// bodies.
 ///
-/// Each RFC layer owns the namespaces it speaks (`DAV:` in
-/// [`crate::rfc4918`], CalDAV ones in [`crate::rfc4791`], CardDAV ones
-/// in [`crate::rfc6352`]); the generic body generators only read these
-/// fields, so they never need to know which namespaces exist.
+/// Each RFC layer owns the namespaces it speaks (`DAV:` in [`crate::rfc4918`],
+/// CalDAV ones in [`crate::rfc4791`], CardDAV ones in [`crate::rfc6352`]); the
+/// body generators only read these fields, so they never need to know which
+/// namespaces exist.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WebdavNamespace {
-    /// WebdavNamespace URI (e.g. `DAV:`).
+    /// Namespace URI (e.g. `DAV:`).
     pub uri: &'static str,
     /// Preferred XML prefix (`""` for the default namespace).
     pub prefix: &'static str,
@@ -89,11 +82,8 @@ pub struct WebdavNamespace {
 /// A WebDAV property identifier: an XML [`WebdavNamespace`] plus a local name
 /// (RFC 4918 §15).
 ///
-/// Each RFC layer owns its own vocabulary as `const` values (generic
-/// DAV properties in [`crate::rfc4918`], calendar ones in
-/// [`crate::rfc4791`], card ones in [`crate::rfc6352`]); there is no
-/// central enum. Construct an ad-hoc value for any property the
-/// constants do not cover.
+/// Each RFC layer owns its vocabulary as `const` values rather than a central
+/// enum. Construct an ad-hoc value for any property the constants do not cover.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WebdavProperty {
     /// XML namespace.
@@ -102,14 +92,14 @@ pub struct WebdavProperty {
     pub local: &'static str,
 }
 
-/// Parsed `multistatus` body returned by `PROPFIND` / `REPORT`
-/// (RFC 4918 §14.16).
+/// Parsed `multistatus` body returned by `PROPFIND` / `REPORT` (RFC 4918
+/// §14.16).
 #[derive(Clone, Debug, Default)]
 pub struct WebdavMultistatus {
     /// The parsed `<response>` entries.
     pub responses: Vec<WebdavResponseEntry>,
-    /// The top-level `DAV:sync-token` returned by a `sync-collection`
-    /// REPORT (RFC 6578 §6.2); [`None`] outside sync responses.
+    /// The top-level `DAV:sync-token` of a `sync-collection` REPORT (RFC 6578
+    /// §6.2); [`None`] outside sync responses.
     pub sync_token: Option<String>,
 }
 
@@ -128,17 +118,16 @@ impl IntoIterator for WebdavMultistatus {
 pub struct WebdavResponseEntry {
     /// The `<href>` text, as returned by the server.
     pub href: String,
-    /// The response-level `<status>` code, when present. Carries the
-    /// 404 of a `sync-collection` removal row (RFC 6578 §3.4) or the
-    /// 507 of a truncation row (RFC 6578 §3.6); [`None`] on ordinary
-    /// propstat-only responses.
+    /// The response-level `<status>` code, when present: the 404 of a
+    /// `sync-collection` removal row (RFC 6578 §3.4) or the 507 of a truncation
+    /// row (RFC 6578 §3.6); [`None`] on propstat-only responses.
     pub status: Option<u16>,
     /// Properties gathered from every 2xx `<propstat>` of this response.
     pub props: Vec<WebdavPropItem>,
-    /// Properties the server refused, each with the status of the
-    /// `<propstat>` that carried it. A `PROPPATCH` answers this way
-    /// (RFC 4918 §9.2): the request itself is a 207, and only the
-    /// propstat says whether the property actually changed.
+    /// Properties the server refused, each with the status of the `<propstat>`
+    /// that carried it. A `PROPPATCH` answers this way (RFC 4918 §9.2): the
+    /// request itself is a 207, and only the propstat says whether the property
+    /// actually changed.
     pub failures: Vec<WebdavPropFailure>,
 }
 
@@ -170,15 +159,15 @@ impl WebdavResponseEntry {
             .filter(|text| !text.is_empty())
     }
 
-    /// Returns `true` when `<resourcetype>` lists `ty` as a child
-    /// (e.g. `<C:calendar/>`).
+    /// Returns `true` when `<resourcetype>` lists `ty` as a child (e.g.
+    /// `<C:calendar/>`).
     pub fn has_resource_type(&self, resourcetype: WebdavProperty, ty: WebdavProperty) -> bool {
         self.prop(resourcetype)
             .is_some_and(|item| item.children.iter().any(|child| child.local == ty.local))
     }
 
-    /// Returns the last non-empty path segment of [`href`](Self::href),
-    /// the conventional collection / resource identifier.
+    /// Returns the last non-empty path segment of [`href`](Self::href), the
+    /// conventional collection or resource identifier.
     pub fn id(&self) -> &str {
         self.href
             .trim_end_matches('/')
@@ -191,35 +180,34 @@ impl WebdavResponseEntry {
 /// A single property returned inside a `<prop>` element.
 #[derive(Clone, Debug, Default)]
 pub struct WebdavPropItem {
-    /// WebdavProperty local name (e.g. `displayname`, `resourcetype`).
+    /// Property local name (e.g. `displayname`, `resourcetype`).
     pub local: String,
-    /// Concatenated descendant text (covers text properties and the
-    /// `<href>` payload of principal / home-set properties).
+    /// Concatenated descendant text, covering text properties as well as the
+    /// `<href>` payload of principal and home-set properties.
     pub text: String,
-    /// The direct child elements (e.g. `collection` and `calendar`
-    /// under `<resourcetype>`).
+    /// The direct child elements (e.g. `collection` and `calendar` under
+    /// `<resourcetype>`).
     pub children: Vec<WebdavPropChild>,
 }
 
-/// A direct child element of a property, for the properties whose value
-/// is markup rather than text.
+/// A direct child element of a property, for the properties whose value is
+/// markup rather than text.
 #[derive(Clone, Debug, Default)]
 pub struct WebdavPropChild {
     /// Child element local name (e.g. `collection`, `comp`).
     pub local: String,
-    /// The child's `name` attribute, when it carries one. RFC 4791
-    /// §5.2.3 spells a calendar's component types as
-    /// `<C:comp name="VEVENT"/>`, putting the value in the attribute
-    /// rather than in a text node.
+    /// The child's `name` attribute, when it carries one: RFC 4791 §5.2.3
+    /// spells a component type as `<C:comp name="VEVENT"/>`, putting the value
+    /// in the attribute rather than in a text node.
     pub name: Option<String>,
 }
 
-/// The value a property is set to in a `PROPPATCH`, `MKCOL` or
-/// `MKCALENDAR` body.
+/// The value a property is set to in a `PROPPATCH`, `MKCOL` or `MKCALENDAR`
+/// body.
 ///
-/// Most WebDAV properties carry text, but a few carry markup, which
-/// would not survive text escaping: `supported-calendar-component-set`
-/// (RFC 4791 §5.2.3) is a list of `<C:comp/>` children.
+/// Most WebDAV properties carry text, but a few carry markup, which would not
+/// survive text escaping: `supported-calendar-component-set` (RFC 4791 §5.2.3)
+/// is a list of `<C:comp/>` children.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WebdavPropValue<'a> {
     /// Text content, XML-escaped on the way out.
@@ -229,19 +217,18 @@ pub enum WebdavPropValue<'a> {
     Raw(String),
 }
 
-/// WebDAV namespace (RFC 4918), emitted with the `D` prefix the RFC
-/// examples use. Never the default namespace: strict servers (iCloud,
-/// Google) reject bodies mixing a prefixed CardDAV root with
-/// default-namespace DAV children (their addressbook-multiget answers
-/// HTTP 400), while the all-prefixed form every interoperable client
-/// sends passes everywhere. The literal `D:` in the body generators
-/// assumes this prefix.
+/// WebDAV namespace (RFC 4918), emitted with the `D` prefix the RFC examples
+/// use and assumed by the literal `D:` of the body generators.
+///
+/// Never the default namespace: strict servers (iCloud, Google) answer HTTP 400
+/// to a body mixing a prefixed CardDAV root with default-namespace DAV
+/// children, while the all-prefixed form passes everywhere.
 pub const DAV: WebdavNamespace = WebdavNamespace {
     uri: "DAV:",
     prefix: "D",
 };
-/// CalendarServer extension namespace (ctag); protocol-neutral, used by
-/// both CalDAV and CardDAV servers.
+/// CalendarServer extension namespace (ctag), spoken by both CalDAV and CardDAV
+/// servers.
 pub const CALENDARSERVER: WebdavNamespace = WebdavNamespace {
     uri: "http://calendarserver.org/ns/",
     prefix: "CS",
@@ -270,8 +257,7 @@ pub const SYNC_TOKEN: WebdavProperty = WebdavProperty {
     ns: DAV,
     local: "sync-token",
 };
-/// `CS:getctag` (CalendarServer extension); bumped on every change to
-/// the collection.
+/// `CS:getctag` (CalendarServer extension), bumped on every collection change.
 pub const GETCTAG: WebdavProperty = WebdavProperty {
     ns: CALENDARSERVER,
     local: "getctag",
@@ -283,9 +269,8 @@ const PROPERTYUPDATE: WebdavProperty = WebdavProperty {
     local: "propertyupdate",
 };
 
-/// Emits the `xmlns` declarations for the given namespaces (deduped by
-/// URI, in order). The empty-prefix namespace becomes the default
-/// namespace.
+/// Emits the `xmlns` declarations of the given namespaces, deduped by URI and
+/// in order. The empty-prefix namespace becomes the default namespace.
 pub fn xmlns_decls(namespaces: &[WebdavNamespace]) -> String {
     let mut seen: Vec<&str> = Vec::new();
     let mut out = String::new();
@@ -332,13 +317,12 @@ pub fn propfind_body(props: &[WebdavProperty]) -> Vec<u8> {
     body.into_bytes()
 }
 
-/// Builds a `PROPPATCH` request body (RFC 4918 §9.2) setting each
-/// `(property, value)` pair and removing each property in `remove`.
+/// Builds a `PROPPATCH` request body (RFC 4918 §9.2) setting each `(property,
+/// value)` pair and removing each property in `remove`.
 ///
-/// A `DAV:propertyupdate` carries both instruction kinds, applied in
-/// document order, and only a `DAV:remove` deletes a property: omitting
-/// a property from the `set` list leaves it as it was. An empty
-/// instruction block is left out entirely.
+/// A `DAV:propertyupdate` carries both instruction kinds, applied in document
+/// order, and only a `DAV:remove` deletes a property: omitting a property from
+/// `set` leaves it as it was. An empty instruction block is left out entirely.
 pub fn proppatch_body(
     set: &[(WebdavProperty, WebdavPropValue<'_>)],
     remove: &[WebdavProperty],
@@ -368,9 +352,10 @@ pub fn proppatch_body(
 }
 
 /// Builds a `<root><set><prop>...</prop></set></root>` body setting each
-/// `(property, value)` pair, rooted at `root`. Backs the creation
-/// requests, which have nothing to remove: extended `MKCOL` (RFC 5689
-/// §3) and CalDAV `MKCALENDAR` (RFC 4791 §5.3.1). [`proppatch_body`]
+/// `(property, value)` pair, rooted at `root`.
+///
+/// Backs the creation requests, which have nothing to remove: extended `MKCOL`
+/// (RFC 5689 §3) and CalDAV `MKCALENDAR` (RFC 4791 §5.3.1). [`proppatch_body`]
 /// builds the update counterpart, which also carries `DAV:remove`.
 pub fn prop_set_body(
     root: WebdavProperty,
@@ -390,14 +375,12 @@ pub fn prop_set_body(
     body.into_bytes()
 }
 
-/// Extracts a resource id from a `Location` header: its last path
-/// segment (query and fragment dropped), matching how a listed
-/// resource's id is derived from its href. [`None`] for an empty
-/// segment.
+/// Extracts a resource id from a `Location` header: its last path segment,
+/// query and fragment dropped, or [`None`] when that segment is empty.
 ///
-/// A server may store a created resource under a name of its own and
-/// report it here (Google does), in which case that name, not the one
-/// the caller sent, is what addresses the resource afterwards.
+/// A server may store a created resource under a name of its own and report it
+/// here (Google does), in which case that name, not the one the caller sent, is
+/// what addresses the resource afterwards.
 pub fn id_from_location(location: &str) -> Option<String> {
     let path = location
         .split(['?', '#'])
@@ -408,9 +391,8 @@ pub fn id_from_location(location: &str) -> Option<String> {
     (!segment.is_empty()).then(|| segment.to_string())
 }
 
-/// Builds an extended `MKCOL` request body (RFC 5689 §3): a
-/// `<resourcetype>` of `<collection/>` plus `resource_types`, and each
-/// `set` property value.
+/// Builds an extended `MKCOL` request body (RFC 5689 §3): a `<resourcetype>` of
+/// `<collection/>` plus `resource_types`, and each `set` property value.
 pub fn mkcol_body(
     resource_types: &[WebdavProperty],
     set: &[(WebdavProperty, WebdavPropValue<'_>)],
@@ -434,8 +416,10 @@ pub fn mkcol_body(
 
 /// Builds a `REPORT` query body (RFC 3253 §3.6) rooted at `root` (e.g.
 /// `calendar-query`), requesting `props` and appending the raw `filter`
-/// fragment. `extra_ns` declares namespaces the filter needs beyond
-/// those of `root` and `props`.
+/// fragment.
+///
+/// `extra_ns` declares the namespaces the filter needs beyond those of `root`
+/// and `props`.
 pub fn report_query_body(
     root: WebdavProperty,
     extra_ns: &[WebdavNamespace],
@@ -457,19 +441,18 @@ pub fn report_query_body(
 
 /// Parses a `multistatus` body into vocabulary-agnostic entries.
 ///
-/// Matching is by local name (namespace prefixes are ignored), and only
-/// properties under 2xx `propstat`s are kept. Responses without any 2xx
-/// propstat still survive as entries with empty props, carrying their
-/// response-level status (`sync-collection` removal and truncation
-/// rows). Predefined and numeric character references are resolved;
-/// unknown entity references are kept verbatim. Malformed input yields
-/// whatever was parsed before the error.
+/// Matching is by local name, namespace prefixes ignored, and only properties
+/// under 2xx `propstat`s land in `props`. A response without any 2xx propstat
+/// still survives as an entry carrying its response-level status, which is what
+/// `sync-collection` removal and truncation rows are. Predefined and numeric
+/// character references are resolved, unknown ones kept verbatim, and malformed
+/// input yields whatever was parsed before the error.
 pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
     let mut reader = Reader::from_str(xml);
 
     let mut responses: Vec<WebdavResponseEntry> = Vec::new();
     let mut sync_token: Option<String> = None;
-    // (local name, accumulated descendant text, direct children)
+    // NOTE: local name, accumulated descendant text, direct children.
     let mut stack: Vec<(String, String, Vec<WebdavPropChild>)> = Vec::new();
     let mut response: Option<WebdavResponseEntry> = None;
     let mut propstat_props: Vec<WebdavPropItem> = Vec::new();
@@ -567,9 +550,8 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                                         entry.props.append(&mut propstat_props)
                                     }
                                     // NOTE: a refused propstat is where a
-                                    // PROPPATCH says it changed nothing, so
-                                    // its properties are kept as failures
-                                    // rather than dropped.
+                                    // PROPPATCH says it changed nothing, so its
+                                    // properties are kept as failures.
                                     Some(status) => entry.failures.extend(
                                         propstat_props.drain(..).map(|item| WebdavPropFailure {
                                             status,
@@ -625,8 +607,8 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
     }
 }
 
-/// Returns the value of the HTTP `Authorization` header for the given
-/// scheme, or [`None`] when no header should be emitted.
+/// Returns the value of the HTTP `Authorization` header for the given scheme,
+/// or [`None`] when no header should be emitted.
 pub fn emit_header(auth: &WebdavAuth) -> Option<String> {
     match auth {
         WebdavAuth::None => None,
@@ -637,9 +619,9 @@ pub fn emit_header(auth: &WebdavAuth) -> Option<String> {
 
 /// Resolves `path` against `base_url`.
 ///
-/// Empty paths return `base_url` unchanged. Absolute paths (starting
-/// with `/`) replace the base path. Relative paths are appended to the
-/// base path. Falls back to `base_url` when the join fails.
+/// An empty path returns `base_url` unchanged, an absolute path replaces the
+/// base path and a relative one is appended to it. Falls back to `base_url`
+/// when the join fails.
 pub fn resolve(base_url: &Url, path: &str) -> Url {
     if path.is_empty() {
         return base_url.clone();
@@ -662,16 +644,16 @@ pub fn resolve(base_url: &Url, path: &str) -> Url {
     base.join(path).unwrap_or_else(|_| base_url.clone())
 }
 
-/// Reads the `ETag` header (RFC 9110 §8.8.3) out of an HTTP response,
-/// stripping the surrounding double quotes when present.
+/// Reads the `ETag` header (RFC 9110 §8.8.3) out of an HTTP response, stripping
+/// the surrounding double quotes when present.
 pub fn read_etag(response: &HttpResponse) -> Option<String> {
     response
         .header("etag")
         .map(|raw| raw.trim_matches('"').into())
 }
 
-/// Resolves an `<href>` value against `base_url`, joining when the href
-/// is relative. Returns [`None`] when the href cannot be parsed.
+/// Resolves an `<href>` value against `base_url`, joining when the href is
+/// relative. Returns [`None`] when the href cannot be parsed.
 pub fn resolve_href(base_url: &Url, href: &str) -> Option<Url> {
     match Url::parse(href) {
         Ok(url) => Some(url),
@@ -680,9 +662,8 @@ pub fn resolve_href(base_url: &Url, href: &str) -> Option<Url> {
     }
 }
 
-/// Trace-logs every property of `entry` whose local name is not in
-/// `known`. Lets `from_props` mappers surface ignored properties
-/// without failing.
+/// Trace-logs every property of `entry` whose local name is not in `known`, so
+/// a `from_props` mapper surfaces what it ignores without failing.
 pub fn trace_unrecognized(entry: &WebdavResponseEntry, known: &[WebdavProperty]) {
     for item in &entry.props {
         if !known.iter().any(|prop| prop.local == item.local) {
@@ -691,8 +672,8 @@ pub fn trace_unrecognized(entry: &WebdavResponseEntry, known: &[WebdavProperty])
     }
 }
 
-/// Extracts the numeric code out of an HTTP status line
-/// (e.g. `HTTP/1.1 404 Not Found`).
+/// Extracts the numeric code out of an HTTP status line (e.g. `HTTP/1.1 404 Not
+/// Found`).
 fn status_code(text: &str) -> Option<u16> {
     text.split_whitespace().nth(1)?.parse().ok()
 }
@@ -702,14 +683,12 @@ const SUMMARY_LEN: usize = 200;
 
 /// Boils an error response body down to one readable line.
 ///
-/// Servers answer an error with anything from a DAV XML condition to a
-/// full HTML page (Fastmail) to nothing at all (iCloud). The DAV
-/// `responsedescription` is the one part written for a human, so it
-/// wins, then an HTML `title`, which is the page's own summary of
-/// itself; failing both, the markup is stripped, the whitespace
-/// collapsed and the result capped. An empty body summarises to
-/// nothing, which lets a caller drop the separator rather than end its
-/// message on a colon.
+/// Servers answer an error with anything from a DAV XML condition to a full
+/// HTML page (Fastmail) to nothing at all (iCloud). The DAV
+/// `responsedescription` is the one part written for a human, so it wins, then
+/// an HTML `title`; failing both, the markup is stripped, the whitespace
+/// collapsed and the result capped. An empty body summarises to nothing, which
+/// lets a caller drop the separator rather than end its message on a colon.
 pub fn summarize_body(body: &str) -> String {
     let text = element_text(body, "responsedescription")
         .or_else(|| element_text(body, "title"))
@@ -722,7 +701,7 @@ pub fn summarize_body(body: &str) -> String {
     }
 }
 
-/// The trimmed text of the first `<local>` element found, whatever its
+/// Returns the trimmed text of the first `<local>` element found, whatever its
 /// namespace prefix, when it carries any.
 fn element_text(body: &str, local: &str) -> Option<String> {
     let open = format!("{local}>");
@@ -756,8 +735,8 @@ fn strip_markup(body: &str) -> String {
     out
 }
 
-/// Renders a summarised body as an error-message suffix: `": <summary>"`,
-/// or nothing at all when there is no summary to show.
+/// Renders a summarised body as an error-message suffix, or nothing at all when
+/// there is no summary to show.
 pub fn summarized(body: &str) -> String {
     match summarize_body(body) {
         summary if summary.is_empty() => String::new(),
@@ -795,13 +774,12 @@ fn value_element(prop: WebdavProperty, value: &WebdavPropValue<'_>) -> String {
     format!("<{name}>{inner}</{name}>")
 }
 
-/// Reads an element's `name` attribute, ignoring a malformed or
-/// non-UTF-8 value.
+/// Reads an element's `name` attribute, ignoring a malformed or non-UTF-8
+/// value.
 fn name_attribute(element: &BytesStart) -> Option<String> {
     let attribute = element.try_get_attribute("name").ok()??;
-    // NOTE: the parser does not track the XML declaration, and every
-    // WebDAV body in practice is XML 1.0, which is also what the
-    // specification tells a reader to assume when it saw no version.
+    // NOTE: the parser does not track the XML declaration, and a reader seeing
+    // no version is told to assume XML 1.0, which every WebDAV body is.
     let value = attribute.normalized_value(XmlVersion::Implicit1_0).ok()?;
     Some(value.into_owned())
 }
@@ -875,9 +853,8 @@ mod tests {
         );
         let xml = core::str::from_utf8(&body).unwrap();
 
-        // Both namespaces are declared on the root, and the two
-        // instructions are siblings: a set-only body would leave the
-        // removed property untouched, which is the whole point.
+        // NOTE: a set-only body would leave the removed property untouched,
+        // which is the whole point of the second instruction block.
         assert!(xml.contains("xmlns:C=\"urn:ietf:params:xml:ns:caldav\""));
         assert!(
             xml.contains("<D:set><D:prop><D:displayname>Renamed</D:displayname></D:prop></D:set>")
@@ -922,8 +899,8 @@ mod tests {
         let comps = WebdavPropValue::Raw("<C:comp name=\"VEVENT\"/>".to_string());
         let body = proppatch_body(&[(COMPONENT_SET, comps)], &[]);
         let xml = core::str::from_utf8(&body).unwrap();
-        // Raw markup survives verbatim; escaping it would turn the
-        // children into text and lose the property's whole value.
+        // NOTE: escaping raw markup would turn the children into text and lose
+        // the property's whole value.
         assert!(xml.contains(
             "<C:supported-calendar-component-set><C:comp name=\"VEVENT\"/></C:supported-calendar-component-set>"
         ));
@@ -953,7 +930,7 @@ mod tests {
         };
         let ms = parse_multistatus(xml);
         let children = &ms.responses[0].prop(COMPONENT_SET).unwrap().children;
-        // The value lives in the attribute, not in a text node, so a
+        // NOTE: the value lives in the attribute, not in a text node, so a
         // text-only reading of this property returns nothing at all.
         let names: Vec<_> = children
             .iter()
@@ -1009,7 +986,6 @@ mod tests {
         assert_eq!(first.text(DISPLAYNAME), Some("Personal"));
         assert!(first.has_resource_type(RESOURCETYPE, CALENDAR));
 
-        // 404 propstat is ignored
         assert_eq!(ms.responses[1].text(DISPLAYNAME), None);
     }
 

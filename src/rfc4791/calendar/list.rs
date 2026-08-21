@@ -1,6 +1,6 @@
-//! `list-calendars` coroutine: PROPFIND Depth:1 against the calendar
-//! home-set URL, collecting every child collection whose resourcetype
-//! is `<C:calendar/>`.
+//! `list-calendars` coroutine: PROPFIND Depth:1 against the calendar home-set
+//! URL, collecting every child collection whose resourcetype is
+//! `<C:calendar/>`.
 //!
 //! # Example
 //!
@@ -17,7 +17,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -111,8 +111,8 @@ fn from_entry(entry: &WebdavResponseEntry) -> Option<CaldavCalendar> {
 
     trace_unrecognized(entry, LIST_PROPS);
 
-    // NOTE: the component set is markup, not text: each type is the
-    // `name` attribute of a `<C:comp/>` child (RFC 4791 §5.2.3).
+    // NOTE: the component set is markup, not text: each type is the `name`
+    // attribute of a `<C:comp/>` child (RFC 4791 §5.2.3).
     let components = entry
         .prop(SUPPORTED_CALENDAR_COMPONENT_SET)
         .map(|item| {

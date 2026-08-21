@@ -1,6 +1,6 @@
-//! Offline coverage of the standard blocking client: every method is
-//! run against a scripted stream replaying canned HTTP responses, plus
-//! local TCP listeners for the connect flow.
+//! Offline coverage of the standard blocking client: every method is run
+//! against a scripted stream replaying canned HTTP responses, plus local TCP
+//! listeners for the connect flow.
 
 #![cfg(feature = "client")]
 
@@ -27,8 +27,8 @@ use io_webdav::{
 use pimalaya_stream::tls::Tls;
 use url::Url;
 
-/// Stream replaying canned HTTP responses: each read pops and serves
-/// the next response whole; writes are accepted and discarded.
+/// Stream replaying canned HTTP responses: each read pops and serves the next
+/// response whole; writes are accepted and discarded.
 struct ScriptedStream {
     responses: VecDeque<Vec<u8>>,
 }
@@ -85,8 +85,8 @@ fn base() -> Url {
     Url::parse("https://dav.example.org/").unwrap()
 }
 
-/// Client with the whole discovery state pre-cached, so each method
-/// consumes exactly one scripted response.
+/// Client with the whole discovery state pre-cached, so each method consumes
+/// exactly one scripted response.
 fn discovered_client(responses: Vec<Vec<u8>>) -> WebdavClientStd {
     WebdavClientStd::from_parts(
         ScriptedStream::new(responses),
@@ -216,7 +216,7 @@ const SYNC_XML: &str = r#"<d:multistatus xmlns:d="DAV:">
   <d:sync-token>http://example.org/ns/sync/42</d:sync-token>
 </d:multistatus>"#;
 
-// --- construction and options ---------------------------------------------
+// --- construction and options ---
 
 #[test]
 fn new_applies_the_default_options() {
@@ -250,7 +250,7 @@ fn set_stream_swaps_the_transport() {
     assert_eq!(home.as_str(), "https://dav.example.org/dav/calendars/");
 }
 
-// --- connect ----------------------------------------------------------------
+// --- connect ---
 
 #[cfg(any(
     feature = "rustls-aws",
@@ -313,7 +313,7 @@ fn connect_surfaces_tls_failures() {
     assert!(result.is_err(), "expected the TLS connect to fail");
 }
 
-// --- discovery ---------------------------------------------------------------
+// --- discovery ---
 
 #[test]
 fn current_user_principal_discovers_then_caches() {
@@ -522,7 +522,7 @@ fn io_failures_surface_as_io_errors() {
     assert!(matches!(err, WebdavClientStdError::Io(_)));
 }
 
-// --- CalDAV methods ------------------------------------------------------------
+// --- CalDAV methods ---
 
 #[test]
 fn calendar_methods_run_their_coroutines() {
@@ -600,7 +600,7 @@ fn item_methods_run_their_coroutines() {
         .expect("delete item");
 }
 
-// --- CardDAV methods -------------------------------------------------------------
+// --- CardDAV methods ---
 
 #[test]
 fn addressbook_methods_run_their_coroutines() {
@@ -638,9 +638,9 @@ fn addressbook_methods_run_their_coroutines() {
 
 #[test]
 fn a_refused_property_fails_the_update() {
-    // NOTE: the request itself is a 207, so only the propstat says the
-    // property never changed. iCloud answers this way for a collection
-    // that does not exist.
+    // NOTE: the request itself is a 207, so only the propstat says the property
+    // never changed. iCloud answers this way for a collection that does not
+    // exist.
     let refused = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
         <d:href>/dav/books/nope/</d:href>
@@ -680,9 +680,9 @@ fn a_refused_property_fails_the_update() {
 
 #[test]
 fn a_property_the_server_never_mentions_fails_the_update() {
-    // NOTE: iCloud answers a PROPPATCH on a collection that does not
-    // exist with a 200 propstat carrying an empty prop, naming nothing,
-    // where RFC 4918 §9.2.1 wants a propstat per requested property.
+    // NOTE: iCloud answers a PROPPATCH on a collection that does not exist with
+    // a 200 propstat carrying an empty prop, naming nothing, where RFC 4918
+    // §9.2.1 wants a propstat per requested property.
     let silent = r#"<multistatus xmlns="DAV:">
       <response>
         <href>/dav/books/nope/</href>

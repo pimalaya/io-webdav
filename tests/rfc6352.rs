@@ -1,6 +1,6 @@
-//! Offline coverage of the CardDAV layer (RFC 6352): the addressbook
-//! and card vocabularies, the request-body helpers and every coroutine,
-//! resumed against scripted HTTP response bytes.
+//! Offline coverage of the CardDAV layer (RFC 6352): the addressbook and card
+//! vocabularies, the request-body helpers and every coroutine, resumed against
+//! scripted HTTP response bytes.
 
 mod common;
 
@@ -29,7 +29,7 @@ fn base() -> Url {
     Url::parse("https://dav.example.org/").unwrap()
 }
 
-// --- vocabulary and body helpers -----------------------------------------
+// --- vocabulary and body helpers ---
 
 #[test]
 fn property_set_keeps_only_the_present_fields() {
@@ -80,7 +80,7 @@ fn card_join_path_keeps_the_resource_name_verbatim() {
     );
 }
 
-// --- addressbook coroutines -------------------------------------------------
+// --- addressbook coroutines ---
 
 #[test]
 fn list_addressbooks_maps_addressbook_collections_only() {
@@ -122,8 +122,8 @@ fn list_addressbooks_maps_addressbook_collections_only() {
     assert!(request.contains("depth: 1\r\n"));
 
     let addressbooks = ret.unwrap();
-    // NOTE: the home itself (no addressbook resourcetype) and the
-    // empty-id root href are both skipped.
+    // NOTE: the home itself (no addressbook resourcetype) and the empty-id root
+    // href are both skipped.
     assert_eq!(addressbooks.len(), 1);
     let addressbook = addressbooks.first().unwrap();
     assert_eq!(addressbook.id, "contacts");
@@ -182,7 +182,7 @@ fn update_addressbook_removes_the_properties_the_patch_clears() {
     let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
     let (request, ret) = expect_exchange(&mut update, &reply);
 
-    // The cleared description leaves as a removal, while the untouched
+    // NOTE: the cleared description leaves as a removal, while the untouched
     // color appears in neither instruction.
     assert!(
         request.contains("<d:set><d:prop><d:displayname>renamed</d:displayname></d:prop></d:set>")
@@ -234,7 +234,7 @@ fn addressbook_home_set_yields_none_on_an_empty_multistatus() {
     assert!(ret.unwrap().is_none());
 }
 
-// --- card coroutines ---------------------------------------------------------
+// --- card coroutines ---
 
 const CARDS_XML: &str = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
   <d:response>
@@ -290,10 +290,10 @@ fn list_cards_maps_address_data_entries() {
     assert!(request.contains("<c:address-data/>"));
 
     let cards = ret.unwrap();
-    // NOTE: the data-less entry, the collection self-entry and the
-    // empty href are all skipped. Every surviving id is the href's last
-    // segment verbatim, no `.vcf` stripped, so `alice.vcf` stays
-    // `alice.vcf` and the suffix-less `bob` stays `bob`.
+    // NOTE: the data-less entry, the collection self-entry and the empty href
+    // are all skipped. Every surviving id is the href's last segment verbatim,
+    // no `.vcf` stripped, so `alice.vcf` stays `alice.vcf` and the suffix-less
+    // `bob` stays `bob`.
     assert_eq!(cards.len(), 2);
     let alice = cards.iter().find(|card| card.id == "alice.vcf").unwrap();
     assert_eq!(alice.etag.as_deref(), Some("etag-1"));
@@ -323,17 +323,17 @@ fn enum_cards_returns_etag_only_references() {
     let refs = ret.unwrap();
     assert_eq!(refs.len(), 1);
     let alice = refs.first().unwrap();
-    // the id is the href's last segment verbatim, `.vcf` included
+    // NOTE: the id is the href's last segment verbatim, `.vcf` included
     assert_eq!(alice.id, "alice.vcf");
     assert_eq!(alice.etag.as_deref(), Some("etag-1"));
 }
 
 #[test]
 fn enum_cards_skips_the_collection_self_entry_and_empty_hrefs() {
-    // iCloud echoes the addressbook collection itself (its href ends in
-    // a slash) in the addressbook-query response; it must not enter the
-    // spine as a bogus card named after the collection. An href with no
-    // last segment at all yields no addressable id either.
+    // NOTE: iCloud echoes the addressbook collection itself (its href ends in a
+    // slash) in the addressbook-query response; it must not enter the spine as
+    // a bogus card named after the collection. An href with no last segment at
+    // all yields no addressable id either.
     let mut enumerate = CarddavCardEnum::new(
         &base(),
         &WebdavAuth::None,
@@ -368,7 +368,7 @@ fn enum_cards_skips_the_collection_self_entry_and_empty_hrefs() {
 
     let refs = ret.unwrap();
     assert_eq!(refs.len(), 1);
-    // the id is the href's last segment verbatim, `.vcf` included
+    // NOTE: the id is the href's last segment verbatim, `.vcf` included
     assert_eq!(refs.first().unwrap().id, "5d18175a.vcf");
 }
 
@@ -411,9 +411,9 @@ fn read_card_returns_body_and_etag() {
 
 #[test]
 fn create_card_uses_the_id_verbatim() {
-    // The id is the resource name. io-webdav never appends `.vcf`, so a
-    // bare `alice` is PUT at `.../alice`, not `.../alice.vcf`. The caller
-    // owns the whole name and picks its own extension, if any.
+    // NOTE: the id is the resource name. io-webdav never appends `.vcf`, so a
+    // bare `alice` is PUT at `.../alice`, not `.../alice.vcf`. The caller owns
+    // the whole name and picks its own extension, if any.
     let mut create = CarddavCardCreate::new(
         &base(),
         &WebdavAuth::None,
@@ -422,7 +422,7 @@ fn create_card_uses_the_id_verbatim() {
         "alice",
         b"BEGIN:VCARD".to_vec(),
     );
-    // No `Location` in the reply → the returned id falls back to the
+    // NOTE: no `Location` in the reply → the returned id falls back to the
     // caller's name.
     let reply = http_response("201 Created", &[("ETag", "\"etag-1\"")], "");
     let (request, ret) = expect_exchange(&mut create, &reply);
@@ -437,9 +437,9 @@ fn create_card_uses_the_id_verbatim() {
 
 #[test]
 fn create_card_prefers_the_location_id_when_the_server_relocates() {
-    // A server may store the card under a name of its own and report it
-    // in `Location` (Google does): the returned id is then that name, not
-    // the caller's, while the PUT still targets the caller's name.
+    // NOTE: a server may store the card under a name of its own and report it
+    // in `Location` (Google does): the returned id is then that name, not the
+    // caller's, while the PUT still targets the caller's name.
     let mut create = CarddavCardCreate::new(
         &base(),
         &WebdavAuth::None,
@@ -504,11 +504,9 @@ fn delete_card_targets_the_resource() {
 
 #[test]
 fn a_listed_card_id_round_trips_through_read() {
-    // Regression: a consumer takes a card's listed id and reads it back.
-    // The id must address the very resource the server enumerated, with
-    // no extension added or stripped in between. That asymmetry broke
-    // read, update and delete on `.vcf`-suffixing servers: the listed
-    // id was `.vcf`-stripped, but the GET path was not re-suffixed.
+    // NOTE: a listed id must address the very resource the server enumerated,
+    // with no extension added or stripped in between. That asymmetry broke
+    // read, update and delete on `.vcf`-suffixing servers.
     let mut list = CarddavCardList::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
     let (_request, ret) = expect_exchange(&mut list, &multistatus_response(CARDS_XML));
     let cards = ret.unwrap();

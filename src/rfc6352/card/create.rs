@@ -1,14 +1,13 @@
-//! `create-card` coroutine: PUT raw vCard bytes against
-//! `<addressbook>/<id>`.
+//! `create-card` coroutine: PUT raw vCard bytes against `<addressbook>/<id>`.
 //!
-//! The `id` is the resource name, used verbatim. io-webdav never
-//! appends a file extension, so the caller owns the whole name. The
-//! returned [`CarddavCardCreateOk::id`] is the caller's name, or the server's
-//! own when it relocates the resource and reports it in a `Location`
-//! header. Either way it is what read, update and delete address.
+//! The `id` is the resource name, used verbatim. io-webdav never appends a file
+//! extension, so the caller owns the whole name. The returned
+//! [`CarddavCardCreateOk::id`] is the caller's name, or the server's own when
+//! it relocates the resource and reports it in a `Location` header. Either way
+//! it is what read, update and delete address.
 //!
-//! Uses `If-None-Match: *` so the server rejects the PUT when a
-//! resource with the same id already exists.
+//! Uses `If-None-Match: *` so the server rejects the PUT when a resource with
+//! the same id already exists.
 //!
 //! # Example
 //!
@@ -25,7 +24,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -141,13 +140,12 @@ enum State {
     WebdavPut(WebdavPut),
 }
 
-/// Outcome of a successful
-/// [`CarddavCardCreate`] resume.
+/// Outcome of a successful [`CarddavCardCreate`] resume.
 #[derive(Clone, Debug)]
 pub struct CarddavCardCreateOk {
-    /// Card resource id: the `Location` header's last path segment when
-    /// the server returns one (its own name for the resource), otherwise
-    /// the caller-supplied name, verbatim.
+    /// Card resource id: the `Location` header's last path segment when the
+    /// server returns one (its own name for the resource), otherwise the
+    /// caller-supplied name, verbatim.
     pub id: String,
     /// Entity tag returned by the server, when present.
     pub etag: Option<String>,

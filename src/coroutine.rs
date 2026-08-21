@@ -1,9 +1,9 @@
-//! Generator-shape coroutine driver. Mirrors `core::ops::Coroutine`: a
-//! `Yield` associated type for intermediate progress, a `Return` for
-//! terminal output, and a two-variant [`WebdavCoroutineState`].
+//! Generator-shape coroutine contract, mirroring `core::ops::Coroutine`: a
+//! `Yield` associated type for intermediate progress, a `Return` for terminal
+//! output, and a two-variant [`WebdavCoroutineState`].
 //!
-//! Most coroutines pick the standard [`WebdavYield`], which carries
-//! nothing but I/O requests. Redirect-aware ones declare their own, as
+//! Most coroutines pick the standard [`WebdavYield`], which carries nothing but
+//! I/O requests. Redirect-aware ones declare their own, as
 //! [`WebdavRedirectYield`] does.
 //!
 //! [`WebdavRedirectYield`]: crate::rfc4918::coroutine::WebdavRedirectYield
@@ -29,12 +29,12 @@ pub trait WebdavCoroutine {
     /// Advances the coroutine one step.
     ///
     /// Pass [`None`] on the initial call or after a
-    /// [`WebdavYield::WantsWrite`]. Pass `Some(data)` after a
-    /// [`WebdavYield::WantsRead`]; `Some(&[])` signals EOF.
+    /// [`WebdavYield::WantsWrite`], `Some(data)` after a
+    /// [`WebdavYield::WantsRead`], `Some(&[])` for EOF.
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return>;
 }
 
-/// Standard I/O-only Yield for coroutines that only read/write socket bytes.
+/// Standard yield for the coroutines that only read and write socket bytes.
 #[derive(Debug)]
 pub enum WebdavYield {
     /// Driver should read more bytes and feed them back on the next resume.
@@ -43,8 +43,8 @@ pub enum WebdavYield {
     WantsWrite(Vec<u8>),
 }
 
-/// Coroutine `?`: forwards `Yielded` and short-circuits on `Err`, both
-/// through `Into`, and evaluates to the inner `Ok` value.
+/// Coroutine `?`: forwards `Yielded` and short-circuits on `Err`, both through
+/// `Into`, and evaluates to the inner `Ok` value.
 #[macro_export]
 macro_rules! webdav_try {
     ($coroutine:expr, $arg:expr $(,)?) => {

@@ -1,18 +1,17 @@
 //! End-to-end CalDAV + CardDAV tests against Apple iCloud.
 //!
-//! iCloud serves CalDAV and CardDAV over HTTPS behind HTTP Basic auth,
-//! but only with an app-specific password: accounts have mandatory 2FA,
-//! so the primary Apple ID password is rejected. Generate one at
+//! iCloud serves CalDAV and CardDAV over HTTPS behind HTTP Basic auth, but only
+//! with an app-specific password: accounts have mandatory 2FA, so the primary
+//! Apple ID password is rejected. Generate one at
 //! <https://account.apple.com/account/manage>.
 //!
-//! iCloud forbids creating collections over DAV: `MKCALENDAR` and
-//! `MKCOL` both return 403, and it exposes only the collections it
-//! provisions for the account (notably a single fixed `card`
-//! addressbook). So these tests exercise item / card CRUD inside an
-//! existing collection rather than the full create-collection flow.
-//! Point them at a throwaway calendar via `ICLOUD_CALENDAR_ID` (the
-//! per-calendar UUID; list them once with the CalDAV flow logs or the
-//! iCloud web UI). The addressbook defaults to `card` and is
+//! iCloud forbids creating collections over DAV: `MKCALENDAR` and `MKCOL` both
+//! return 403, and it exposes only the collections it provisions for the
+//! account (notably a single fixed `card` addressbook). So these tests exercise
+//! item / card CRUD inside an existing collection rather than the full
+//! create-collection flow. Point them at a throwaway calendar via
+//! `ICLOUD_CALENDAR_ID` (the per-calendar UUID; list them once with the CalDAV
+//! flow logs or the iCloud web UI). The addressbook defaults to `card` and is
 //! overridable via `ICLOUD_ADDRESSBOOK_ID`. Run with:
 //!
 //! ```sh
@@ -22,15 +21,14 @@
 //! cargo test --test icloud -- --ignored
 //! ```
 //!
-//! The two protocols live on separate hosts: CalDAV on
-//! `caldav.icloud.com`, CardDAV on `contacts.icloud.com`. Both are the
-//! generic entry points; iCloud advertises the principal and home-sets
-//! on a per-account partition host (e.g. `p52-caldav.icloud.com`). The
-//! shared helper keeps only the discovered path and replays it against
-//! the generic host, which iCloud routes to the right partition by
-//! credential. If a future iCloud change starts requiring the partition
-//! host outright, swap the base URL for the advertised one (or reconnect
-//! via `WebdavClientStd::set_stream`).
+//! The two protocols live on separate hosts: CalDAV on `caldav.icloud.com`,
+//! CardDAV on `contacts.icloud.com`. Both are the generic entry points; iCloud
+//! advertises the principal and home-sets on a per-account partition host (e.g.
+//! `p52-caldav.icloud.com`). The shared helper keeps only the discovered path
+//! and replays it against the generic host, which iCloud routes to the right
+//! partition by credential. If a future iCloud change starts requiring the
+//! partition host outright, swap the base URL for the advertised one (or
+//! reconnect via `WebdavClientStd::set_stream`).
 
 mod common;
 

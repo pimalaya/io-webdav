@@ -5,20 +5,17 @@
 //! [`user_agent`]) and the discovery caches ([`principal_url`],
 //! [`calendar_home_set`], [`addressbook_home_set`]).
 //!
-//! The bare [`new`] constructor takes a pre-connected stream; callers handle
-//! TCP and TLS themselves. With one of the TLS feature flags enabled
-//! (`rustls-ring`, `rustls-aws`, `native-tls`), [`connect`] is also available
-//! and handles `https://` URLs end-to-end via
-//! [`pimalaya_stream::stream::Stream`].
+//! The bare [`new`] constructor takes a pre-connected stream, TCP and TLS being
+//! the caller's business. Under one of the TLS features (`rustls-ring`,
+//! `rustls-aws`, `native-tls`), [`connect`] opens `http://` and `https://` URLs
+//! itself.
 //!
-//! Discovery flows top-down from the configured [`base_url`] (the DAV
-//! context root, resolved by io-pim-discovery's RFC 6764 flow upstream):
-//! [`current_user_principal`] resolves the principal URL;
-//! [`calendar_home_set`] / [`addressbook_home_set`] resolve the per-RFC
-//! home-set URL. Each step caches its result; higher-level methods return
-//! [`MissingPrincipal`] / [`MissingCalendarHomeSet`] /
-//! [`MissingAddressbookHomeSet`] when the cache is empty (mirrors io-jmap's
-//! `MissingSession`).
+//! Discovery flows top-down from [`base_url`], the DAV context root resolved
+//! upstream by io-pim-discovery: [`current_user_principal`] resolves the
+//! principal URL, then [`calendar_home_set`] and [`addressbook_home_set`]
+//! resolve the per-RFC home set. Each step caches its result, and a method
+//! needing a step that never ran fails with [`MissingPrincipal`],
+//! [`MissingCalendarHomeSet`] or [`MissingAddressbookHomeSet`].
 //!
 //! [`base_url`]: WebdavClientStd::base_url
 //! [`user_agent`]: WebdavClientStd::user_agent
@@ -148,29 +145,27 @@ pub enum WebdavClientStdError {
     /// redirects.
     #[error("WebDAV server redirected to `{0}` during a non-redirectable operation")]
     UnexpectedRedirect(Url),
-    /// The client has no principal URL yet; `current_user_principal`
-    /// must run first.
+    /// The client has no principal URL yet; `current_user_principal` must run
+    /// first.
     #[error("WebDAV client missing principal URL; call `current_user_principal` first")]
     MissingPrincipal,
-    /// The client has no calendar home-set yet; `calendar_home_set` must
-    /// run first.
+    /// The client has no calendar home-set yet; `calendar_home_set` must run
+    /// first.
     #[error("WebDAV client missing calendar home-set; call `calendar_home_set` first")]
     MissingCalendarHomeSet,
-    /// The client has no addressbook home-set yet; `addressbook_home_set`
-    /// must run first.
+    /// The client has no addressbook home-set yet; `addressbook_home_set` must
+    /// run first.
     #[error("WebDAV client missing addressbook home-set; call `addressbook_home_set` first")]
     MissingAddressbookHomeSet,
-    /// The server refused one or more properties of a `PROPPATCH`
-    /// (RFC 4918 §9.2). The request itself succeeded, since a
-    /// `PROPPATCH` answers 207 whatever it decided, so only the
-    /// multistatus tells whether anything changed.
+    /// The server refused one or more properties of a `PROPPATCH` (RFC 4918
+    /// §9.2). The request itself succeeded: a `PROPPATCH` answers 207 whatever
+    /// it decided, so only the multistatus tells whether anything changed.
     #[error("WebDAV server rejected the property update: {}", join_failures(.0))]
     PropertiesRejected(Vec<WebdavPropFailure>),
-    /// The server answered a `PROPPATCH` without mentioning the
-    /// properties it was asked to change. RFC 4918 §9.2.1 wants a
-    /// propstat for each of them, so a silent response is a change that
-    /// did not happen (iCloud answers this way for a collection that
-    /// does not exist).
+    /// The server answered a `PROPPATCH` without mentioning the properties it
+    /// was asked to change. RFC 4918 §9.2.1 wants a propstat for each of them,
+    /// so a silent response is a change that did not happen: iCloud answers
+    /// this way for a collection it does not have.
     #[error("WebDAV server ignored the property update: {}", .0.join(", "))]
     PropertiesIgnored(Vec<String>),
 }
@@ -184,10 +179,9 @@ fn join_failures(failures: &[WebdavPropFailure]) -> String {
         .join(", ")
 }
 
-/// Turns a `PROPPATCH` outcome into a result: a property the server
-/// refused fails the call, and so does one it never mentioned, since
-/// RFC 4918 §9.2.1 wants a propstat for every property the request
-/// carried.
+/// Turns a `PROPPATCH` outcome into a result: a property the server refused
+/// fails the call, and so does one it never mentioned, since RFC 4918 §9.2.1
+/// wants a propstat for every property the request carried.
 fn check_properties_accepted(out: WebdavProppatchOk) -> Result<(), WebdavClientStdError> {
     let WebdavProppatchOk {
         multistatus,
@@ -266,8 +260,8 @@ impl fmt::Debug for WebdavClientStd {
 }
 
 impl WebdavClientStd {
-    /// Builds a client around `stream`. The caller is responsible for
-    /// opening the connection (TCP, TLS handshake if needed).
+    /// Builds a client around `stream`. The caller is responsible for opening
+    /// the connection (TCP, TLS handshake if needed).
     pub fn new<S: Read + Write + Send + 'static>(
         stream: S,
         auth: WebdavAuth,
@@ -284,8 +278,8 @@ impl WebdavClientStd {
         }
     }
 
-    /// Builds a client from a pre-connected stream and the full
-    /// discovery state already in hand. Skips every discovery step.
+    /// Builds a client from a pre-connected stream and the full discovery state
+    /// already in hand. Skips every discovery step.
     pub fn from_parts<S: Read + Write + Send + 'static>(
         stream: S,
         auth: WebdavAuth,
@@ -305,9 +299,8 @@ impl WebdavClientStd {
         }
     }
 
-    /// Connects to `url`'s host and runs the TLS handshake when the
-    /// scheme is `https`. `http` goes through plain TCP. ALPN is set
-    /// to `http/1.1`.
+    /// Connects to `url`'s host and runs the TLS handshake when the scheme is
+    /// `https`. `http` goes through plain TCP. ALPN is set to `http/1.1`.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
@@ -343,8 +336,8 @@ impl WebdavClientStd {
         Ok(Self::new(stream, auth, url.clone()))
     }
 
-    /// Replaces the underlying stream; useful when discovery surfaces a
-    /// new authority and the caller has to reconnect.
+    /// Replaces the underlying stream; useful when discovery surfaces a new
+    /// authority and the caller has to reconnect.
     pub fn set_stream<S: Read + Write + Send + 'static>(&mut self, stream: S) {
         self.stream = Box::new(stream);
     }
@@ -354,9 +347,9 @@ impl WebdavClientStd {
         &self.auth
     }
 
-    /// Runs any standard-shape coroutine (`Yield = WebdavYield`)
-    /// against the client stream until completion. Redirect-aware
-    /// discovery uses [`run_redirect`](Self::run_redirect) instead.
+    /// Runs any standard-shape coroutine (`Yield = WebdavYield`) against the
+    /// client stream until completion. Redirect-aware discovery uses
+    /// [`run_redirect`](Self::run_redirect) instead.
     fn run<C, T, E>(&mut self, mut coroutine: C) -> Result<T, WebdavClientStdError>
     where
         C: WebdavCoroutine<Yield = WebdavYield, Return = Result<T, E>>,
@@ -378,12 +371,11 @@ impl WebdavClientStd {
         ret.map_err(Into::into)
     }
 
-    /// Runs a redirect-aware discovery coroutine (`Yield =
-    /// WebdavRedirectYield`, `Return = Option<Url>`). A 3xx is surfaced
-    /// as [`UnexpectedRedirect`] rather than followed: this client owns
-    /// a single connected stream, so only the caller (who owns
-    /// connection creation) can reconnect to the target and retry, e.g.
-    /// via [`set_stream`] (mirrors io-http's `HttpClientStd`).
+    /// Runs a redirect-aware discovery coroutine against the client stream.
+    ///
+    /// A 3xx surfaces as [`UnexpectedRedirect`] rather than being followed:
+    /// this client owns a single connected stream, so only the caller can
+    /// reconnect to the target and retry, via [`set_stream`].
     ///
     /// [`UnexpectedRedirect`]: WebdavClientStdError::UnexpectedRedirect
     /// [`set_stream`]: WebdavClientStd::set_stream
@@ -417,12 +409,13 @@ impl WebdavClientStd {
             }
         }
     }
+}
 
-    // ---- Discovery (RFC 5397 + per-RFC home-set) ------------------------
-
-    /// Discovers the current user principal URL (RFC 5397) and caches
-    /// it in [`principal_url`]. Subsequent calls return the cached
-    /// value without hitting the network.
+/// Discovery, the entry point of every other method (RFC 5397).
+impl WebdavClientStd {
+    /// Discovers the current user principal URL (RFC 5397) and caches it in
+    /// [`principal_url`]. Subsequent calls return the cached value without
+    /// hitting the network.
     ///
     /// [`principal_url`]: WebdavClientStd::principal_url
     pub fn current_user_principal(&mut self) -> Result<Url, WebdavClientStdError> {
@@ -438,12 +431,13 @@ impl WebdavClientStd {
         self.principal_url = Some(url.clone());
         Ok(url)
     }
+}
 
-    // ---- CalDAV (RFC 4791) ----------------------------------------------
-
-    /// Discovers the CalDAV home-set URL (RFC 4791 §6.2.1) and caches
-    /// it in [`calendar_home_set`]. Resolves [`principal_url`] first
-    /// when it is not cached.
+/// CalDAV: calendar collections and calendar object resources (RFC 4791).
+impl WebdavClientStd {
+    /// Discovers the CalDAV home-set URL (RFC 4791 §6.2.1) and caches it in
+    /// [`calendar_home_set`]. Resolves [`principal_url`] first when it is not
+    /// cached.
     ///
     /// [`calendar_home_set`]: WebdavClientStd::calendar_home_set
     /// [`principal_url`]: WebdavClientStd::principal_url
@@ -464,8 +458,7 @@ impl WebdavClientStd {
         Ok(url)
     }
 
-    /// Lists every calendar under the cached
-    /// [`calendar_home_set`].
+    /// Lists every calendar under the cached [`calendar_home_set`].
     ///
     /// [`calendar_home_set`]: WebdavClientStd::calendar_home_set
     pub fn list_calendars(&mut self) -> Result<BTreeSet<CaldavCalendar>, WebdavClientStdError> {
@@ -480,8 +473,7 @@ impl WebdavClientStd {
         self.run(coroutine)
     }
 
-    /// Creates a calendar collection under the cached
-    /// [`calendar_home_set`].
+    /// Creates a calendar collection under the cached [`calendar_home_set`].
     ///
     /// [`calendar_home_set`]: WebdavClientStd::calendar_home_set
     pub fn create_calendar(
@@ -545,10 +537,9 @@ impl WebdavClientStd {
         self.run(coroutine).map(|_| ())
     }
 
-    /// Lists every iCalendar item inside `calendar_id`. `comp_filter`
-    /// is the optional VCALENDAR child filter (e.g.
-    /// `<C:comp-filter name=\"VEVENT\" />`); pass an empty string to
-    /// list every component type.
+    /// Lists every iCalendar item inside `calendar_id`, `comp_filter` being the
+    /// optional VCALENDAR child filter and an empty string every component
+    /// type.
     pub fn list_items(
         &mut self,
         calendar_id: &str,
@@ -566,8 +557,8 @@ impl WebdavClientStd {
     }
 
     /// Enumerates item references (id plus ETag, no bodies) inside
-    /// `calendar_id`. `comp_filter` is the optional VCALENDAR child
-    /// filter; pass an empty string to enumerate every component type.
+    /// `calendar_id`, `comp_filter` being the optional VCALENDAR child filter
+    /// and an empty string every component type.
     pub fn enum_items(
         &mut self,
         calendar_id: &str,
@@ -584,8 +575,8 @@ impl WebdavClientStd {
         self.run(coroutine)
     }
 
-    /// Batch-fetches calendar items by id inside `calendar_id` in a
-    /// single round-trip.
+    /// Batch-fetches calendar items by id inside `calendar_id` in a single
+    /// round-trip.
     pub fn multiget_items(
         &mut self,
         calendar_id: &str,
@@ -598,8 +589,8 @@ impl WebdavClientStd {
     }
 
     /// Runs an incremental `sync-collection` REPORT (RFC 6578) against
-    /// `calendar_id`, requesting ETags only. Pass [`None`] as
-    /// `sync_token` for an initial sync.
+    /// `calendar_id`, requesting ETags only. Pass [`None`] as `sync_token` for
+    /// an initial sync.
     pub fn sync_items(
         &mut self,
         calendar_id: &str,
@@ -617,8 +608,7 @@ impl WebdavClientStd {
         self.run(coroutine)
     }
 
-    /// Reads a single calendar item's raw iCalendar bytes plus its
-    /// ETag.
+    /// Reads a single calendar item's raw iCalendar bytes plus its ETag.
     pub fn read_item(
         &mut self,
         calendar_id: &str,
@@ -688,11 +678,12 @@ impl WebdavClientStd {
         );
         self.run(coroutine).map(|_| ())
     }
+}
 
-    // ---- CardDAV (RFC 6352) ---------------------------------------------
-
-    /// Discovers the CardDAV home-set URL (RFC 6352 §7.1.1) and caches
-    /// it in [`addressbook_home_set`].
+/// CardDAV: address book collections and contact cards (RFC 6352).
+impl WebdavClientStd {
+    /// Discovers the CardDAV home-set URL (RFC 6352 §7.1.1) and caches it in
+    /// [`addressbook_home_set`].
     ///
     /// [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
     pub fn addressbook_home_set(&mut self) -> Result<Url, WebdavClientStdError> {
@@ -712,8 +703,7 @@ impl WebdavClientStd {
         Ok(url)
     }
 
-    /// Lists every addressbook under the cached
-    /// [`addressbook_home_set`].
+    /// Lists every addressbook under the cached [`addressbook_home_set`].
     ///
     /// [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
     pub fn list_addressbooks(
@@ -754,9 +744,9 @@ impl WebdavClientStd {
         self.run(coroutine).map(|_| ())
     }
 
-    /// Updates an addressbook collection's properties: sets the ones
-    /// `patch` carries a value for, removes the ones it clears and
-    /// leaves the rest alone.
+    /// Updates an addressbook collection's properties: sets the ones `patch`
+    /// carries a value for, removes the ones it clears and leaves the rest
+    /// alone.
     pub fn update_addressbook(
         &mut self,
         patch: &CarddavAddressbookPatch,
@@ -832,8 +822,8 @@ impl WebdavClientStd {
     }
 
     /// Runs an incremental `sync-collection` REPORT (RFC 6578) against
-    /// `addressbook_id`, requesting ETags only. Pass [`None`] as
-    /// `sync_token` for an initial sync.
+    /// `addressbook_id`, requesting ETags only. Pass [`None`] as `sync_token`
+    /// for an initial sync.
     pub fn sync_cards(
         &mut self,
         addressbook_id: &str,
@@ -923,8 +913,8 @@ impl WebdavClientStd {
     }
 }
 
-/// Runs one standard I/O yield against the stream: writes the bytes, or
-/// reads a chunk into `buf` and returns its length.
+/// Runs one standard I/O yield against the stream: writes the bytes, or reads a
+/// chunk into `buf` and returns its length.
 fn pump(
     stream: &mut dyn WebdavStream,
     buf: &mut [u8],
@@ -956,7 +946,7 @@ fn addressbook_path(
     Ok(format!("{base}/{id}"))
 }
 
-/// Marker for everything the client can run against; auto-implemented
-/// for any blocking `Read + Write + Send` impl.
+/// Marker for everything the client can run against; auto-implemented for any
+/// blocking `Read + Write + Send` impl.
 pub trait WebdavStream: Read + Write + Send {}
 impl<T: Read + Write + Send + ?Sized> WebdavStream for T {}

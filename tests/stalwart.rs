@@ -7,13 +7,13 @@
 //! cargo test --test stalwart -- --ignored
 //! ```
 //!
-//! The bootstrap script provisions one domain (`pimalaya.org`) and one
-//! user (`test@pimalaya.org`) with a strong password (Stalwart enforces
-//! a zxcvbn-style strength check). Stalwart serves CalDAV / CardDAV on
-//! the same HTTP listener as JMAP, bound to host port 8080. It routes
-//! DAV by resource type under `/dav/` (`/dav/cal/`, `/dav/card/`), so
-//! the bare `/dav/` root is not a resource: discovery targets the
-//! per-type root, which resolves the shared principal.
+//! The bootstrap script provisions one domain (`pimalaya.org`) and one user
+//! (`test@pimalaya.org`) with a strong password (Stalwart enforces a
+//! zxcvbn-style strength check). Stalwart serves CalDAV / CardDAV on the same
+//! HTTP listener as JMAP, bound to host port 8080. It routes DAV by resource
+//! type under `/dav/` (`/dav/cal/`, `/dav/card/`), so the bare `/dav/` root is
+//! not a resource: discovery targets the per-type root, which resolves the
+//! shared principal.
 
 mod common;
 

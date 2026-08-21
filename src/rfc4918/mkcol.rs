@@ -1,9 +1,8 @@
 //! Generic extended `MKCOL` coroutine (RFC 4918 §9.3, RFC 5689 §3).
 //!
-//! Creates a collection at `path` whose `<resourcetype>` is
-//! `<collection/>` plus `resource_types`, setting each `(property,
-//! value)` pair. The request body is generated; the response is not
-//! surfaced.
+//! Creates a collection at `path` whose `<resourcetype>` is `<collection/>`
+//! plus `resource_types`, setting each `(property, value)` pair. The request
+//! body is generated; the response is not surfaced.
 //!
 //! # Example
 //!
@@ -19,7 +18,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -64,8 +63,8 @@ pub struct WebdavMkcol {
 }
 
 impl WebdavMkcol {
-    /// Builds a new `MKCOL` coroutine creating a collection at `path`
-    /// with the given extra `resource_types` and property values.
+    /// Builds a new `MKCOL` coroutine creating a collection at `path` with the
+    /// given extra `resource_types` and property values.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

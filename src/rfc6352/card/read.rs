@@ -1,7 +1,7 @@
 //! `read-card` coroutine: GET a card by its resource name.
 //!
-//! Stays byte-oriented: returns raw vCard bytes plus the response's
-//! ETag, leaving the parse to vcard upstream.
+//! Stays byte-oriented: returns raw vCard bytes plus the response's ETag,
+//! leaving the parse to vcard upstream.
 //!
 //! # Example
 //!
@@ -18,7 +18,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -69,9 +69,8 @@ pub struct CarddavCardRead {
 }
 
 impl CarddavCardRead {
-    /// Builds a new `read-card` coroutine. `id` is the resource id
-    /// exactly as the server returned it (`CarddavCardEntry::id`), used
-    /// verbatim.
+    /// Builds a new `read-card` coroutine. `id` is the resource id exactly as
+    /// the server returned it (`CarddavCardEntry::id`), used verbatim.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -107,8 +106,7 @@ enum State {
     WebdavGet(WebdavGet),
 }
 
-/// Card body plus optional ETag returned by
-/// [`CarddavCardRead`].
+/// Card body plus optional ETag returned by [`CarddavCardRead`].
 #[derive(Clone, Debug)]
 pub struct CarddavCardBody {
     /// Raw vCard bytes.

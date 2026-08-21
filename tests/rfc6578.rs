@@ -1,5 +1,5 @@
-//! Offline coverage of the `sync-collection` REPORT (RFC 6578), resumed
-//! against scripted HTTP response bytes.
+//! Offline coverage of the `sync-collection` REPORT (RFC 6578), resumed against
+//! scripted HTTP response bytes.
 
 mod common;
 

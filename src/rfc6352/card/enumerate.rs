@@ -1,8 +1,8 @@
-//! `enum-cards` coroutine: REPORT `addressbook-query` requesting ETags
-//! only, against an addressbook collection.
+//! `enum-cards` coroutine: REPORT `addressbook-query` requesting ETags only,
+//! against an addressbook collection.
 //!
-//! Enumerates the full card spine (id plus ETag) without downloading
-//! any vCard body; bodies are then batch-fetched with
+//! Enumerates the full card spine (id plus ETag) without downloading any vCard
+//! body; bodies are then batch-fetched with
 //! [`CarddavCardMultiget`](crate::rfc6352::card::multiget::CarddavCardMultiget).
 //!
 //! # Example
@@ -20,7 +20,7 @@
 //! };
 //! use url::Url;
 //!
-//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
@@ -64,8 +64,8 @@ use crate::{
 
 const ENUM_PROPS: &[WebdavProperty] = &[GETETAG];
 
-/// Coroutine that enumerates card references (id plus ETag, no body)
-/// inside an addressbook via REPORT `addressbook-query`.
+/// Coroutine that enumerates card references (id plus ETag, no body) inside an
+/// addressbook via REPORT `addressbook-query`.
 #[derive(Debug)]
 pub struct CarddavCardEnum {
     state: State,
@@ -108,10 +108,9 @@ impl WebdavCoroutine for CarddavCardEnum {
 }
 
 fn from_entry(entry: &WebdavResponseEntry) -> Option<CarddavCardRef> {
-    // Skip the collection self-entry: an address object resource never
-    // ends in a slash, but some servers (iCloud) echo the addressbook
-    // itself in the query response, which would otherwise enter the
-    // spine as a bogus card named after the collection.
+    // NOTE: a card href never ends in a slash, but some servers (iCloud) echo
+    // the addressbook itself, which would otherwise enter the spine as a bogus
+    // card named after the collection.
     if entry.href.ends_with('/') {
         return None;
     }

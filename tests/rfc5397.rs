@@ -1,5 +1,5 @@
-//! Offline coverage of the current-user-principal discovery (RFC 5397),
-//! resumed against scripted HTTP response bytes.
+//! Offline coverage of the current-user-principal discovery (RFC 5397), resumed
+//! against scripted HTTP response bytes.
 
 mod common;
 
