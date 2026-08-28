@@ -9,6 +9,11 @@
 //! Uses `If-None-Match: *` so the server rejects the PUT when a resource with
 //! the same id already exists.
 //!
+//! A collection that already holds the card's `UID` refuses the PUT with the
+//! `CARDDAV:no-uid-conflict` precondition (RFC 6352 §6.3.2), surfaced as
+//! [`DuplicateUid`](crate::rfc4918::send::WebdavSendError::DuplicateUid)
+//! rather than as an opaque conflict.
+//!
 //! # Example
 //!
 //! ```rust,no_run
@@ -72,12 +77,11 @@ use crate::{
     coroutine::*,
     rfc4918::{
         WebdavAuth, id_from_location,
-        put::{WebdavPut, WebdavPutArgs},
+        put::{WebdavPut, WebdavPutArgs, duplicate_uid},
         read_etag,
         send::{WebdavSendError, WebdavSendOk},
     },
     rfc6352::card::join_path,
-    webdav_try,
 };
 
 /// Coroutine that creates a card.
@@ -123,7 +127,17 @@ impl WebdavCoroutine for CarddavCardCreate {
         trace!("sending request");
         match &mut self.state {
             State::WebdavPut(put) => {
-                let WebdavSendOk { response, .. } = webdav_try!(put, arg);
+                let ok = match put.resume(arg) {
+                    WebdavCoroutineState::Yielded(yielded) => {
+                        return WebdavCoroutineState::Yielded(yielded);
+                    }
+                    WebdavCoroutineState::Complete(Err(err)) => {
+                        return WebdavCoroutineState::Complete(Err(duplicate_uid(err)));
+                    }
+                    WebdavCoroutineState::Complete(Ok(ok)) => ok,
+                };
+
+                let WebdavSendOk { response, .. } = ok;
                 let etag = read_etag(&response);
                 let id = response
                     .header("location")

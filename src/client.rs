@@ -197,6 +197,19 @@ impl WebdavClientStdError {
                 | Self::WebdavSyncCollection(WebdavSyncCollectionError::UnsupportedReport)
         )
     }
+
+    /// Whether the server refused the write because the collection already
+    /// holds a resource carrying that `UID`, as opposed to refusing it for any
+    /// of the other conflicts a write meets.
+    ///
+    /// A PUT reaches the caller through one error path, no write following
+    /// redirects, so the one variant is every way the refusal arrives. The
+    /// refusal itself is named upstream, on the RFC 4791 §5.3.2 and RFC 6352
+    /// §6.3.2 precondition rather than on the status a server chooses to wrap
+    /// it in.
+    pub fn is_duplicate_uid(&self) -> bool {
+        matches!(self, Self::Send(WebdavSendError::DuplicateUid { .. }))
+    }
 }
 
 /// Renders refused properties as `name (status), name (status)`.

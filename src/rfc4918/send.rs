@@ -102,6 +102,23 @@ pub enum WebdavSendError {
         /// The response body, verbatim.
         body: String,
     },
+    /// The collection already holds a resource carrying the `UID` of the
+    /// written one, which RFC 4791 §5.3.2 and RFC 6352 §6.3.2 both forbid and
+    /// both name: `CALDAV:no-uid-conflict` and `CARDDAV:no-uid-conflict`.
+    /// Raised by the item and card create and update coroutines, the writes
+    /// that carry a `UID`; one variant serves both flavours, the caller
+    /// knowing which one it called. The consumer fixes the source, this layer
+    /// neither retries nor renames.
+    #[error(
+        "WebDAV collection already holds a resource with the same UID (HTTP {status}){}",
+        summarized(body)
+    )]
+    DuplicateUid {
+        /// The status the server wrapped the refusal in.
+        status: u16,
+        /// The response body, verbatim.
+        body: String,
+    },
     /// The server returned a redirect where none was expected.
     #[error("WebDAV server returned unexpected redirect")]
     UnexpectedRedirect,

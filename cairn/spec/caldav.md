@@ -41,7 +41,7 @@ Batch fetch SHALL use a calendar-multiget REPORT (RFC 4791 section 7.9) with Dep
 An entry whose href ends in a slash SHALL be skipped: it is the collection echoing itself, which some servers include in a query response, and it would otherwise enter the spine as an item named after the collection.
 
 ### Requirement: Preconditions
-Creation SHALL send If-None-Match with a star so the server rejects the write when the resource already exists. Update and delete SHALL accept an optional If-Match so the caller can gate the write on the last-known ETag.
+Creation SHALL send If-None-Match with a star so the server rejects the write when the resource already exists. Update and delete SHALL accept an optional If-Match so the caller can gate the write on the last-known ETag. A write refused with the CALDAV:no-uid-conflict precondition SHALL surface as the dedicated duplicate-uid error, which is a different refusal from a resource name already taken and keeps its own signal.
 
 ### Requirement: Home set
 The calendar home set SHALL be discovered from the principal URL via the calendar-home-set property (RFC 4791 section 6.2.1).

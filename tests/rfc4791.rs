@@ -19,7 +19,7 @@ use io_webdav::{
             update::CaldavItemUpdate,
         },
     },
-    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue},
+    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue, send::WebdavSendError},
 };
 use url::Url;
 
@@ -512,6 +512,112 @@ fn update_item_puts_with_the_known_etag() {
     let ok = ret.unwrap();
     assert_eq!(ok.id, "event-1.ics");
     assert!(ok.etag.is_none());
+}
+
+#[test]
+fn create_and_update_name_a_refused_duplicate_uid() {
+    // NOTE: RFC 4791 §5.3.2 names the element and only recommends the status,
+    // so the element is what says the collection already holds the UID.
+    const REFUSAL: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+    <d:error xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <c:no-uid-conflict><d:href>/dav/calendars/personal/other.ics</d:href></c:no-uid-conflict>
+      <d:responsedescription>UID already in use</d:responsedescription>
+    </d:error>"#;
+
+    let mut create = CaldavItemCreate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "event-1.ics",
+        b"BEGIN:VCALENDAR".to_vec(),
+    );
+    let (_, ret) = expect_exchange(&mut create, &http_response("409 Conflict", &[], REFUSAL));
+
+    let err = ret.unwrap_err();
+    assert!(matches!(
+        err,
+        WebdavSendError::DuplicateUid { status: 409, .. }
+    ));
+    let message = err.to_string();
+    assert!(message.contains("already holds a resource with the same UID"));
+    assert!(message.contains("UID already in use"));
+
+    let mut update = CaldavItemUpdate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "event-1.ics",
+        b"BEGIN:VCALENDAR".to_vec(),
+        Some("etag-1"),
+    );
+    let (_, ret) = expect_exchange(&mut update, &http_response("409 Conflict", &[], REFUSAL));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::DuplicateUid { status: 409, .. }
+    ));
+
+    // NOTE: a 409 carrying no precondition is any of the other conflicts a
+    // write meets, and one merely spelling the words in its description is
+    // none: the element is what classifies, not the text.
+    let quoted = r#"<d:error xmlns:d="DAV:">
+      <d:responsedescription>this is not a no-uid-conflict</d:responsedescription>
+    </d:error>"#;
+    let mut create = CaldavItemCreate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "event-1.ics",
+        b"BEGIN:VCALENDAR".to_vec(),
+    );
+    let (_, ret) = expect_exchange(&mut create, &http_response("409 Conflict", &[], quoted));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::HttpStatus { status: 409, .. }
+    ));
+
+    // NOTE: a server is free to wrap the precondition in another status, which
+    // the element outlives.
+    let mut update = CaldavItemUpdate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "event-1.ics",
+        b"BEGIN:VCALENDAR".to_vec(),
+        None,
+    );
+    let (_, ret) = expect_exchange(
+        &mut update,
+        &http_response("507 Insufficient Storage", &[], REFUSAL),
+    );
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::DuplicateUid { status: 507, .. }
+    ));
+
+    // NOTE: a failure that never carried a status passes through untouched,
+    // there being no precondition to read out of it.
+    let mut create = CaldavItemCreate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "event-1.ics",
+        b"BEGIN:VCALENDAR".to_vec(),
+    );
+    let redirect = http_response(
+        "302 Found",
+        &[("Location", "https://elsewhere.example.org/")],
+        "",
+    );
+    let (_, ret) = expect_exchange(&mut create, &redirect);
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::UnexpectedRedirect
+    ));
 }
 
 #[test]

@@ -9,6 +9,11 @@
 //! Uses `If-None-Match: *` so the server rejects the PUT when a resource with
 //! the same id already exists (RFC 4791 §5.3.2).
 //!
+//! A collection that already holds the item's `UID` refuses the PUT with the
+//! `CALDAV:no-uid-conflict` precondition of the same section, surfaced as
+//! [`DuplicateUid`](crate::rfc4918::send::WebdavSendError::DuplicateUid)
+//! rather than as an opaque conflict.
+//!
 //! # Example
 //!
 //! ```rust,no_run
@@ -73,11 +78,10 @@ use crate::{
     rfc4791::item::join_path,
     rfc4918::{
         WebdavAuth, id_from_location,
-        put::{WebdavPut, WebdavPutArgs},
+        put::{WebdavPut, WebdavPutArgs, duplicate_uid},
         read_etag,
         send::{WebdavSendError, WebdavSendOk},
     },
-    webdav_try,
 };
 
 /// Coroutine that creates a calendar item.
@@ -123,7 +127,17 @@ impl WebdavCoroutine for CaldavItemCreate {
         trace!("sending request");
         match &mut self.state {
             State::WebdavPut(put) => {
-                let WebdavSendOk { response, .. } = webdav_try!(put, arg);
+                let ok = match put.resume(arg) {
+                    WebdavCoroutineState::Yielded(yielded) => {
+                        return WebdavCoroutineState::Yielded(yielded);
+                    }
+                    WebdavCoroutineState::Complete(Err(err)) => {
+                        return WebdavCoroutineState::Complete(Err(duplicate_uid(err)));
+                    }
+                    WebdavCoroutineState::Complete(Ok(ok)) => ok,
+                };
+
+                let WebdavSendOk { response, .. } = ok;
                 let etag = read_etag(&response);
                 let id = response
                     .header("location")

@@ -488,6 +488,91 @@ fn update_card_uses_the_resource_name_verbatim() {
 }
 
 #[test]
+fn create_and_update_name_a_refused_duplicate_uid() {
+    // NOTE: RFC 6352 §6.3.2 names the element and only recommends the status,
+    // so the element is what says the address book already holds the UID.
+    const REFUSAL: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+    <d:error xmlns:d="DAV:" xmlns:cr="urn:ietf:params:xml:ns:carddav">
+      <cr:no-uid-conflict><d:href>/dav/books/contacts/other.vcf</d:href></cr:no-uid-conflict>
+      <d:responsedescription>UID already in use</d:responsedescription>
+    </d:error>"#;
+
+    let mut create = CarddavCardCreate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        "alice.vcf",
+        b"BEGIN:VCARD".to_vec(),
+    );
+    let (_, ret) = expect_exchange(&mut create, &http_response("409 Conflict", &[], REFUSAL));
+
+    let err = ret.unwrap_err();
+    assert!(matches!(
+        err,
+        WebdavSendError::DuplicateUid { status: 409, .. }
+    ));
+    let message = err.to_string();
+    assert!(message.contains("already holds a resource with the same UID"));
+    assert!(message.contains("UID already in use"));
+
+    let mut update = CarddavCardUpdate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        "alice.vcf",
+        b"BEGIN:VCARD".to_vec(),
+        Some("etag-1"),
+    );
+    let (_, ret) = expect_exchange(&mut update, &http_response("409 Conflict", &[], REFUSAL));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::DuplicateUid { status: 409, .. }
+    ));
+
+    // NOTE: a 409 carrying no precondition is any of the other conflicts a
+    // write meets, and one merely spelling the words in its description is
+    // none: the element is what classifies, not the text.
+    let quoted = r#"<d:error xmlns:d="DAV:">
+      <d:responsedescription>this is not a no-uid-conflict</d:responsedescription>
+    </d:error>"#;
+    let mut create = CarddavCardCreate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        "alice.vcf",
+        b"BEGIN:VCARD".to_vec(),
+    );
+    let (_, ret) = expect_exchange(&mut create, &http_response("409 Conflict", &[], quoted));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::HttpStatus { status: 409, .. }
+    ));
+
+    // NOTE: a server is free to wrap the precondition in another status, which
+    // the element outlives.
+    let mut update = CarddavCardUpdate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        "alice.vcf",
+        b"BEGIN:VCARD".to_vec(),
+        None,
+    );
+    let (_, ret) = expect_exchange(
+        &mut update,
+        &http_response("507 Insufficient Storage", &[], REFUSAL),
+    );
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::DuplicateUid { status: 507, .. }
+    ));
+}
+
+#[test]
 fn delete_card_targets_the_resource() {
     let mut delete = CarddavCardDelete::new(
         &base(),

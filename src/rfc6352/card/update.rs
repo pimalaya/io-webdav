@@ -3,6 +3,12 @@
 //! Supports the optional `If-Match` precondition so callers can gate the write
 //! on the last-known ETag (RFC 9110 §13.1.1).
 //!
+//! A collection that already holds the card's `UID` under another resource
+//! refuses the PUT with the `CARDDAV:no-uid-conflict` precondition (RFC 6352
+//! §6.3.2), surfaced as
+//! [`DuplicateUid`](crate::rfc4918::send::WebdavSendError::DuplicateUid)
+//! rather than as an opaque conflict.
+//!
 //! # Example
 //!
 //! ```rust,no_run
@@ -67,12 +73,11 @@ use crate::{
     coroutine::*,
     rfc4918::{
         WebdavAuth,
-        put::{WebdavPut, WebdavPutArgs},
+        put::{WebdavPut, WebdavPutArgs, duplicate_uid},
         read_etag,
         send::{WebdavSendError, WebdavSendOk},
     },
     rfc6352::card::join_path,
-    webdav_try,
 };
 
 /// Coroutine that updates a card.
@@ -120,7 +125,17 @@ impl WebdavCoroutine for CarddavCardUpdate {
         trace!("sending request");
         match &mut self.state {
             State::WebdavPut(put) => {
-                let WebdavSendOk { response, .. } = webdav_try!(put, arg);
+                let ok = match put.resume(arg) {
+                    WebdavCoroutineState::Yielded(yielded) => {
+                        return WebdavCoroutineState::Yielded(yielded);
+                    }
+                    WebdavCoroutineState::Complete(Err(err)) => {
+                        return WebdavCoroutineState::Complete(Err(duplicate_uid(err)));
+                    }
+                    WebdavCoroutineState::Complete(Ok(ok)) => ok,
+                };
+
+                let WebdavSendOk { response, .. } = ok;
                 let etag = read_etag(&response);
                 let id = mem::take(&mut self.id);
                 WebdavCoroutineState::Complete(Ok(CarddavCardUpdateOk { id, etag }))

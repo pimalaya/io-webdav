@@ -60,7 +60,8 @@
 
 use alloc::vec::Vec;
 
-use log::trace;
+use log::{debug, trace};
+use quick_xml::{Reader, events::Event};
 use url::Url;
 
 use crate::{
@@ -135,6 +136,52 @@ impl WebdavCoroutine for WebdavPut {
         }
     }
 }
+
+/// Turns a send failure saying the collection already holds the written `UID`
+/// into [`WebdavSendError::DuplicateUid`], and leaves every other one alone.
+///
+/// RFC 4791 §5.3.2 and RFC 6352 §6.3.2 both give the refusal a name: a server
+/// that will not hold two resources under one `UID` answers with the
+/// `no-uid-conflict` precondition, and only recommends the 409 it wraps it in.
+/// The precondition is therefore what is matched, exactly as
+/// [`WebdavReport`](crate::rfc4918::report::WebdavReport) matches its own, a
+/// 409 carrying none of it being any of the other conflicts a write meets. It
+/// is read as an element rather than searched for as a substring, so a body
+/// merely quoting the words is not one, and the namespace prefix is ignored,
+/// which is how both flavours of the element reach the one variant.
+pub(crate) fn duplicate_uid(err: WebdavSendError) -> WebdavSendError {
+    let WebdavSendError::HttpStatus { status, body } = err else {
+        return err;
+    };
+
+    let mut reader = Reader::from_str(&body);
+    let mut refused = false;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
+                if element.local_name().as_ref() == NO_UID_CONFLICT {
+                    refused = true;
+                    break;
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+
+    if refused {
+        debug!("WebDAV collection already holds the written UID");
+        return WebdavSendError::DuplicateUid { status, body };
+    }
+
+    WebdavSendError::HttpStatus { status, body }
+}
+
+/// Local name of the precondition a duplicate `UID` is refused with, spelled
+/// `CALDAV:no-uid-conflict` (RFC 4791 §5.3.2) and `CARDDAV:no-uid-conflict`
+/// (RFC 6352 §6.3.2).
+const NO_UID_CONFLICT: &[u8] = b"no-uid-conflict";
 
 #[derive(Debug)]
 enum State {

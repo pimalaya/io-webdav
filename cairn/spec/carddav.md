@@ -41,7 +41,7 @@ Batch fetch SHALL use an addressbook-multiget REPORT (RFC 6352 section 8.7) with
 An entry whose href ends in a slash SHALL be skipped: it is the collection echoing itself, which some servers include in a query response.
 
 ### Requirement: Preconditions
-Creation SHALL send If-None-Match with a star. Update and delete SHALL accept an optional If-Match.
+Creation SHALL send If-None-Match with a star. Update and delete SHALL accept an optional If-Match. A write refused with the CARDDAV:no-uid-conflict precondition SHALL surface as the dedicated duplicate-uid error, which is a different refusal from a resource name already taken and keeps its own signal.
 
 ### Requirement: Home set
 The address book home set SHALL be discovered from the principal URL via the addressbook-home-set property (RFC 6352 section 7.1.1).

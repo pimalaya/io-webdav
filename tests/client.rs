@@ -862,3 +862,33 @@ fn an_unimplemented_report_is_recognised_through_either_path() {
         "a PROPFIND refusal is not a missing report",
     );
 }
+
+#[test]
+fn a_refused_duplicate_uid_is_recognised_on_create_and_update() {
+    let body = r#"<d:error xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <c:no-uid-conflict><d:href>/dav/calendars/personal/other.ics</d:href></c:no-uid-conflict>
+    </d:error>"#;
+    let refusal = || http_response("409 Conflict", &[], body);
+    let mut client = discovered_client(vec![refusal(), refusal(), refusal()]);
+
+    let created = client
+        .create_item("personal", "event-1.ics", b"BEGIN:VCALENDAR".to_vec())
+        .unwrap_err();
+    assert!(created.is_duplicate_uid());
+
+    let updated = client
+        .update_card("contacts", "alice.vcf", b"BEGIN:VCARD".to_vec(), None)
+        .unwrap_err();
+    assert!(updated.is_duplicate_uid());
+
+    // NOTE: the same status without the precondition is any of the other
+    // conflicts a write meets, and the consumer has nothing to name.
+    let mut client = discovered_client(vec![http_response("409 Conflict", &[], "")]);
+    let locked = client
+        .create_card("contacts", "alice.vcf", b"BEGIN:VCARD".to_vec())
+        .unwrap_err();
+    assert!(
+        !locked.is_duplicate_uid(),
+        "a bare conflict is not a duplicate UID",
+    );
+}

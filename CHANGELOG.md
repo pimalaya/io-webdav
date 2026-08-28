@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **BREAKING** Added `WebdavSendError::DuplicateUid`, raised by the item and card create and update coroutines when the server refuses a write because the collection already holds that `UID`: the `CALDAV:no-uid-conflict` (RFC 4791 §5.3.2) or `CARDDAV:no-uid-conflict` (RFC 6352 §6.3.2) precondition, read as an element out of the body, whatever status wraps it. One variant serves both flavours, the caller knowing which one it called, and the crate neither retries nor renames. `WebdavClientStdError::is_duplicate_uid` recognises it, the peer of `is_unsupported_report`. A new variant on a public error enum breaks an exhaustive match.
+
 - Added `WebdavSendError::UnsupportedReport`, raised by `WebdavReport` when the server says it does not implement the report: the RFC 3253 §3.6 `DAV:supported-report` precondition, whatever status wraps it, plus the `405` and `501` statuses. `WebdavSyncCollectionError::UnsupportedReport` names the same refusal on the enumeration path, and `WebdavClientStdError::is_unsupported_report` recognises both.
 
 - Added `WebdavSyncCollectionOptions`, whose `fallback` runs the enumeration as a `PROPFIND` at Depth 1 instead of the `sync-collection` REPORT, for a server implementing none of RFC 6578. It lists every member and returns no token, and parses nothing, so it enumerates past a member the server itself cannot parse. The crate implements both paths and never chooses between them.
