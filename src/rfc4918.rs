@@ -33,6 +33,7 @@ pub mod send;
 use core::fmt;
 
 use alloc::{
+    collections::BTreeSet,
     format,
     string::{String, ToString},
     vec::{self, Vec},
@@ -166,6 +167,25 @@ impl WebdavResponseEntry {
             .is_some_and(|item| item.children.iter().any(|child| child.local == ty.local))
     }
 
+    /// Returns the local names of the reports the server advertises under
+    /// `<supported-report-set>` (RFC 3253 §3.1.5), e.g. `sync-collection`.
+    ///
+    /// The property nests each name three levels down: one `<supported-report>`
+    /// per report, each holding a `<report>` holding the report element itself.
+    pub fn supported_reports(&self) -> BTreeSet<String> {
+        let Some(item) = self.prop(SUPPORTED_REPORT_SET) else {
+            return BTreeSet::new();
+        };
+
+        item.children
+            .iter()
+            .flat_map(|supported| &supported.children)
+            .filter(|child| child.local == "report")
+            .flat_map(|report| &report.children)
+            .map(|report| report.local.clone())
+            .collect()
+    }
+
     /// Returns the last non-empty path segment of [`href`](Self::href), the
     /// conventional collection or resource identifier.
     pub fn id(&self) -> &str {
@@ -200,6 +220,11 @@ pub struct WebdavPropChild {
     /// spells a component type as `<C:comp name="VEVENT"/>`, putting the value
     /// in the attribute rather than in a text node.
     pub name: Option<String>,
+    /// The child's own children, a few property values being nested markup
+    /// rather than a flat list: RFC 3253 §3.1.5 spells `supported-report-set`
+    /// as one `<supported-report>` per report, each holding a `<report>`
+    /// holding the report element itself.
+    pub children: Vec<WebdavPropChild>,
 }
 
 /// The value a property is set to in a `PROPPATCH`, `MKCOL` or `MKCALENDAR`
@@ -256,6 +281,12 @@ pub const GETETAG: WebdavProperty = WebdavProperty {
 pub const SYNC_TOKEN: WebdavProperty = WebdavProperty {
     ns: DAV,
     local: "sync-token",
+};
+/// `DAV:supported-report-set` (RFC 3253 §3.1.5), the reports a collection
+/// advertises.
+pub const SUPPORTED_REPORT_SET: WebdavProperty = WebdavProperty {
+    ns: DAV,
+    local: "supported-report-set",
 };
 /// `CS:getctag` (CalendarServer extension), bumped on every collection change.
 pub const GETCTAG: WebdavProperty = WebdavProperty {
@@ -466,6 +497,7 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                     children.push(WebdavPropChild {
                         local: local.clone(),
                         name: name_attribute(&e),
+                        ..Default::default()
                     });
                 }
                 match local.as_str() {
@@ -490,6 +522,7 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                     children.push(WebdavPropChild {
                         local,
                         name: name_attribute(&e),
+                        ..Default::default()
                     });
                 }
             }
@@ -532,8 +565,14 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
             Ok(Event::End(_)) => {
                 if let Some((name, text, children)) = stack.pop() {
                     let parent = stack.last().map(|(n, _, _)| n.clone());
-                    if let Some((_, parent_text, _)) = stack.last_mut() {
+                    if let Some((_, parent_text, parent_children)) = stack.last_mut() {
                         parent_text.push_str(&text);
+                        // NOTE: the element being popped is the last child its
+                        // parent pushed, so handing it its own children there
+                        // is what keeps nested markup readable at any depth.
+                        if let Some(entry) = parent_children.last_mut() {
+                            entry.children.clone_from(&children);
+                        }
                     }
                     let parent = parent.as_deref();
 

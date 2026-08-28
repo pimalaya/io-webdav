@@ -4,6 +4,8 @@
 //! Enumerates the full card spine (id plus ETag) without downloading any vCard
 //! body; bodies are then batch-fetched with
 //! [`CarddavCardMultiget`](crate::rfc6352::card::multiget::CarddavCardMultiget).
+//! A 507 row flags the listing truncated, so a partial spine is never taken for
+//! the whole addressbook.
 //!
 //! # Example
 //!
@@ -44,7 +46,7 @@
 //!     }
 //! };
 //!
-//! println!("{} cards", refs.len());
+//! println!("{} cards", refs.refs.len());
 //! ```
 
 use alloc::{collections::BTreeSet, string::ToString};
@@ -63,6 +65,21 @@ use crate::{
 };
 
 const ENUM_PROPS: &[WebdavProperty] = &[GETETAG];
+
+/// Successful terminal output of [`CarddavCardEnum`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CarddavCardEnumOk {
+    /// The enumerated card references (id plus ETag, no body).
+    pub refs: BTreeSet<CarddavCardRef>,
+    /// Whether the server truncated the listing with a 507 row (RFC 6578 §3.6),
+    /// in which case [`refs`](Self::refs) is a part of the addressbook and not
+    /// the whole of it.
+    ///
+    /// A full enumeration is how removals are detected without a sync token, so
+    /// a consumer taking a truncated one for a complete snapshot reads the
+    /// missing members as deletions.
+    pub truncated: bool,
+}
 
 /// Coroutine that enumerates card references (id plus ETag, no body) inside an
 /// addressbook via REPORT `addressbook-query`.
@@ -89,19 +106,25 @@ impl CarddavCardEnum {
 
 impl WebdavCoroutine for CarddavCardEnum {
     type Yield = WebdavYield;
-    type Return = Result<BTreeSet<CarddavCardRef>, WebdavSendError>;
+    type Return = Result<CarddavCardEnumOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
             State::WebdavReport(report) => {
                 let multistatus = webdav_try!(report, arg);
+
+                let truncated = multistatus
+                    .responses
+                    .iter()
+                    .any(|entry| entry.status == Some(507));
                 let refs = multistatus
                     .responses
                     .iter()
                     .filter_map(from_entry)
                     .collect();
-                WebdavCoroutineState::Complete(Ok(refs))
+
+                WebdavCoroutineState::Complete(Ok(CarddavCardEnumOk { refs, truncated }))
             }
         }
     }

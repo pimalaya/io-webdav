@@ -12,7 +12,7 @@ The RFC 6352 layer: address book collections and the address object resources th
 The crate SHALL provide list, create, update and delete coroutines for address book collections. Creation SHALL use the extended MKCOL.
 
 ### Requirement: Address book properties
-A listed address book SHALL carry its id, display name, description, color, ctag and sync token.
+A listed address book SHALL carry its id, display name, description, color, ctag, sync token and the reports the server advertises for it.
 
 ### Requirement: Card verbs
 The crate SHALL provide read, create, update and delete coroutines for cards, plus list, ETag-only enumeration and batch multiget.

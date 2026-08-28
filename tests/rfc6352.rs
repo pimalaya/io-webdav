@@ -6,7 +6,7 @@ mod common;
 
 use common::*;
 use io_webdav::{
-    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue},
+    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue, send::WebdavSendError},
     rfc6352::{
         addressbook::{
             CarddavAddressbook, CarddavAddressbookPatch, addressbook_multiget_body,
@@ -321,8 +321,8 @@ fn enum_cards_returns_etag_only_references() {
     assert!(!request.contains("address-data"));
 
     let refs = ret.unwrap();
-    assert_eq!(refs.len(), 1);
-    let alice = refs.first().unwrap();
+    assert_eq!(refs.refs.len(), 1);
+    let alice = refs.refs.first().unwrap();
     // NOTE: the id is the href's last segment verbatim, `.vcf` included
     assert_eq!(alice.id, "alice.vcf");
     assert_eq!(alice.etag.as_deref(), Some("etag-1"));
@@ -367,9 +367,9 @@ fn enum_cards_skips_the_collection_self_entry_and_empty_hrefs() {
     let (_request, ret) = expect_exchange(&mut enumerate, &multistatus_response(xml));
 
     let refs = ret.unwrap();
-    assert_eq!(refs.len(), 1);
+    assert_eq!(refs.refs.len(), 1);
     // NOTE: the id is the href's last segment verbatim, `.vcf` included
-    assert_eq!(refs.first().unwrap().id, "5d18175a.vcf");
+    assert_eq!(refs.refs.first().unwrap().id, "5d18175a.vcf");
 }
 
 #[test]
@@ -523,4 +523,80 @@ fn a_listed_card_id_round_trips_through_read() {
     let (request, ret) = expect_exchange(&mut read, &reply);
     assert!(request.starts_with("get /dav/books/contacts/alice.vcf http/1.1\r\n"));
     ret.unwrap();
+}
+
+#[test]
+fn list_addressbooks_reads_the_supported_report_set() {
+    // NOTE: the whole point of reading it while listing is that a consumer picks
+    // its enumeration from what the server advertises, rather than from a
+    // REPORT that has already failed.
+    let mut list = CarddavAddressbookList::new(&base(), &WebdavAuth::None, UA, "/dav/books/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/contacts/</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:resourcetype><d:collection/><c:addressbook/></d:resourcetype>
+            <d:supported-report-set>
+              <d:supported-report><d:report><c:addressbook-multiget/></d:report></d:supported-report>
+              <d:supported-report><d:report><c:addressbook-query/></d:report></d:supported-report>
+            </d:supported-report-set>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (request, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+    assert!(request.contains("<d:supported-report-set/>"));
+
+    let addressbooks = ret.unwrap();
+    let addressbook = addressbooks.first().unwrap();
+    assert_eq!(addressbook.supported_reports.len(), 2);
+    assert!(
+        !addressbook.supported_reports.contains("sync-collection"),
+        "the collection to enumerate with the fallback",
+    );
+}
+
+#[test]
+fn enum_cards_flags_a_truncated_listing() {
+    let mut enumerate =
+        CarddavCardEnum::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/books/contacts/alice.vcf</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/</d:href>
+        <d:status>HTTP/1.1 507 Insufficient Storage</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_request, ret) = expect_exchange(&mut enumerate, &multistatus_response(xml));
+
+    let refs = ret.unwrap();
+    assert_eq!(refs.refs.len(), 1);
+    assert!(refs.truncated);
+}
+
+#[test]
+fn enum_cards_surfaces_an_unimplemented_report() {
+    // NOTE: a server may implement no addressbook-query either, in which case
+    // the refusal has to be named rather than left as an opaque status.
+    let mut enumerate =
+        CarddavCardEnum::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
+    let body = r#"<d:error xmlns:d="DAV:"><d:supported-report/></d:error>"#;
+
+    let (_request, ret) =
+        expect_exchange(&mut enumerate, &http_response("403 Forbidden", &[], body));
+
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::UnsupportedReport { status: 403, .. }
+    ));
 }

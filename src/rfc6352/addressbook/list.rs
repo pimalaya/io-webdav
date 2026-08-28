@@ -118,6 +118,7 @@ fn from_entry(entry: &WebdavResponseEntry) -> Option<CarddavAddressbook> {
         color: entry.text(ADDRESSBOOK_COLOR).map(ToString::to_string),
         ctag: entry.text(GETCTAG).map(ToString::to_string),
         sync_token: entry.text(SYNC_TOKEN).map(ToString::to_string),
+        supported_reports: entry.supported_reports(),
     })
 }
 

@@ -347,8 +347,8 @@ fn enum_items_returns_etag_only_references() {
     assert!(!request.contains("calendar-data"));
 
     let refs = ret.unwrap();
-    assert_eq!(refs.len(), 1);
-    let first = refs.first().unwrap();
+    assert_eq!(refs.refs.len(), 1);
+    let first = refs.refs.first().unwrap();
     // NOTE: the id is the href's last segment verbatim, `.ics` included
     assert_eq!(first.id, "event-1.ics");
     assert_eq!(first.etag.as_deref(), Some("etag-1"));
@@ -394,8 +394,8 @@ fn enum_items_skips_the_collection_self_entry_and_empty_hrefs() {
     let (_request, ret) = expect_exchange(&mut enumerate, &multistatus_response(xml));
 
     let refs = ret.unwrap();
-    assert_eq!(refs.len(), 1);
-    assert_eq!(refs.first().unwrap().id, "5d18175a.ics");
+    assert_eq!(refs.refs.len(), 1);
+    assert_eq!(refs.refs.first().unwrap().id, "5d18175a.ics");
 }
 
 #[test]
@@ -557,4 +557,65 @@ fn a_listed_item_id_round_trips_through_read() {
     let (request, ret) = expect_exchange(&mut read, &reply);
     assert!(request.starts_with("get /dav/calendars/personal/event-2 http/1.1\r\n"));
     ret.unwrap();
+}
+
+#[test]
+fn list_calendars_reads_the_supported_report_set() {
+    // NOTE: the whole point of reading it while listing is that a consumer picks
+    // its enumeration from what the server advertises, rather than from a
+    // REPORT that has already failed.
+    let mut list = CaldavCalendarList::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <d:response>
+        <d:href>/dav/calendars/personal/</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+            <d:supported-report-set>
+              <d:supported-report><d:report><c:calendar-multiget/></d:report></d:supported-report>
+              <d:supported-report><d:report><d:sync-collection/></d:report></d:supported-report>
+            </d:supported-report-set>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (request, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+    assert!(request.contains("<d:supported-report-set/>"));
+
+    let calendars = ret.unwrap();
+    let calendar = calendars.first().unwrap();
+    assert_eq!(calendar.supported_reports.len(), 2);
+    assert!(calendar.supported_reports.contains("sync-collection"));
+}
+
+#[test]
+fn enum_items_flags_a_truncated_listing() {
+    let mut enumerate = CaldavItemEnum::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "",
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/calendars/personal/event-1.ics</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/personal/</d:href>
+        <d:status>HTTP/1.1 507 Insufficient Storage</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_request, ret) = expect_exchange(&mut enumerate, &multistatus_response(xml));
+
+    let refs = ret.unwrap();
+    assert_eq!(refs.refs.len(), 1);
+    assert!(refs.truncated);
 }

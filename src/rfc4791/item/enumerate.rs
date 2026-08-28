@@ -4,6 +4,8 @@
 //! Enumerates the full item spine (id plus ETag) without downloading any
 //! iCalendar body; bodies are then batch-fetched with
 //! [`CaldavItemMultiget`](crate::rfc4791::item::multiget::CaldavItemMultiget).
+//! A 507 row flags the listing truncated, so a partial spine is never taken for
+//! the whole calendar.
 //!
 //! # Example
 //!
@@ -49,7 +51,7 @@
 //!     }
 //! };
 //!
-//! println!("{} items", refs.len());
+//! println!("{} items", refs.refs.len());
 //! ```
 
 use alloc::{collections::BTreeSet, string::ToString};
@@ -68,6 +70,21 @@ use crate::{
 };
 
 const ENUM_PROPS: &[WebdavProperty] = &[GETETAG];
+
+/// Successful terminal output of [`CaldavItemEnum`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CaldavItemEnumOk {
+    /// The enumerated item references (id plus ETag, no body).
+    pub refs: BTreeSet<CaldavItemRef>,
+    /// Whether the server truncated the listing with a 507 row (RFC 6578 §3.6),
+    /// in which case [`refs`](Self::refs) is a part of the calendar and not the
+    /// whole of it.
+    ///
+    /// A full enumeration is how removals are detected without a sync token, so
+    /// a consumer taking a truncated one for a complete snapshot reads the
+    /// missing members as deletions.
+    pub truncated: bool,
+}
 
 /// Coroutine that enumerates item references (id plus ETag, no body) inside a
 /// calendar via REPORT `calendar-query`.
@@ -99,19 +116,25 @@ impl CaldavItemEnum {
 
 impl WebdavCoroutine for CaldavItemEnum {
     type Yield = WebdavYield;
-    type Return = Result<BTreeSet<CaldavItemRef>, WebdavSendError>;
+    type Return = Result<CaldavItemEnumOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
             State::WebdavReport(report) => {
                 let multistatus = webdav_try!(report, arg);
+
+                let truncated = multistatus
+                    .responses
+                    .iter()
+                    .any(|entry| entry.status == Some(507));
                 let refs = multistatus
                     .responses
                     .iter()
                     .filter_map(from_entry)
                     .collect();
-                WebdavCoroutineState::Complete(Ok(refs))
+
+                WebdavCoroutineState::Complete(Ok(CaldavItemEnumOk { refs, truncated }))
             }
         }
     }

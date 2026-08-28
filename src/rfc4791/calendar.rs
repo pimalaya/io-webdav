@@ -15,8 +15,8 @@ use alloc::{collections::BTreeSet, format, string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 
 use crate::rfc4918::{
-    DISPLAYNAME, GETCTAG, RESOURCETYPE, SYNC_TOKEN, WebdavNamespace, WebdavPropValue,
-    WebdavProperty, escape_text, prop_set_body, report_query_body,
+    DISPLAYNAME, GETCTAG, RESOURCETYPE, SUPPORTED_REPORT_SET, SYNC_TOKEN, WebdavNamespace,
+    WebdavPropValue, WebdavProperty, escape_text, prop_set_body, report_query_body,
 };
 
 /// A CalDAV calendar collection (RFC 4791 §4).
@@ -46,6 +46,16 @@ pub struct CaldavCalendar {
     pub sync_token: Option<String>,
     /// Default time zone, expressed as a VTIMEZONE block (RFC 4791 §5.2.2).
     pub tz: Option<String>,
+    /// Reports the server advertises for this collection (RFC 3253 §3.1.5),
+    /// e.g. `sync-collection`, `calendar-query`, `calendar-multiget`.
+    ///
+    /// RFC 6578 is an extension: a collection whose set holds no
+    /// `sync-collection` is enumerated with
+    /// [`WebdavSyncCollectionOptions::fallback`] instead, without paying a
+    /// failed REPORT first.
+    ///
+    /// [`WebdavSyncCollectionOptions::fallback`]: crate::rfc6578::sync_collection::WebdavSyncCollectionOptions::fallback
+    pub supported_reports: BTreeSet<String>,
 }
 
 /// CalDAV namespace (RFC 4791 §4).
@@ -119,6 +129,7 @@ pub const LIST_PROPS: &[WebdavProperty] = &[
     SUPPORTED_CALENDAR_COMPONENT_SET,
     GETCTAG,
     SYNC_TOKEN,
+    SUPPORTED_REPORT_SET,
     CALENDAR_TIMEZONE,
 ];
 

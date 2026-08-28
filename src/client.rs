@@ -17,11 +17,19 @@
 //! needing a step that never ran fails with [`MissingPrincipal`],
 //! [`MissingCalendarHomeSet`] or [`MissingAddressbookHomeSet`].
 //!
+//! Listing a home set caches one more thing beside those: the reports each
+//! collection advertises (RFC 3253 §3.1.5), in [`calendar_reports`] and
+//! [`addressbook_reports`]. A collection whose set holds no `sync-collection`
+//! is enumerated with the `PROPFIND` fallback, and the cache is what tells so
+//! before the REPORT is sent rather than after it fails.
+//!
 //! [`base_url`]: WebdavClientStd::base_url
 //! [`user_agent`]: WebdavClientStd::user_agent
 //! [`principal_url`]: WebdavClientStd::principal_url
 //! [`calendar_home_set`]: WebdavClientStd::calendar_home_set
 //! [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
+//! [`calendar_reports`]: WebdavClientStd::calendar_reports
+//! [`addressbook_reports`]: WebdavClientStd::addressbook_reports
 //! [`new`]: WebdavClientStd::new
 //! [`connect`]: WebdavClientStd::connect
 //! [`current_user_principal`]: WebdavClientStd::current_user_principal
@@ -33,7 +41,7 @@ use core::fmt;
 
 use alloc::{
     boxed::Box,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     format,
     string::{String, ToString},
     vec::Vec,
@@ -62,10 +70,10 @@ use crate::{
             update::CaldavCalendarUpdate,
         },
         item::{
-            CaldavItemEntry, CaldavItemRef,
+            CaldavItemEntry,
             create::{CaldavItemCreate, CaldavItemCreateOk},
             delete::CaldavItemDelete,
-            enumerate::CaldavItemEnum,
+            enumerate::{CaldavItemEnum, CaldavItemEnumOk},
             list::CaldavItemList,
             multiget::CaldavItemMultiget,
             read::{CaldavItemBody, CaldavItemRead},
@@ -85,17 +93,20 @@ use crate::{
             list::CarddavAddressbookList, update::CarddavAddressbookUpdate,
         },
         card::{
-            CarddavCardEntry, CarddavCardRef,
+            CarddavCardEntry,
             create::{CarddavCardCreate, CarddavCardCreateOk},
             delete::CarddavCardDelete,
-            enumerate::CarddavCardEnum,
+            enumerate::{CarddavCardEnum, CarddavCardEnumOk},
             list::CarddavCardList,
             multiget::CarddavCardMultiget,
             read::{CarddavCardBody, CarddavCardRead},
             update::{CarddavCardUpdate, CarddavCardUpdateOk},
         },
     },
-    rfc6578::sync_collection::{WebdavSyncCollection, WebdavSyncCollectionError, WebdavSyncDelta},
+    rfc6578::sync_collection::{
+        WebdavSyncCollection, WebdavSyncCollectionError, WebdavSyncCollectionOptions,
+        WebdavSyncDelta,
+    },
 };
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
@@ -111,7 +122,7 @@ pub enum WebdavClientStdError {
     /// A redirect-aware WebDAV send failed.
     #[error(transparent)]
     WebdavFollowRedirects(#[from] WebdavFollowRedirectsError),
-    /// A `sync-collection` REPORT failed.
+    /// A collection enumeration failed.
     #[error(transparent)]
     WebdavSyncCollection(#[from] WebdavSyncCollectionError),
     /// An underlying I/O operation failed.
@@ -168,6 +179,24 @@ pub enum WebdavClientStdError {
     /// this way for a collection it does not have.
     #[error("WebDAV server ignored the property update: {}", .0.join(", "))]
     PropertiesIgnored(Vec<String>),
+}
+
+impl WebdavClientStdError {
+    /// Whether the server said it does not implement the report, as opposed to
+    /// refusing this particular request.
+    ///
+    /// A REPORT reaches the caller through two error paths, the enumeration
+    /// nesting its send one level deeper than a plain request, so a consumer
+    /// matching a single variant misses half of them. The refusal itself is
+    /// named upstream, on the RFC 3253 §3.6 precondition rather than on the
+    /// status a server chooses to wrap it in.
+    pub fn is_unsupported_report(&self) -> bool {
+        matches!(
+            self,
+            Self::Send(WebdavSendError::UnsupportedReport { .. })
+                | Self::WebdavSyncCollection(WebdavSyncCollectionError::UnsupportedReport)
+        )
+    }
 }
 
 /// Renders refused properties as `name (status), name (status)`.
@@ -236,6 +265,20 @@ pub struct WebdavClientStd {
     pub calendar_home_set: Option<Url>,
     /// Cached CardDAV home-set URL (RFC 6352 §7.1.1).
     pub addressbook_home_set: Option<Url>,
+    /// Reports each listed calendar advertises (RFC 3253 §3.1.5), keyed by
+    /// calendar id and filled by [`list_calendars`].
+    ///
+    /// A collection whose set holds no `sync-collection` is enumerated with the
+    /// fallback, which the caller reads here instead of paying a failed REPORT
+    /// to find out.
+    ///
+    /// [`list_calendars`]: WebdavClientStd::list_calendars
+    pub calendar_reports: BTreeMap<String, BTreeSet<String>>,
+    /// Reports each listed addressbook advertises (RFC 3253 §3.1.5), keyed by
+    /// addressbook id and filled by [`list_addressbooks`].
+    ///
+    /// [`list_addressbooks`]: WebdavClientStd::list_addressbooks
+    pub addressbook_reports: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl fmt::Debug for WebdavClientStd {
@@ -275,6 +318,8 @@ impl WebdavClientStd {
             principal_url: None,
             calendar_home_set: None,
             addressbook_home_set: None,
+            calendar_reports: BTreeMap::new(),
+            addressbook_reports: BTreeMap::new(),
         }
     }
 
@@ -296,6 +341,8 @@ impl WebdavClientStd {
             principal_url,
             calendar_home_set,
             addressbook_home_set,
+            calendar_reports: BTreeMap::new(),
+            addressbook_reports: BTreeMap::new(),
         }
     }
 
@@ -458,9 +505,11 @@ impl WebdavClientStd {
         Ok(url)
     }
 
-    /// Lists every calendar under the cached [`calendar_home_set`].
+    /// Lists every calendar under the cached [`calendar_home_set`], caching the
+    /// reports each one advertises in [`calendar_reports`].
     ///
     /// [`calendar_home_set`]: WebdavClientStd::calendar_home_set
+    /// [`calendar_reports`]: WebdavClientStd::calendar_reports
     pub fn list_calendars(&mut self) -> Result<BTreeSet<CaldavCalendar>, WebdavClientStdError> {
         let home = self
             .calendar_home_set
@@ -470,7 +519,15 @@ impl WebdavClientStd {
 
         let coroutine =
             CaldavCalendarList::new(&self.base_url, &self.auth, &self.user_agent, &path);
-        self.run(coroutine)
+        let calendars: BTreeSet<CaldavCalendar> = self.run(coroutine)?;
+
+        self.calendar_reports.extend(
+            calendars
+                .iter()
+                .map(|calendar| (calendar.id.clone(), calendar.supported_reports.clone())),
+        );
+
+        Ok(calendars)
     }
 
     /// Creates a calendar collection under the cached [`calendar_home_set`].
@@ -563,7 +620,7 @@ impl WebdavClientStd {
         &mut self,
         calendar_id: &str,
         comp_filter: &str,
-    ) -> Result<BTreeSet<CaldavItemRef>, WebdavClientStdError> {
+    ) -> Result<CaldavItemEnumOk, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
         let coroutine = CaldavItemEnum::new(
             &self.base_url,
@@ -588,13 +645,21 @@ impl WebdavClientStd {
         self.run(coroutine)
     }
 
-    /// Runs an incremental `sync-collection` REPORT (RFC 6578) against
-    /// `calendar_id`, requesting ETags only. Pass [`None`] as `sync_token` for
-    /// an initial sync.
+    /// Enumerates `calendar_id`, requesting ETags only: an incremental
+    /// `sync-collection` REPORT (RFC 6578) by default, taking [`None`] as
+    /// `sync_token` for an initial sync, or a `PROPFIND` listing under
+    /// [`fallback`], for a server implementing no `sync-collection`.
+    ///
+    /// [`calendar_reports`] says which of the two the server has, and the
+    /// choice stays here rather than being made behind the caller's back.
+    ///
+    /// [`fallback`]: WebdavSyncCollectionOptions::fallback
+    /// [`calendar_reports`]: WebdavClientStd::calendar_reports
     pub fn sync_items(
         &mut self,
         calendar_id: &str,
         sync_token: Option<&str>,
+        opts: WebdavSyncCollectionOptions,
     ) -> Result<WebdavSyncDelta, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
         let coroutine = WebdavSyncCollection::new(
@@ -604,6 +669,7 @@ impl WebdavClientStd {
             &path,
             sync_token,
             &[GETETAG],
+            opts,
         );
         self.run(coroutine)
     }
@@ -703,9 +769,11 @@ impl WebdavClientStd {
         Ok(url)
     }
 
-    /// Lists every addressbook under the cached [`addressbook_home_set`].
+    /// Lists every addressbook under the cached [`addressbook_home_set`],
+    /// caching the reports each one advertises in [`addressbook_reports`].
     ///
     /// [`addressbook_home_set`]: WebdavClientStd::addressbook_home_set
+    /// [`addressbook_reports`]: WebdavClientStd::addressbook_reports
     pub fn list_addressbooks(
         &mut self,
     ) -> Result<BTreeSet<CarddavAddressbook>, WebdavClientStdError> {
@@ -717,7 +785,15 @@ impl WebdavClientStd {
 
         let coroutine =
             CarddavAddressbookList::new(&self.base_url, &self.auth, &self.user_agent, &path);
-        self.run(coroutine)
+        let addressbooks: BTreeSet<CarddavAddressbook> = self.run(coroutine)?;
+
+        self.addressbook_reports.extend(
+            addressbooks
+                .iter()
+                .map(|book| (book.id.clone(), book.supported_reports.clone())),
+        );
+
+        Ok(addressbooks)
     }
 
     /// Creates an addressbook collection under the cached
@@ -802,7 +878,7 @@ impl WebdavClientStd {
     pub fn enum_cards(
         &mut self,
         addressbook_id: &str,
-    ) -> Result<BTreeSet<CarddavCardRef>, WebdavClientStdError> {
+    ) -> Result<CarddavCardEnumOk, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
         let coroutine = CarddavCardEnum::new(&self.base_url, &self.auth, &self.user_agent, &path);
         self.run(coroutine)
@@ -821,13 +897,21 @@ impl WebdavClientStd {
         self.run(coroutine)
     }
 
-    /// Runs an incremental `sync-collection` REPORT (RFC 6578) against
-    /// `addressbook_id`, requesting ETags only. Pass [`None`] as `sync_token`
-    /// for an initial sync.
+    /// Enumerates `addressbook_id`, requesting ETags only: an incremental
+    /// `sync-collection` REPORT (RFC 6578) by default, taking [`None`] as
+    /// `sync_token` for an initial sync, or a `PROPFIND` listing under
+    /// [`fallback`], for a server implementing no `sync-collection`.
+    ///
+    /// [`addressbook_reports`] says which of the two the server has, and the
+    /// choice stays here rather than being made behind the caller's back.
+    ///
+    /// [`fallback`]: WebdavSyncCollectionOptions::fallback
+    /// [`addressbook_reports`]: WebdavClientStd::addressbook_reports
     pub fn sync_cards(
         &mut self,
         addressbook_id: &str,
         sync_token: Option<&str>,
+        opts: WebdavSyncCollectionOptions,
     ) -> Result<WebdavSyncDelta, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
         let coroutine = WebdavSyncCollection::new(
@@ -837,6 +921,7 @@ impl WebdavClientStd {
             &path,
             sync_token,
             &[GETETAG],
+            opts,
         );
         self.run(coroutine)
     }

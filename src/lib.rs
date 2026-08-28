@@ -25,7 +25,8 @@
 //! [`rfc5397`] discovers the current user principal, the entry point of the
 //! discovery flow. [`rfc6578`] adds collection synchronization: the
 //! sync-collection REPORT and its sync tokens, protocol-neutral so both layers
-//! use it.
+//! use it, plus the PROPFIND enumeration a caller falls back to on a server
+//! implementing none of the extension.
 //!
 //! Two modules span the RFC modules and therefore live at the crate root:
 //! [`coroutine`] defines the coroutine contract every state machine implements,

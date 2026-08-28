@@ -192,6 +192,47 @@ fn summarize_body_strips_markup_and_caps_the_rest() {
 }
 
 #[test]
+fn parse_multistatus_reads_the_supported_report_set() {
+    // NOTE: the report names sit three levels below the property, so a parser
+    // keeping only direct children reads an empty set out of a server that
+    // advertises everything.
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:card="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/contacts/</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:supported-report-set>
+              <d:supported-report><d:report><card:addressbook-multiget/></d:report></d:supported-report>
+              <d:supported-report><d:report><card:addressbook-query/></d:report></d:supported-report>
+              <d:supported-report><d:report><d:sync-collection/></d:report></d:supported-report>
+            </d:supported-report-set>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/legacy/</d:href>
+        <d:propstat>
+          <d:prop><d:displayname>Legacy</d:displayname></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let ms = parse_multistatus(xml);
+    let reports = ms.responses[0].supported_reports();
+
+    assert_eq!(reports.len(), 3);
+    assert!(reports.contains("sync-collection"));
+    assert!(reports.contains("addressbook-multiget"));
+    assert!(reports.contains("addressbook-query"));
+
+    // NOTE: a collection that advertises nothing reads as an empty set, not as
+    // a collection supporting every report.
+    assert!(ms.responses[1].supported_reports().is_empty());
+}
+
+#[test]
 fn parse_multistatus_survives_malformed_xml() {
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
@@ -582,6 +623,55 @@ fn report_sends_the_query_body_and_parses_the_multistatus() {
     assert!(request.contains("depth: 1\r\n"));
     assert!(request.contains("<c:calendar"));
     assert!(ret.unwrap().responses.is_empty());
+}
+
+#[test]
+fn report_names_an_unimplemented_report_and_leaves_the_rest_alone() {
+    // NOTE: the precondition names the refusal whatever status carries it, and
+    // a 403 is equally what a server answers when the credential may not read
+    // the collection.
+    let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
+    let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
+    let refusal = r#"<d:error xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns">
+      <s:exception>Sabre\DAV\Exception\ReportNotSupported</s:exception>
+      <d:supported-report/>
+    </d:error>"#;
+    let (_, ret) = expect_exchange(&mut report, &http_response("403 Forbidden", &[], refusal));
+
+    let err = ret.unwrap_err();
+    assert!(matches!(
+        err,
+        WebdavSendError::UnsupportedReport { status: 403, .. }
+    ));
+    let message = err.to_string();
+    assert!(message.contains("does not implement the report"));
+    assert!(message.contains("ReportNotSupported"));
+
+    // NOTE: a 405 says the same thing with an empty body, which renders as no
+    // summary at all rather than a message ending on a colon.
+    let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
+    let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
+    let (_, ret) = expect_exchange(
+        &mut report,
+        &http_response("405 Method Not Allowed", &[], ""),
+    );
+    assert!(ret.unwrap_err().to_string().ends_with("(HTTP 405)"));
+
+    // NOTE: a failure that never carried a status passes through untouched,
+    // there being no precondition to read out of it.
+    let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
+    let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
+    let redirect = http_response(
+        "302 Found",
+        &[("Location", "https://elsewhere.example.org/")],
+        "",
+    );
+    let (_, ret) = expect_exchange(&mut report, &redirect);
+
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::UnexpectedRedirect
+    ));
 }
 
 #[test]

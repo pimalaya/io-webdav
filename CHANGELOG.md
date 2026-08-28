@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `WebdavSendError::UnsupportedReport`, raised by `WebdavReport` when the server says it does not implement the report: the RFC 3253 §3.6 `DAV:supported-report` precondition, whatever status wraps it, plus the `405` and `501` statuses. `WebdavSyncCollectionError::UnsupportedReport` names the same refusal on the enumeration path, and `WebdavClientStdError::is_unsupported_report` recognises both.
+
+- Added `WebdavSyncCollectionOptions`, whose `fallback` runs the enumeration as a `PROPFIND` at Depth 1 instead of the `sync-collection` REPORT, for a server implementing none of RFC 6578. It lists every member and returns no token, and parses nothing, so it enumerates past a member the server itself cannot parse. The crate implements both paths and never chooses between them.
+
+- Added `SUPPORTED_REPORT_SET`, `SYNC_COLLECTION` and `WebdavResponseEntry::supported_reports`, plus `CaldavCalendar::supported_reports` and `CarddavAddressbook::supported_reports`, read while listing collections and cached in `WebdavClientStd::calendar_reports` and `addressbook_reports`, so the enumeration is chosen from what the server advertises rather than from a failed request.
+
+- Added `WebdavPropChild::children`, the parser keeping property markup at any depth rather than one level.
+
+- Added a trace of the multistatus body to the `PROPFIND` and `REPORT` coroutines. The crate documented data dumps at trace level and had none for the one body every collection read goes through, so a server answering with something unexpected could only be diagnosed by packet capture.
+
+### Fixed
+
+- The collection self-entry is now recognised by path, so a server spelling its hrefs as absolute URLs (RFC 4918 §14.7 allows either) no longer enters its own collection into the member spine. A `PROPFIND` enumeration always answers with that entry, where a `sync-collection` REPORT only did on some servers.
+
+### Changed
+
+- **BREAKING** `WebdavSyncCollection::new`, `WebdavClientStd::sync_items` and `sync_cards` take a `WebdavSyncCollectionOptions`.
+
+- **BREAKING** `CaldavItemEnum` and `CarddavCardEnum` return a `CaldavItemEnumOk` and a `CarddavCardEnumOk`, the references now carrying whether the server truncated the listing with a 507 row. `WebdavClientStd::enum_items` and `enum_cards` follow.
+
 ## [0.2.1] - 2026-08-22
 
 ### Changed

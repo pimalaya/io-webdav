@@ -132,6 +132,7 @@ fn from_entry(entry: &WebdavResponseEntry) -> Option<CaldavCalendar> {
         ctag: entry.text(GETCTAG).map(ToString::to_string),
         sync_token: entry.text(SYNC_TOKEN).map(ToString::to_string),
         tz: entry.text(CALENDAR_TIMEZONE).map(ToString::to_string),
+        supported_reports: entry.supported_reports(),
     })
 }
 

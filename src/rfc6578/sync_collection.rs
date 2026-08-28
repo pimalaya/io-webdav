@@ -1,11 +1,24 @@
-//! `sync-collection` REPORT coroutine (RFC 6578 §3.2): incremental enumeration
-//! of a collection against a sync token.
+//! Collection enumeration coroutine: the `sync-collection` REPORT (RFC 6578
+//! §3.2) against a sync token, or a `PROPFIND` listing when the caller asks for
+//! it.
 //!
 //! An initial sync (no token) returns every member; a subsequent sync returns
 //! only the members changed or removed since the given token, plus the next
 //! token to checkpoint. A rejected token surfaces as
 //! [`WebdavSyncCollectionError::InvalidSyncToken`] so the consumer can fall
 //! back to a full enumeration.
+//!
+//! RFC 6578 is an extension and a deployment may implement none of it, which it
+//! says with the RFC 3253 §3.6 precondition, surfacing as
+//! [`WebdavSyncCollectionError::UnsupportedReport`]. Setting
+//! [`WebdavSyncCollectionOptions::fallback`] then enumerates the collection
+//! with a `PROPFIND` at Depth 1 instead, which returns every member and no
+//! token. Which of the two runs stays the caller's decision: an incremental
+//! delta traded for a full listing is not a trade a library makes behind its
+//! consumer's back, and [`supported_reports`] tells beforehand which one the
+//! server has.
+//!
+//! [`supported_reports`]: crate::rfc4918::WebdavResponseEntry::supported_reports
 //!
 //! # Example
 //!
@@ -35,6 +48,7 @@
 //!     "/dav/addressbooks/contacts/",
 //!     None,
 //!     &[GETETAG],
+//!     Default::default(),
 //! );
 //! let mut arg = None;
 //!
@@ -70,8 +84,18 @@ use crate::{
     coroutine::*,
     rfc4918::{
         DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty, XML_DECL, escape_text,
-        prop_block, report::WebdavReport, send::WebdavSendError, xmlns_decls,
+        prop_block, propfind::WebdavPropfind, report::WebdavReport, send::WebdavSendError,
+        xmlns_decls,
     },
+    webdav_try,
+};
+
+/// `DAV:sync-collection` REPORT root (RFC 6578 §6.1), the name a collection
+/// advertises it under in its
+/// [`supported_reports`](crate::rfc4918::WebdavResponseEntry::supported_reports).
+pub const SYNC_COLLECTION: WebdavProperty = WebdavProperty {
+    ns: DAV,
+    local: "sync-collection",
 };
 
 /// Delta returned by a `sync-collection` REPORT.
@@ -99,19 +123,41 @@ pub struct WebdavSyncChange {
     pub etag: Option<String>,
 }
 
-/// Failure causes during a `sync-collection` REPORT.
+/// Failure causes during a collection enumeration.
 #[derive(Debug, Error)]
 pub enum WebdavSyncCollectionError {
     /// The server rejected the sync token; a full enumeration is needed.
     #[error("WebDAV server rejected the sync token; run a full enumeration")]
     InvalidSyncToken,
+    /// The server does not implement the report at all (RFC 3253 §3.6); the
+    /// [`fallback`](WebdavSyncCollectionOptions::fallback) enumerates it
+    /// anyway.
+    #[error("WebDAV server does not implement `sync-collection`; enumerate with the fallback")]
+    UnsupportedReport,
     /// The underlying WebDAV send failed.
     #[error(transparent)]
     Send(#[from] WebdavSendError),
 }
 
-/// Coroutine that runs a `sync-collection` REPORT (RFC 6578 §3.2) and returns
-/// the parsed [`WebdavSyncDelta`].
+/// Options for [`WebdavSyncCollection::new`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WebdavSyncCollectionOptions {
+    /// When `true`, skip the `sync-collection` REPORT and enumerate the
+    /// collection with a `PROPFIND` at Depth 1; defaults to the REPORT.
+    ///
+    /// The consumer sets this from a
+    /// [`supported_reports`](crate::rfc4918::WebdavResponseEntry::supported_reports)
+    /// check, or after meeting an
+    /// [`UnsupportedReport`](WebdavSyncCollectionError::UnsupportedReport). The
+    /// `PROPFIND` lists every member and returns no token, so the delta is a
+    /// full snapshot the consumer diffs itself.
+    pub fallback: bool,
+}
+
+/// Coroutine that enumerates a collection through a `sync-collection` REPORT
+/// (RFC 6578 §3.2) or, on
+/// [`fallback`](WebdavSyncCollectionOptions::fallback), a `PROPFIND` at
+/// Depth 1, returning the parsed [`WebdavSyncDelta`] either way.
 #[derive(Debug)]
 pub struct WebdavSyncCollection {
     state: State,
@@ -121,12 +167,14 @@ pub struct WebdavSyncCollection {
 }
 
 impl WebdavSyncCollection {
-    /// Builds a new `sync-collection` coroutine against the collection at
-    /// `path`, requesting `props` on each changed member and taking [`None`] as
-    /// `sync_token` for an initial sync.
+    /// Builds a new enumeration coroutine against the collection at `path`,
+    /// requesting `props` on each member and taking [`None`] as `sync_token`
+    /// for an initial sync.
     ///
-    /// The `Depth` header is pinned to 0 as RFC 6578 §3.3 requires, the scope
-    /// being carried by the sync-level element instead.
+    /// The REPORT pins its `Depth` header to 0 as RFC 6578 §3.3 requires, the
+    /// scope being carried by the sync-level element instead; the `PROPFIND`
+    /// fallback takes Depth 1, which is where its own members live, and ignores
+    /// `sync_token`, having nothing to compare it against.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -134,11 +182,20 @@ impl WebdavSyncCollection {
         path: &str,
         sync_token: Option<&str>,
         props: &[WebdavProperty],
+        opts: WebdavSyncCollectionOptions,
     ) -> Self {
-        let body = sync_collection_body(sync_token, props);
-        let report = WebdavReport::new(base_url, auth, user_agent, path, 0, body);
+        let state = if opts.fallback {
+            trace!("using WebDAV PROPFIND enumeration fallback");
+            State::WebdavPropfind(WebdavPropfind::new(
+                base_url, auth, user_agent, path, 1, props,
+            ))
+        } else {
+            let body = sync_collection_body(sync_token, props);
+            State::WebdavReport(WebdavReport::new(base_url, auth, user_agent, path, 0, body))
+        };
+
         Self {
-            state: State::WebdavReport(report),
+            state,
             collection: path.trim_end_matches('/').to_string(),
         }
     }
@@ -163,12 +220,23 @@ impl WebdavCoroutine for WebdavSyncCollection {
                         let err = WebdavSyncCollectionError::InvalidSyncToken;
                         return WebdavCoroutineState::Complete(Err(err));
                     }
+                    WebdavCoroutineState::Complete(Err(WebdavSendError::UnsupportedReport {
+                        ..
+                    })) => {
+                        let err = WebdavSyncCollectionError::UnsupportedReport;
+                        return WebdavCoroutineState::Complete(Err(err));
+                    }
                     WebdavCoroutineState::Complete(Err(err)) => {
                         return WebdavCoroutineState::Complete(Err(err.into()));
                     }
                     WebdavCoroutineState::Complete(Ok(multistatus)) => multistatus,
                 };
 
+                let delta = from_multistatus(multistatus, &self.collection);
+                WebdavCoroutineState::Complete(Ok(delta))
+            }
+            State::WebdavPropfind(propfind) => {
+                let multistatus = webdav_try!(propfind, arg);
                 let delta = from_multistatus(multistatus, &self.collection);
                 WebdavCoroutineState::Complete(Ok(delta))
             }
@@ -197,7 +265,8 @@ pub fn sync_collection_body(sync_token: Option<&str>, props: &[WebdavProperty]) 
 }
 
 /// Sorts the multistatus rows into a [`WebdavSyncDelta`]: 404 rows are
-/// removals, a 507 row flags truncation, everything else is a change.
+/// removals, a 507 row flags truncation, everything else is a change. Both
+/// enumerations answer a multistatus, so both are sorted here.
 ///
 /// `collection` is the request-target path, against which the collection's own
 /// self-entry is recognised and dropped rather than taken for a member.
@@ -218,10 +287,13 @@ fn from_multistatus(multistatus: WebdavMultistatus, collection: &str) -> WebdavS
                 );
             }
             // NOTE: some servers (iCloud) echo the collection itself in the
-            // sync report, which is not a member resource and would otherwise
-            // enter the spine as a bogus member named after the collection.
-            _ if entry.href.trim_end_matches('/') == collection.trim_end_matches('/') => {
-                trace!("skip sync-collection self-entry {}", entry.href);
+            // sync report, and a PROPFIND always answers with it, neither being
+            // a member resource; either would otherwise enter the spine as a
+            // bogus member named after the collection.
+            _ if href_path(&entry.href).trim_end_matches('/')
+                == collection.trim_end_matches('/') =>
+            {
+                trace!("skip enumeration self-entry {}", entry.href);
             }
             _ => {
                 let etag = entry
@@ -238,9 +310,26 @@ fn from_multistatus(multistatus: WebdavMultistatus, collection: &str) -> WebdavS
     delta
 }
 
+/// The path an `<href>` addresses, an absolute URL reduced to its path so a
+/// server answering with one is compared against the request path like any
+/// other.
+///
+/// RFC 4918 §14.7 allows either spelling, and a self-entry spelled absolutely
+/// would otherwise fail the comparison and enter the spine as a member named
+/// after the collection.
+fn href_path(href: &str) -> &str {
+    let Some(scheme) = href.find("://") else {
+        return href;
+    };
+
+    let authority = &href[scheme + 3..];
+    &authority[authority.find('/').unwrap_or(authority.len())..]
+}
+
 #[derive(Debug)]
 enum State {
     WebdavReport(WebdavReport),
+    WebdavPropfind(WebdavPropfind),
 }
 
 #[cfg(test)]

@@ -10,13 +10,13 @@ pub mod home_set;
 pub mod list;
 pub mod update;
 
-use alloc::{format, string::String, vec::Vec};
+use alloc::{collections::BTreeSet, format, string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
 use crate::rfc4918::{
-    DISPLAYNAME, GETCTAG, RESOURCETYPE, SYNC_TOKEN, WebdavNamespace, WebdavPropValue,
-    WebdavProperty, escape_text, report_query_body,
+    DISPLAYNAME, GETCTAG, RESOURCETYPE, SUPPORTED_REPORT_SET, SYNC_TOKEN, WebdavNamespace,
+    WebdavPropValue, WebdavProperty, escape_text, report_query_body,
 };
 
 /// A CardDAV addressbook collection (RFC 6352 §5).
@@ -38,6 +38,16 @@ pub struct CarddavAddressbook {
     /// Collection sync token (RFC 6578 §4), the checkpoint fed back to a
     /// `sync-collection` REPORT.
     pub sync_token: Option<String>,
+    /// Reports the server advertises for this collection (RFC 3253 §3.1.5),
+    /// e.g. `sync-collection`, `addressbook-query`, `addressbook-multiget`.
+    ///
+    /// RFC 6578 is an extension: a collection whose set holds no
+    /// `sync-collection` is enumerated with
+    /// [`WebdavSyncCollectionOptions::fallback`] instead, without paying a
+    /// failed REPORT first.
+    ///
+    /// [`WebdavSyncCollectionOptions::fallback`]: crate::rfc6578::sync_collection::WebdavSyncCollectionOptions::fallback
+    pub supported_reports: BTreeSet<String>,
 }
 
 /// A partial update over a [`CarddavAddressbook`]'s properties.
@@ -113,6 +123,7 @@ pub const LIST_PROPS: &[WebdavProperty] = &[
     ADDRESSBOOK_COLOR,
     GETCTAG,
     SYNC_TOKEN,
+    SUPPORTED_REPORT_SET,
 ];
 
 /// Joins a home-set path with an addressbook id into a collection path

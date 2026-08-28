@@ -437,7 +437,7 @@ fn caldav_body(
     client.set_stream(connect(base));
     let refs = client.enum_items(cal_id, "").expect("enum items");
     assert!(
-        refs.iter().any(|r| r.id == item_name),
+        refs.refs.iter().any(|r| r.id == item_name),
         "created event {item_name} missing from etag-only enumeration"
     );
 
@@ -457,7 +457,9 @@ fn caldav_body(
     // --- REPORT sync-collection (initial sync) ---
 
     client.set_stream(connect(base));
-    let initial = client.sync_items(cal_id, None).expect("initial sync");
+    let initial = client
+        .sync_items(cal_id, None, Default::default())
+        .expect("initial sync");
     assert!(
         initial.changed.iter().any(|c| c.href.contains(item_id)),
         "created event {item_id} missing from initial sync"
@@ -493,7 +495,7 @@ fn caldav_body(
 
     client.set_stream(connect(base));
     let delta = client
-        .sync_items(cal_id, Some(&sync_token))
+        .sync_items(cal_id, Some(&sync_token), Default::default())
         .expect("incremental sync");
     assert!(
         delta.vanished.iter().any(|href| href.contains(item_id)),
@@ -688,7 +690,7 @@ fn caldav_items_body(
     client.set_stream(connect(base));
     let refs = client.enum_items(calendar_id, "").expect("enum items");
     assert!(
-        refs.iter().any(|r| r.id == item_name),
+        refs.refs.iter().any(|r| r.id == item_name),
         "created event {item_name} missing from etag-only enumeration"
     );
 
@@ -825,7 +827,7 @@ fn carddav_body(
     client.set_stream(connect(base));
     let refs = client.enum_cards(book_id).expect("enum cards");
     assert!(
-        refs.iter().any(|r| r.id == card_name),
+        refs.refs.iter().any(|r| r.id == card_name),
         "created card {card_name} missing from etag-only enumeration"
     );
 
@@ -845,7 +847,9 @@ fn carddav_body(
     // --- REPORT sync-collection (initial sync) ---
 
     client.set_stream(connect(base));
-    let initial = client.sync_cards(book_id, None).expect("initial sync");
+    let initial = client
+        .sync_cards(book_id, None, Default::default())
+        .expect("initial sync");
     assert!(
         initial.changed.iter().any(|c| c.href.contains(card_id)),
         "created card {card_id} missing from initial sync"
@@ -881,7 +885,7 @@ fn carddav_body(
 
     client.set_stream(connect(base));
     let delta = client
-        .sync_cards(book_id, Some(&sync_token))
+        .sync_cards(book_id, Some(&sync_token), Default::default())
         .expect("incremental sync");
     assert!(
         delta.vanished.iter().any(|href| href.contains(card_id)),
@@ -979,7 +983,7 @@ fn carddav_cards_body(
     client.set_stream(connect(base));
     let refs = client.enum_cards(addressbook_id).expect("enum cards");
     assert!(
-        refs.iter().any(|r| r.id == card_name),
+        refs.refs.iter().any(|r| r.id == card_name),
         "created card {card_name} missing from etag-only enumeration"
     );
 

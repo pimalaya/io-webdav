@@ -12,7 +12,7 @@ The RFC 4791 layer: calendar collections and the calendar object resources they 
 The crate SHALL provide list, create, update and delete coroutines for calendar collections. Creation SHALL use MKCALENDAR rather than the extended MKCOL, which CalDAV servers require for calendars.
 
 ### Requirement: Calendar properties
-A listed calendar SHALL carry its id, display name, description, color, component set, ctag, sync token and default time zone. Every property the listing reads SHALL also be writable, so a calendar round-trips through create and update.
+A listed calendar SHALL carry its id, display name, description, color, component set, ctag, sync token, default time zone and the reports the server advertises for it. Every property the listing reads SHALL also be writable, the advertised report set excepted, which RFC 3253 section 3.1.5 protects, so a calendar round-trips through create and update.
 
 ### Requirement: Component set
 The component types a calendar holds SHALL be read from and written to supported-calendar-component-set (RFC 4791 section 5.2.3), whose value is a list of comp children carrying a name attribute. An empty set means the server advertises no restriction, which the RFC defines as accepting any type. A server fixes the set at creation time, so setting it is only meaningful on create.

@@ -18,6 +18,7 @@ use io_webdav::{
     rfc4791::calendar::CaldavCalendar,
     rfc4918::{WebdavAuth, send::WebdavSendError},
     rfc6352::addressbook::{CarddavAddressbook, CarddavAddressbookPatch},
+    rfc6578::sync_collection::WebdavSyncCollectionOptions,
 };
 #[cfg(any(
     feature = "rustls-aws",
@@ -563,14 +564,16 @@ fn item_methods_run_their_coroutines() {
     assert_eq!(items.first().unwrap().id, "event-1.ics");
 
     let refs = client.enum_items("personal", "").expect("enum items");
-    assert_eq!(refs.first().unwrap().id, "event-1.ics");
+    assert_eq!(refs.refs.first().unwrap().id, "event-1.ics");
 
     let fetched = client
         .multiget_items("personal", &["event-1.ics"])
         .expect("multiget items");
     assert_eq!(fetched.len(), 1);
 
-    let delta = client.sync_items("personal", None).expect("initial sync");
+    let delta = client
+        .sync_items("personal", None, Default::default())
+        .expect("initial sync");
     assert_eq!(delta.changed.len(), 1);
     assert_eq!(
         delta.sync_token.as_deref(),
@@ -727,14 +730,16 @@ fn card_methods_run_their_coroutines() {
     assert_eq!(cards.first().unwrap().id, "alice.vcf");
 
     let refs = client.enum_cards("contacts").expect("enum cards");
-    assert_eq!(refs.first().unwrap().id, "alice.vcf");
+    assert_eq!(refs.refs.first().unwrap().id, "alice.vcf");
 
     let fetched = client
         .multiget_cards("contacts", &["alice.vcf"])
         .expect("multiget cards");
     assert_eq!(fetched.len(), 1);
 
-    let delta = client.sync_cards("contacts", None).expect("initial sync");
+    let delta = client
+        .sync_cards("contacts", None, Default::default())
+        .expect("initial sync");
     assert_eq!(delta.changed.len(), 1);
     assert_eq!(
         delta.sync_token.as_deref(),
@@ -762,4 +767,98 @@ fn card_methods_run_their_coroutines() {
     client
         .delete_card("contacts", "alice.vcf", None)
         .expect("delete card");
+}
+
+#[test]
+fn listing_caches_the_reports_each_collection_advertises() {
+    let books = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/contacts/</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:resourcetype><d:collection/><c:addressbook/></d:resourcetype>
+            <d:supported-report-set>
+              <d:supported-report><d:report><c:addressbook-query/></d:report></d:supported-report>
+            </d:supported-report-set>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+    let calendars = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <d:response>
+        <d:href>/dav/calendars/personal/</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+            <d:supported-report-set>
+              <d:supported-report><d:report><d:sync-collection/></d:report></d:supported-report>
+            </d:supported-report-set>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+    let mut client = discovered_client(vec![
+        multistatus_response(books),
+        multistatus_response(calendars),
+    ]);
+
+    client.list_addressbooks().expect("list addressbooks");
+    client.list_calendars().expect("list calendars");
+
+    // NOTE: this is what a consumer reads to pick its enumeration, instead of
+    // paying a failed REPORT to learn the same thing.
+    let books = &client.addressbook_reports["contacts"];
+    assert!(!books.contains("sync-collection"));
+    assert!(books.contains("addressbook-query"));
+    assert!(client.calendar_reports["personal"].contains("sync-collection"));
+}
+
+#[test]
+fn sync_cards_enumerates_with_the_fallback_when_asked() {
+    let listing = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/books/contacts/alice.vcf</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+    let mut client = discovered_client(vec![multistatus_response(listing)]);
+
+    let delta = client
+        .sync_cards(
+            "contacts",
+            None,
+            WebdavSyncCollectionOptions { fallback: true },
+        )
+        .expect("fallback enumeration");
+
+    assert_eq!(delta.changed.len(), 1);
+    assert!(delta.sync_token.is_none());
+}
+
+#[test]
+fn an_unimplemented_report_is_recognised_through_either_path() {
+    let body = r#"<d:error xmlns:d="DAV:"><d:supported-report/></d:error>"#;
+    let refusal = || http_response("403 Forbidden", &[], body);
+    let mut client = discovered_client(vec![refusal(), refusal(), refusal()]);
+
+    // NOTE: the enumeration nests its send one level deeper than the query, so
+    // a consumer matching one variant alone misses half the refusals.
+    let enumerated = client
+        .sync_cards("contacts", None, Default::default())
+        .unwrap_err();
+    assert!(enumerated.is_unsupported_report());
+
+    let queried = client.enum_cards("contacts").unwrap_err();
+    assert!(queried.is_unsupported_report());
+
+    let denied = client.list_addressbooks().unwrap_err();
+    assert!(
+        !denied.is_unsupported_report(),
+        "a PROPFIND refusal is not a missing report",
+    );
 }

@@ -87,6 +87,21 @@ pub enum WebdavSendError {
         /// The response body, verbatim.
         body: String,
     },
+    /// The server does not implement the requested report, as opposed to
+    /// refusing this particular request. Raised by
+    /// [`WebdavReport`](crate::rfc4918::report::WebdavReport) alone, a report
+    /// being the only request that can be unimplemented while the resource
+    /// exists; the consumer enumerates another way rather than giving up.
+    #[error(
+        "WebDAV server does not implement the report (HTTP {status}){}",
+        summarized(body)
+    )]
+    UnsupportedReport {
+        /// The status the server wrapped the refusal in.
+        status: u16,
+        /// The response body, verbatim.
+        body: String,
+    },
     /// The server returned a redirect where none was expected.
     #[error("WebDAV server returned unexpected redirect")]
     UnexpectedRedirect,

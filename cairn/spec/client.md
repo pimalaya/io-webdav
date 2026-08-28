@@ -18,7 +18,7 @@ Under one of the TLS features the client SHALL additionally open http and https 
 The crate SHALL offer Rustls with ring crypto as the default, Rustls with aws crypto, and native-tls, each as its own feature implying the client feature.
 
 ### Requirement: Discovery cache
-The client SHALL cache the principal URL and both home sets. Each discovery step SHALL resolve the previous one when it is not cached. A method needing a home set that was never resolved SHALL fail with a dedicated missing-cache error rather than guess a path.
+The client SHALL cache the principal URL and both home sets, plus the reports each listed collection advertises. Each discovery step SHALL resolve the previous one when it is not cached. A method needing a home set that was never resolved SHALL fail with a dedicated missing-cache error rather than guess a path.
 
 ### Requirement: No redirect following
 The client SHALL never follow a redirect. It owns a single connected stream, so it SHALL surface the target URL in an unexpected-redirect error and let the caller reconnect and swap the stream in.
