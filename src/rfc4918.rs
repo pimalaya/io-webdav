@@ -706,7 +706,7 @@ pub fn resolve_href(base_url: &Url, href: &str) -> Option<Url> {
 pub fn trace_unrecognized(entry: &WebdavResponseEntry, known: &[WebdavProperty]) {
     for item in &entry.props {
         if !known.iter().any(|prop| prop.local == item.local) {
-            trace!("ignoring unrecognized WebDAV property `{}`", item.local);
+            trace!("ignoring unrecognized WebDAV property {}", item.local);
         }
     }
 }

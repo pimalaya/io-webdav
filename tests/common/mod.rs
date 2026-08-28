@@ -281,7 +281,7 @@ fn connect(url: &Url) -> WebdavStream {
             let tcp = TcpStream::connect((host.as_str(), port)).expect("TCP connect");
             WebdavStream::Tls(Box::new(StreamOwned::new(conn, tcp)))
         }
-        scheme => panic!("unsupported base URL scheme `{scheme}`"),
+        scheme => panic!("unsupported base URL scheme {scheme}"),
     }
 }
 
@@ -326,7 +326,7 @@ where
 /// Reports a failed teardown without panicking, naming what was left behind so
 /// it can be removed by hand.
 fn report_leftover(what: &str, id: &str, err: &dyn Debug) {
-    eprintln!("WARNING: could not clean up {what} `{id}`, remove it by hand: {err:?}");
+    eprintln!("WARNING: could not clean up {what} {id}, remove it by hand: {err:?}");
 }
 
 /// Full CalDAV CRUD flow against the DAV root at `base_url`.

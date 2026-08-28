@@ -142,7 +142,7 @@ pub enum WebdavClientStdError {
         feature = "rustls-ring",
         feature = "native-tls"
     ))]
-    #[error("WebDAV URL `{0}` has no host")]
+    #[error("WebDAV URL {0} has no host")]
     UrlMissingHost(String),
     /// The target WebDAV URL uses a scheme other than `http` or `https`.
     #[cfg(any(
@@ -150,11 +150,11 @@ pub enum WebdavClientStdError {
         feature = "rustls-ring",
         feature = "native-tls"
     ))]
-    #[error("WebDAV URL `{0}` has unsupported scheme `{1}` (expected `http` or `https`)")]
+    #[error("WebDAV URL {0} has unsupported scheme {1} (expected `http` or `https`)")]
     UrlUnsupportedScheme(String, String),
     /// The server redirected during an operation that must not follow
     /// redirects.
-    #[error("WebDAV server redirected to `{0}` during a non-redirectable operation")]
+    #[error("WebDAV server redirected to {0} during a non-redirectable operation")]
     UnexpectedRedirect(Url),
     /// The client has no principal URL yet; `current_user_principal` must run
     /// first.
