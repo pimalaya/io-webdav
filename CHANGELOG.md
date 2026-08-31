@@ -7,29 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-31
+
 ### Added
 
-- **BREAKING** Added `WebdavSendError::DuplicateUid`, raised by the item and card create and update coroutines when the server refuses a write because the collection already holds that `UID`: the `CALDAV:no-uid-conflict` (RFC 4791 §5.3.2) or `CARDDAV:no-uid-conflict` (RFC 6352 §6.3.2) precondition, read as an element out of the body, whatever status wraps it. One variant serves both flavours, the caller knowing which one it called, and the crate neither retries nor renames. `WebdavClientStdError::is_duplicate_uid` recognises it, the peer of `is_unsupported_report`. A new variant on a public error enum breaks an exhaustive match.
+- **BREAKING** Added `WebdavSendError::DuplicateUid`, raised when the server refuses a create or update because the collection already holds that `UID`.
 
-- Added `WebdavSendError::UnsupportedReport`, raised by `WebdavReport` when the server says it does not implement the report: the RFC 3253 §3.6 `DAV:supported-report` precondition, whatever status wraps it, plus the `405` and `501` statuses. `WebdavSyncCollectionError::UnsupportedReport` names the same refusal on the enumeration path, and `WebdavClientStdError::is_unsupported_report` recognises both.
+  The `CALDAV:no-uid-conflict` (RFC 4791 §5.3.2) or `CARDDAV:no-uid-conflict` (RFC 6352 §6.3.2) precondition, read as an element out of the body, whatever status wraps it. One variant serves both flavours, the caller knowing which one it called, and the crate neither retries nor renames. `WebdavClientStdError::is_duplicate_uid` recognises it, the peer of `is_unsupported_report`. A new variant on a public error enum breaks an exhaustive match.
 
-- Added `WebdavSyncCollectionOptions`, whose `fallback` runs the enumeration as a `PROPFIND` at Depth 1 instead of the `sync-collection` REPORT, for a server implementing none of RFC 6578. It lists every member and returns no token, and parses nothing, so it enumerates past a member the server itself cannot parse. The crate implements both paths and never chooses between them.
+- Added `WebdavSendError::UnsupportedReport`, raised by `WebdavReport` when the server says it does not implement the report.
 
-- Added `SUPPORTED_REPORT_SET`, `SYNC_COLLECTION` and `WebdavResponseEntry::supported_reports`, plus `CaldavCalendar::supported_reports` and `CarddavAddressbook::supported_reports`, read while listing collections and cached in `WebdavClientStd::calendar_reports` and `addressbook_reports`, so the enumeration is chosen from what the server advertises rather than from a failed request.
+  The RFC 3253 §3.6 `DAV:supported-report` precondition, whatever status wraps it, plus the `405` and `501` statuses. `WebdavSyncCollectionError::UnsupportedReport` names the same refusal on the enumeration path, and `WebdavClientStdError::is_unsupported_report` recognises both.
+
+- Added `WebdavSyncCollectionOptions`, whose `fallback` enumerates with a `PROPFIND` at Depth 1 instead of the `sync-collection` REPORT.
+
+  For a server implementing none of RFC 6578. It lists every member, returns no token and parses nothing, so it enumerates past a member the server itself cannot parse. The crate implements both paths and never chooses between them.
+
+- Added the supported-report reads: `SUPPORTED_REPORT_SET`, `SYNC_COLLECTION`, `WebdavResponseEntry::supported_reports`, `CaldavCalendar::supported_reports` and `CarddavAddressbook::supported_reports`.
+
+  They are read while listing collections and cached in `WebdavClientStd::calendar_reports` and `addressbook_reports`, so the enumeration is chosen from what the server advertises rather than from a failed request.
 
 - Added `WebdavPropChild::children`, the parser keeping property markup at any depth rather than one level.
 
-- Added a trace of the multistatus body to the `PROPFIND` and `REPORT` coroutines. The crate documented data dumps at trace level and had none for the one body every collection read goes through, so a server answering with something unexpected could only be diagnosed by packet capture.
+- Added a trace of the multistatus body to the `PROPFIND` and `REPORT` coroutines.
 
-### Fixed
-
-- The collection self-entry is now recognised by path, so a server spelling its hrefs as absolute URLs (RFC 4918 §14.7 allows either) no longer enters its own collection into the member spine. A `PROPFIND` enumeration always answers with that entry, where a `sync-collection` REPORT only did on some servers.
+  The crate documented data dumps at trace level and had none for the one body every collection read goes through, so a server answering with something unexpected could only be diagnosed by packet capture.
 
 ### Changed
 
-- **BREAKING** `WebdavSyncCollection::new`, `WebdavClientStd::sync_items` and `sync_cards` take a `WebdavSyncCollectionOptions`.
+- Bumped `quick-xml` to 0.42, whose events are `str`-based rather than byte-based.
 
-- **BREAKING** `CaldavItemEnum` and `CarddavCardEnum` return a `CaldavItemEnumOk` and a `CarddavCardEnumOk`, the references now carrying whether the server truncated the listing with a 507 row. `WebdavClientStd::enum_items` and `enum_cards` follow.
+  The multistatus parser reads local names, text, character references and CDATA as strings straight from the reader, so nothing decodes UTF-8 by hand any more. No API change.
+
+- **BREAKING** Added a `WebdavSyncCollectionOptions` parameter to `WebdavSyncCollection::new`, `WebdavClientStd::sync_items` and `sync_cards`.
+
+- **BREAKING** Changed `CaldavItemEnum` and `CarddavCardEnum` to return a `CaldavItemEnumOk` and a `CarddavCardEnumOk`.
+
+  The references now carry whether the server truncated the listing with a 507 row. `WebdavClientStd::enum_items` and `enum_cards` follow.
+
+### Fixed
+
+- Recognised the collection self-entry by path, so a server spelling its hrefs as absolute URLs no longer enters the collection into its own member spine.
+
+  RFC 4918 §14.7 allows either spelling. A `PROPFIND` enumeration always answers with that entry, where a `sync-collection` REPORT only did on some servers.
 
 ## [0.2.1] - 2026-08-22
 
@@ -167,7 +187,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.2.1..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.3.0..HEAD
+[0.3.0]: https://github.com/pimalaya/io-webdav/compare/v0.2.1..v0.3.0
 [0.2.1]: https://github.com/pimalaya/io-webdav/compare/v0.2.0..v0.2.1
 [0.2.0]: https://github.com/pimalaya/io-webdav/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/pimalaya/io-webdav/compare/root..v0.1.0

@@ -492,7 +492,7 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
-                let local = local_name(e.local_name().as_ref());
+                let local = e.local_name().as_ref().to_string();
                 if let Some((_, _, children)) = stack.last_mut() {
                     children.push(WebdavPropChild {
                         local: local.clone(),
@@ -511,7 +511,7 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                 stack.push((local, String::new(), Vec::new()));
             }
             Ok(Event::Empty(e)) => {
-                let local = local_name(e.local_name().as_ref());
+                let local = e.local_name().as_ref().to_string();
                 let parent_is_prop = stack.last().is_some_and(|(n, _, _)| n == "prop");
                 if parent_is_prop {
                     propstat_props.push(WebdavPropItem {
@@ -527,18 +527,16 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                 }
             }
             Ok(Event::Text(t)) => {
-                if let Ok(decoded) = t.decode() {
-                    if let Some((_, buf, _)) = stack.last_mut() {
-                        buf.push_str(&decoded);
-                    }
+                if let Some((_, buf, _)) = stack.last_mut() {
+                    buf.push_str(&t.xml_content(XmlVersion::Implicit1_0));
                 }
             }
             Ok(Event::GeneralRef(r)) => {
                 if let Some((_, buf, _)) = stack.last_mut() {
                     if let Ok(Some(ch)) = r.resolve_char_ref() {
                         buf.push(ch);
-                    } else if let Ok(name) = r.decode() {
-                        match name.as_ref() {
+                    } else {
+                        match r.as_ref() {
                             "amp" => buf.push('&'),
                             "lt" => buf.push('<'),
                             "gt" => buf.push('>'),
@@ -555,11 +553,8 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                 }
             }
             Ok(Event::CData(t)) => {
-                let bytes = t.into_inner();
-                if let Ok(text) = core::str::from_utf8(&bytes) {
-                    if let Some((_, buf, _)) = stack.last_mut() {
-                        buf.push_str(text);
-                    }
+                if let Some((_, buf, _)) = stack.last_mut() {
+                    buf.push_str(&t.into_inner());
                 }
             }
             Ok(Event::End(_)) => {
@@ -823,9 +818,6 @@ fn name_attribute(element: &BytesStart) -> Option<String> {
     Some(value.into_owned())
 }
 
-fn local_name(bytes: &[u8]) -> String {
-    core::str::from_utf8(bytes).unwrap_or("").to_string()
-}
 #[cfg(test)]
 mod tests {
     use alloc::string::ToString;

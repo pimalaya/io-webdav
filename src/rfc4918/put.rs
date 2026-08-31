@@ -181,7 +181,7 @@ pub(crate) fn duplicate_uid(err: WebdavSendError) -> WebdavSendError {
 /// Local name of the precondition a duplicate `UID` is refused with, spelled
 /// `CALDAV:no-uid-conflict` (RFC 4791 §5.3.2) and `CARDDAV:no-uid-conflict`
 /// (RFC 6352 §6.3.2).
-const NO_UID_CONFLICT: &[u8] = b"no-uid-conflict";
+const NO_UID_CONFLICT: &str = "no-uid-conflict";
 
 #[derive(Debug)]
 enum State {
