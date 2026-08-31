@@ -65,7 +65,10 @@ use std::{
     io::{Read, Result as IoResult, Write},
     net::TcpStream,
     panic::{self, AssertUnwindSafe},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -285,13 +288,23 @@ fn connect(url: &Url) -> WebdavStream {
     }
 }
 
-/// Milliseconds since the Unix epoch, used to mint unique collection and
-/// resource ids per run.
-fn unix_millis() -> u128 {
-    SystemTime::now()
+/// A suffix unique to one minted collection or resource id.
+///
+/// The epoch milliseconds date a leftover an aborted run left behind, and the
+/// counter separates two ids minted in the same millisecond. Both are needed:
+/// the flows run as parallel test threads, and a server answering one home-set
+/// for calendars and address books (Radicale does) has the two of them minting
+/// collection names into one collection.
+fn unique_suffix() -> String {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_millis()
+        .as_millis();
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    format!("{millis}-{count}")
 }
 
 /// Runs `body`, then `cleanup` whichever way `body` went, and only then
@@ -349,7 +362,7 @@ pub fn caldav(base_url: &str, auth: WebdavAuth) {
         .expect("calendar-home-set discovery");
     assert!(!home.path().is_empty(), "empty calendar home-set path");
 
-    let ts = unix_millis();
+    let ts = unique_suffix();
     let cal_id = format!("io-webdav-test-{ts}");
     let item_id = format!("event-{ts}");
     // NOTE: the caller owns the whole resource name, extension included; the
@@ -633,7 +646,7 @@ pub fn caldav_items(base_url: &str, auth: WebdavAuth, calendar_id: &str) {
         "target calendar {calendar_id} missing from home-set"
     );
 
-    let item_id = format!("event-{}", unix_millis());
+    let item_id = format!("event-{}", unique_suffix());
     // NOTE: the caller owns the whole resource name, extension included; the
     // same name is the item's id everywhere afterwards.
     let item_name = format!("{item_id}.ics");
@@ -746,7 +759,7 @@ pub fn carddav(base_url: &str, auth: WebdavAuth) {
         .expect("addressbook-home-set discovery");
     assert!(!home.path().is_empty(), "empty addressbook home-set path");
 
-    let ts = unix_millis();
+    let ts = unique_suffix();
     let book_id = format!("io-webdav-test-{ts}");
     let card_id = format!("card-{ts}");
     // NOTE: the caller owns the whole resource name, extension included; the
@@ -926,7 +939,7 @@ pub fn carddav_cards(base_url: &str, auth: WebdavAuth, addressbook_id: &str) {
         "target addressbook {addressbook_id} missing from home-set"
     );
 
-    let card_id = format!("card-{}", unix_millis());
+    let card_id = format!("card-{}", unique_suffix());
     // NOTE: the caller owns the whole resource name, extension included; the
     // same name is the card's id everywhere afterwards.
     let card_name = format!("{card_id}.vcf");
