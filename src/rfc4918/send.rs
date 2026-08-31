@@ -1,3 +1,5 @@
+//! # Send
+//!
 //! Base coroutine every higher-level WebDAV coroutine delegates to: runs an
 //! HTTP/1.1 exchange and returns the raw response body, which higher layers
 //! either parse as a multistatus or keep as-is.

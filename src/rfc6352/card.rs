@@ -1,9 +1,13 @@
+//! # Cards
+//!
 //! CardDAV address object resources, a.k.a. cards (RFC 6352 §5.1).
 //!
-//! Holds the [`CarddavCardRef`] and [`CarddavCardEntry`] types shared across the
-//! card coroutines, plus the card-property selector, the resource path
-//! composition and the multistatus entry mapper. Each coroutine is its own
-//! submodule, together with the result types only it returns.
+//! Holds the [`CarddavCardRef`] and [`CarddavCardEntry`] types shared across
+//! the card coroutines, plus the card-property selector, the resource path
+//! composition and the multistatus entry mapper.
+//!
+//! Each coroutine is its own submodule, together with the result types only
+//! it returns.
 
 pub mod create;
 pub mod delete;

@@ -1,3 +1,5 @@
+//! # Addressbook home-set
+//!
 //! `addressbook-home-set` discovery (RFC 6352 §7.1.1).
 //!
 //! Runs a PROPFIND against the principal URL and surfaces the discovered

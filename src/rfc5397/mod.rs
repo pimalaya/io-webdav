@@ -1,4 +1,4 @@
-//! RFC 5397: WebDAV Current Principal Extension.
+//! # RFC 5397: WebDAV Current Principal Extension
 //!
 //! <https://www.rfc-editor.org/rfc/rfc5397>
 

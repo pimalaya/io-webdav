@@ -1,3 +1,5 @@
+//! # REPORT
+//!
 //! Generic `REPORT` coroutine (RFC 3253 §3.6).
 //!
 //! Sends a `REPORT` against `path` with a caller-built query body (e.g. a

@@ -1,3 +1,5 @@
+//! # Update item
+//!
 //! `update-item` coroutine: PUT raw iCalendar bytes against an existing
 //! calendar item.
 //!
@@ -7,8 +9,7 @@
 //! A collection that already holds the item's `UID` under another resource
 //! refuses the PUT with the `CALDAV:no-uid-conflict` precondition (RFC 4791
 //! §5.3.2), surfaced as
-//! [`DuplicateUid`](crate::rfc4918::send::WebdavSendError::DuplicateUid)
-//! rather than as an opaque conflict.
+//! [`DuplicateUid`](crate::rfc4918::send::WebdavSendError::DuplicateUid).
 //!
 //! # Example
 //!

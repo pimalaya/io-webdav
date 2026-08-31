@@ -1,3 +1,5 @@
+//! # DELETE
+//!
 //! Generic `DELETE` coroutine (RFC 4918 §9.6).
 //!
 //! Sends a `DELETE` against `path`. Servers may return 204 No Content (empty

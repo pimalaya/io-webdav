@@ -1,4 +1,4 @@
-//! RFC 6352: CardDAV, vCard Extensions to WebDAV.
+//! # RFC 6352: CardDAV, vCard Extensions to WebDAV
 //!
 //! <https://www.rfc-editor.org/rfc/rfc6352>
 

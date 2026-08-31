@@ -1,3 +1,5 @@
+//! # Multiget cards
+//!
 //! `multiget-cards` coroutine: REPORT `addressbook-multiget` against an
 //! addressbook collection (RFC 6352 §8.7).
 //!

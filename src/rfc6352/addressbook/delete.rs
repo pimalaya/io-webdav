@@ -1,3 +1,5 @@
+//! # Delete addressbook
+//!
 //! `delete-addressbook` coroutine: `DELETE` against an addressbook collection.
 //!
 //! # Example

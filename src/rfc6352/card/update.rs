@@ -1,3 +1,5 @@
+//! # Update card
+//!
 //! `update-card` coroutine: PUT raw vCard bytes against an existing card.
 //!
 //! Supports the optional `If-Match` precondition so callers can gate the write
@@ -6,8 +8,7 @@
 //! A collection that already holds the card's `UID` under another resource
 //! refuses the PUT with the `CARDDAV:no-uid-conflict` precondition (RFC 6352
 //! §6.3.2), surfaced as
-//! [`DuplicateUid`](crate::rfc4918::send::WebdavSendError::DuplicateUid)
-//! rather than as an opaque conflict.
+//! [`DuplicateUid`](crate::rfc4918::send::WebdavSendError::DuplicateUid).
 //!
 //! # Example
 //!

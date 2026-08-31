@@ -1,9 +1,13 @@
+//! # Redirect-surfacing send
+//!
 //! Send coroutine that surfaces 3xx redirects to the caller.
 //!
 //! Runs an HTTP/1.1 exchange and turns the underlying
-//! `HttpSendYield::WantsRedirect` into a [`WebdavRedirectYield::WantsRedirect`]
-//! so the client can rebuild its connection and restart the operation against
-//! the new target URL. The success body is returned raw; callers parse it with
+//! `HttpSendYield::WantsRedirect` into a
+//! [`WebdavRedirectYield::WantsRedirect`] so the client can rebuild its
+//! connection and restart the operation against the new target URL.
+//!
+//! The success body is returned raw; callers parse it with
 //! `parse_multistatus`.
 //!
 //! [`WebdavRedirectYield::WantsRedirect`]: crate::rfc4918::coroutine::WebdavRedirectYield::WantsRedirect

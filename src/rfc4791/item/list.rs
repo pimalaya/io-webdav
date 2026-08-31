@@ -1,3 +1,5 @@
+//! # List items
+//!
 //! `list-items` coroutine: REPORT `calendar-query` against a calendar
 //! collection.
 //!

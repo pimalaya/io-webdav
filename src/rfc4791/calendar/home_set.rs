@@ -1,3 +1,5 @@
+//! # Calendar home-set
+//!
 //! `calendar-home-set` discovery (RFC 4791 §6.2.1).
 //!
 //! Runs a PROPFIND against the principal URL and surfaces the discovered

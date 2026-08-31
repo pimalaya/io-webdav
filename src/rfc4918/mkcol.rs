@@ -1,3 +1,5 @@
+//! # MKCOL
+//!
 //! Generic extended `MKCOL` coroutine (RFC 4918 §9.3, RFC 5689 §3).
 //!
 //! Creates a collection at `path` whose `<resourcetype>` is `<collection/>`

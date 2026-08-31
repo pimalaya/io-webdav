@@ -1,3 +1,5 @@
+//! # GET
+//!
 //! Generic `GET` coroutine (RFC 9110 §9.3.1).
 //!
 //! Sends a `GET` against `path` and returns the response body as raw bytes.

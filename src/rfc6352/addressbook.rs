@@ -1,3 +1,5 @@
+//! # Addressbook collections
+//!
 //! CardDAV addressbook collections (RFC 6352 §5).
 //!
 //! Holds the shared [`CarddavAddressbook`] type, the CardDAV property
@@ -182,10 +184,9 @@ pub fn property_updates(
 /// Builds a CardDAV `addressbook-query` REPORT body requesting `props`, with a
 /// match-all filter.
 ///
-/// RFC 6352 §8.6 requires the `C:filter` element, and an empty `allof` filter
-/// matches every card, an empty conjunction being true. Strict servers (Google)
-/// answer HTTP 400 to a missing filter and treat the default empty `anyof` as
-/// matching nothing, which leaves `allof` as the portable match-all form.
+/// RFC 6352 §8.6 requires `C:filter`, and an empty `allof` matches every
+/// card, an empty conjunction being true. Strict servers (Google) 400 a
+/// missing filter and read an empty `anyof` as matching nothing.
 pub fn addressbook_query_body(props: &[WebdavProperty]) -> Vec<u8> {
     let filter = "<C:filter test=\"allof\"></C:filter>";
     report_query_body(ADDRESSBOOK_QUERY, &[CARDDAV], props, filter)

@@ -1,3 +1,5 @@
+//! # COPY
+//!
 //! Generic `COPY` coroutine (RFC 4918 §9.8).
 //!
 //! # Example

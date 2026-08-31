@@ -1,3 +1,5 @@
+//! # Create calendar
+//!
 //! `create-calendar` coroutine: `MKCALENDAR` (RFC 4791 §5.3.1) against the
 //! calendar home-set URL.
 //!

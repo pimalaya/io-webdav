@@ -1,3 +1,5 @@
+//! # Redirect yield
+//!
 //! Yield emitted by the redirect-capable WebDAV coroutines
 //! (current-user-principal, calendar-home-set, addressbook-home-set).
 //!

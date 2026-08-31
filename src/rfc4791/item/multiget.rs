@@ -1,3 +1,5 @@
+//! # Multiget items
+//!
 //! `multiget-items` coroutine: REPORT `calendar-multiget` against a calendar
 //! collection (RFC 4791 §7.9).
 //!

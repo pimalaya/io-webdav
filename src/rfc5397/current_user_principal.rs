@@ -1,9 +1,13 @@
+//! # Current user principal
+//!
 //! `current-user-principal` discovery (RFC 5397).
 //!
-//! Runs a `PROPFIND` for `<DAV:current-user-principal>` against the base URL and
-//! surfaces the discovered principal URL. That URL must point at a DAV resource,
-//! the server root or the DAV context path such as `/dav/`, and a server
-//! redirecting to its actual DAV root yields [`WantsRedirect`].
+//! Runs a `PROPFIND` for `<DAV:current-user-principal>` against the base URL
+//! and surfaces the discovered principal URL.
+//!
+//! That URL must point at a DAV resource, the server root or the DAV context
+//! path such as `/dav/`, and a server redirecting to its actual DAV root
+//! yields [`WantsRedirect`].
 //!
 //! [`WantsRedirect`]: crate::rfc4918::coroutine::WebdavRedirectYield::WantsRedirect
 //!

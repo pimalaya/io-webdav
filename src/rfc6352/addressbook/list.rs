@@ -1,3 +1,5 @@
+//! # List addressbooks
+//!
 //! `list-addressbooks` coroutine: PROPFIND Depth:1 against the addressbook
 //! home-set URL, collecting every child collection whose resourcetype is
 //! `<C:addressbook/>`.

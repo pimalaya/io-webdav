@@ -1,22 +1,28 @@
-//! Collection enumeration coroutine: the `sync-collection` REPORT (RFC 6578
-//! §3.2) against a sync token, or a `PROPFIND` listing when the caller asks for
-//! it.
+//! # Sync collection
 //!
-//! An initial sync (no token) returns every member; a subsequent sync returns
-//! only the members changed or removed since the given token, plus the next
-//! token to checkpoint. A rejected token surfaces as
+//! Collection enumeration coroutine: the `sync-collection` REPORT
+//! (RFC 6578 §3.2) against a sync token, or a `PROPFIND` listing when the
+//! caller asks for it.
+//!
+//! An initial sync (no token) returns every member; a subsequent sync
+//! returns only the members changed or removed since the given token, plus
+//! the next token to checkpoint.
+//!
+//! A rejected token surfaces as
 //! [`WebdavSyncCollectionError::InvalidSyncToken`] so the consumer can fall
 //! back to a full enumeration.
 //!
-//! RFC 6578 is an extension and a deployment may implement none of it, which it
-//! says with the RFC 3253 §3.6 precondition, surfacing as
-//! [`WebdavSyncCollectionError::UnsupportedReport`]. Setting
-//! [`WebdavSyncCollectionOptions::fallback`] then enumerates the collection
-//! with a `PROPFIND` at Depth 1 instead, which returns every member and no
-//! token. Which of the two runs stays the caller's decision: an incremental
-//! delta traded for a full listing is not a trade a library makes behind its
-//! consumer's back, and [`supported_reports`] tells beforehand which one the
-//! server has.
+//! RFC 6578 is an extension and a deployment may implement none of it, which
+//! it says with the RFC 3253 §3.6 precondition, surfacing as
+//! [`WebdavSyncCollectionError::UnsupportedReport`].
+//!
+//! Setting [`WebdavSyncCollectionOptions::fallback`] then enumerates the
+//! collection with a `PROPFIND` at Depth 1 instead, which returns every
+//! member and no token.
+//!
+//! Which of the two runs stays the caller's decision: an incremental delta
+//! traded for a full listing is not a trade a library makes behind its
+//! consumer's back, and [`supported_reports`] tells which one the server has.
 //!
 //! [`supported_reports`]: crate::rfc4918::WebdavResponseEntry::supported_reports
 //!
@@ -171,10 +177,9 @@ impl WebdavSyncCollection {
     /// requesting `props` on each member and taking [`None`] as `sync_token`
     /// for an initial sync.
     ///
-    /// The REPORT pins its `Depth` header to 0 as RFC 6578 §3.3 requires, the
-    /// scope being carried by the sync-level element instead; the `PROPFIND`
-    /// fallback takes Depth 1, which is where its own members live, and ignores
-    /// `sync_token`, having nothing to compare it against.
+    /// The REPORT pins its `Depth` to 0 as RFC 6578 §3.3 requires, the scope
+    /// riding the sync-level element instead; the `PROPFIND` fallback takes
+    /// Depth 1, where its members live, and ignores `sync_token`.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

@@ -1,3 +1,5 @@
+//! # Calendar items
+//!
 //! CalDAV calendar object resources, a.k.a. items (RFC 4791 §4.1).
 //!
 //! Holds the [`CaldavItemRef`] and [`CaldavItemEntry`] types shared across the

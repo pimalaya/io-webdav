@@ -1,3 +1,5 @@
+//! # PUT
+//!
 //! Generic `PUT` coroutine (RFC 4918 §9.7).
 //!
 //! Sends a `PUT` against `path` with the caller-supplied body bytes and content

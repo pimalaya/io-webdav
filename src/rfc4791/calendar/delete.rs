@@ -1,3 +1,5 @@
+//! # Delete calendar
+//!
 //! `delete-calendar` coroutine: `DELETE` against a calendar collection.
 //!
 //! # Example

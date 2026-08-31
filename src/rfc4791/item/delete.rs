@@ -1,3 +1,5 @@
+//! # Delete item
+//!
 //! `delete-item` coroutine: `DELETE` a calendar item by its resource name.
 //!
 //! Supports the optional `If-Match` precondition so callers can gate the

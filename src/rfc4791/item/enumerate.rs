@@ -1,11 +1,14 @@
+//! # Enumerate items
+//!
 //! `enum-items` coroutine: REPORT `calendar-query` requesting ETags only,
 //! against a calendar collection.
 //!
 //! Enumerates the full item spine (id plus ETag) without downloading any
 //! iCalendar body; bodies are then batch-fetched with
 //! [`CaldavItemMultiget`](crate::rfc4791::item::multiget::CaldavItemMultiget).
-//! A 507 row flags the listing truncated, so a partial spine is never taken for
-//! the whole calendar.
+//!
+//! A 507 row flags the listing truncated, so a partial spine is never taken
+//! for the whole calendar.
 //!
 //! # Example
 //!
@@ -76,9 +79,9 @@ const ENUM_PROPS: &[WebdavProperty] = &[GETETAG];
 pub struct CaldavItemEnumOk {
     /// The enumerated item references (id plus ETag, no body).
     pub refs: BTreeSet<CaldavItemRef>,
-    /// Whether the server truncated the listing with a 507 row (RFC 6578 §3.6),
-    /// in which case [`refs`](Self::refs) is a part of the calendar and not the
-    /// whole of it.
+    /// Whether the server truncated the listing with a 507 row (RFC 6578
+    /// §3.6), in which case [`refs`](Self::refs) is a part of the calendar
+    /// and not the whole of it.
     ///
     /// A full enumeration is how removals are detected without a sync token, so
     /// a consumer taking a truncated one for a complete snapshot reads the

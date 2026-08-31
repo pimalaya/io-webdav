@@ -1,3 +1,5 @@
+//! # Update calendar
+//!
 //! `update-calendar` coroutine: `PROPPATCH` against a calendar collection.
 //!
 //! # Example

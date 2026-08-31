@@ -1,3 +1,5 @@
+//! # PROPFIND
+//!
 //! Generic `PROPFIND` coroutine (RFC 4918 §9.1).
 //!
 //! Requests `props` against `path` at the given `Depth`; the request body is

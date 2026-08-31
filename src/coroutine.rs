@@ -1,3 +1,5 @@
+//! # Coroutine contract
+//!
 //! Generator-shape coroutine contract, mirroring `core::ops::Coroutine`: a
 //! `Yield` associated type for intermediate progress, a `Return` for terminal
 //! output, and a two-variant [`WebdavCoroutineState`].

@@ -13,15 +13,19 @@
 //! Discovery flows top-down from [`base_url`], the DAV context root resolved
 //! upstream by io-pim-discovery: [`current_user_principal`] resolves the
 //! principal URL, then [`calendar_home_set`] and [`addressbook_home_set`]
-//! resolve the per-RFC home set. Each step caches its result, and a method
-//! needing a step that never ran fails with [`MissingPrincipal`],
-//! [`MissingCalendarHomeSet`] or [`MissingAddressbookHomeSet`].
+//! resolve the per-RFC home set.
+//!
+//! Each step caches its result, and a method needing a step that never ran
+//! fails with [`MissingPrincipal`], [`MissingCalendarHomeSet`] or
+//! [`MissingAddressbookHomeSet`].
 //!
 //! Listing a home set caches one more thing beside those: the reports each
 //! collection advertises (RFC 3253 §3.1.5), in [`calendar_reports`] and
-//! [`addressbook_reports`]. A collection whose set holds no `sync-collection`
-//! is enumerated with the `PROPFIND` fallback, and the cache is what tells so
-//! before the REPORT is sent rather than after it fails.
+//! [`addressbook_reports`].
+//!
+//! A collection whose set holds no `sync-collection` is enumerated with the
+//! `PROPFIND` fallback, and the cache is what tells so before the REPORT is
+//! sent rather than after it fails.
 //!
 //! [`base_url`]: WebdavClientStd::base_url
 //! [`user_agent`]: WebdavClientStd::user_agent
@@ -187,9 +191,7 @@ impl WebdavClientStdError {
     ///
     /// A REPORT reaches the caller through two error paths, the enumeration
     /// nesting its send one level deeper than a plain request, so a consumer
-    /// matching a single variant misses half of them. The refusal itself is
-    /// named upstream, on the RFC 3253 §3.6 precondition rather than on the
-    /// status a server chooses to wrap it in.
+    /// matching a single variant misses half of them.
     pub fn is_unsupported_report(&self) -> bool {
         matches!(
             self,
@@ -202,11 +204,9 @@ impl WebdavClientStdError {
     /// holds a resource carrying that `UID`, as opposed to refusing it for any
     /// of the other conflicts a write meets.
     ///
-    /// A PUT reaches the caller through one error path, no write following
-    /// redirects, so the one variant is every way the refusal arrives. The
-    /// refusal itself is named upstream, on the RFC 4791 §5.3.2 and RFC 6352
-    /// §6.3.2 precondition rather than on the status a server chooses to wrap
-    /// it in.
+    /// A PUT follows no redirects, so the one variant is every way the
+    /// refusal arrives. It is named on the RFC 4791 §5.3.2 and RFC 6352
+    /// §6.3.2 precondition rather than on the status wrapping it.
     pub fn is_duplicate_uid(&self) -> bool {
         matches!(self, Self::Send(WebdavSendError::DuplicateUid { .. }))
     }

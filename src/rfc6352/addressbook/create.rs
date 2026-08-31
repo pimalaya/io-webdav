@@ -1,3 +1,5 @@
+//! # Create addressbook
+//!
 //! `create-addressbook` coroutine: extended `MKCOL` (RFC 5689) against the
 //! addressbook home-set URL.
 //!

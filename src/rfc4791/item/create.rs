@@ -1,10 +1,13 @@
+//! # Create item
+//!
 //! `create-item` coroutine: PUT raw iCalendar bytes against `<calendar>/<id>`.
 //!
-//! The `id` is the resource name, used verbatim. io-webdav never appends a file
-//! extension, so the caller owns the whole name. The returned
-//! [`CaldavItemCreateOk::id`] is the caller's name, or the server's own when it
-//! relocates the resource and reports it in a `Location` header. Either way it
-//! is what read, update and delete address.
+//! The `id` is the resource name, used verbatim. io-webdav never appends a
+//! file extension, so the caller owns the whole name.
+//!
+//! The returned [`CaldavItemCreateOk::id`] is that name, or the server's own
+//! when it relocates the resource and reports it in a `Location` header.
+//! Either way it is what read, update and delete address.
 //!
 //! Uses `If-None-Match: *` so the server rejects the PUT when a resource with
 //! the same id already exists (RFC 4791 §5.3.2).

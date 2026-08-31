@@ -1,11 +1,14 @@
+//! # Enumerate cards
+//!
 //! `enum-cards` coroutine: REPORT `addressbook-query` requesting ETags only,
 //! against an addressbook collection.
 //!
-//! Enumerates the full card spine (id plus ETag) without downloading any vCard
-//! body; bodies are then batch-fetched with
+//! Enumerates the full card spine (id plus ETag) without downloading any
+//! vCard body; bodies are then batch-fetched with
 //! [`CarddavCardMultiget`](crate::rfc6352::card::multiget::CarddavCardMultiget).
-//! A 507 row flags the listing truncated, so a partial spine is never taken for
-//! the whole addressbook.
+//!
+//! A 507 row flags the listing truncated, so a partial spine is never taken
+//! for the whole addressbook.
 //!
 //! # Example
 //!
@@ -71,9 +74,9 @@ const ENUM_PROPS: &[WebdavProperty] = &[GETETAG];
 pub struct CarddavCardEnumOk {
     /// The enumerated card references (id plus ETag, no body).
     pub refs: BTreeSet<CarddavCardRef>,
-    /// Whether the server truncated the listing with a 507 row (RFC 6578 §3.6),
-    /// in which case [`refs`](Self::refs) is a part of the addressbook and not
-    /// the whole of it.
+    /// Whether the server truncated the listing with a 507 row (RFC 6578
+    /// §3.6), in which case [`refs`](Self::refs) is a part of the
+    /// addressbook and not the whole of it.
     ///
     /// A full enumeration is how removals are detected without a sync token, so
     /// a consumer taking a truncated one for a complete snapshot reads the

@@ -1,3 +1,5 @@
+//! # Read item
+//!
 //! `read-item` coroutine: GET a calendar item by its resource name.
 //!
 //! Stays byte-oriented: returns raw iCalendar bytes plus the response's `ETag`,

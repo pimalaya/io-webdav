@@ -1,3 +1,5 @@
+//! # MOVE
+//!
 //! Generic `MOVE` coroutine (RFC 4918 §9.9).
 //!
 //! # Example

@@ -1,3 +1,5 @@
+//! # Delete card
+//!
 //! `delete-card` coroutine: `DELETE` a card by its resource name.
 //!
 //! Supports the optional `If-Match` precondition so callers can gate the

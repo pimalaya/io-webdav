@@ -1,3 +1,5 @@
+//! # Calendar collections
+//!
 //! CalDAV calendar collections (RFC 4791 §4).
 //!
 //! Holds the shared [`CaldavCalendar`] type, the CalDAV property vocabulary and

@@ -1,3 +1,5 @@
+//! # List cards
+//!
 //! `list-cards` coroutine: REPORT `addressbook-query` against an addressbook
 //! collection.
 //!

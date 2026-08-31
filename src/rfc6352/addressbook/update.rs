@@ -1,3 +1,5 @@
+//! # Update addressbook
+//!
 //! `update-addressbook` coroutine: `PROPPATCH` against an addressbook
 //! collection.
 //!

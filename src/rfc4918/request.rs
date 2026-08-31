@@ -1,10 +1,13 @@
+//! # Request builder
+//!
 //! WebDAV request builder.
 //!
 //! Wraps [`io_http::rfc9110::request::HttpRequest`] with the WebDAV method
 //! shortcuts (`PROPFIND`, `PROPPATCH`, `MKCOL`, `REPORT`, `COPY`, `MOVE`,
 //! `OPTIONS`) plus the `Depth`, `Destination`, `Overwrite`, `If-Match`,
-//! `If-None-Match` and content-type headers every CalDAV and CardDAV coroutine
-//! touches. Paths are composed by [`crate::rfc4918::resolve`].
+//! `If-None-Match` and content-type headers every coroutine touches.
+//!
+//! Paths are composed by [`crate::rfc4918::resolve`].
 
 use alloc::{
     format,
@@ -177,9 +180,9 @@ impl WebdavRequest {
     }
 }
 
-/// Formats an ETag as a conditional-header entity-tag (RFC 9110 §8.8.3): a bare
-/// strong tag gets double quotes, while `*`, weak (`W/...`) and already-quoted
-/// values pass through unchanged.
+/// Formats an ETag as a conditional-header entity-tag (RFC 9110 §8.8.3):
+/// a bare strong tag gets double quotes, while `*`, weak (`W/...`) and
+/// already-quoted values pass through unchanged.
 fn entity_tag(etag: &str) -> String {
     if etag == "*" || etag.starts_with('"') || etag.starts_with("W/") {
         etag.to_string()

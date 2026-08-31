@@ -1,4 +1,4 @@
-//! RFC 4791: Calendaring Extensions to WebDAV (CalDAV).
+//! # RFC 4791: Calendaring Extensions to WebDAV (CalDAV)
 //!
 //! <https://www.rfc-editor.org/rfc/rfc4791>
 

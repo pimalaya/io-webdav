@@ -1,14 +1,15 @@
-//! RFC 4918: HTTP Extensions for Web Distributed Authoring and Versioning
-//! (WebDAV).
+//! # RFC 4918: HTTP Extensions for Web Distributed Authoring and Versioning
 //!
 //! <https://www.rfc-editor.org/rfc/rfc4918>
 //!
-//! This module carries the WebDAV vocabulary shared across every RFC layer: the
-//! authentication scheme, the namespace and property model, the parsed
-//! multistatus body and the `DAV:` property constants. Next to them live the
-//! helpers every coroutine reuses: the XML request-body generators, the
-//! multistatus parser, the `Authorization` header emitter, request-path
-//! resolution and `ETag` extraction. Each WebDAV method is its own submodule.
+//! This module carries the WebDAV vocabulary shared across every RFC layer:
+//! the authentication scheme, the namespace and property model, the parsed
+//! multistatus body and the `DAV:` property constants.
+//!
+//! Next to them live the helpers every coroutine reuses: the XML
+//! request-body generators, the multistatus parser, the `Authorization`
+//! header emitter, request-path resolution and `ETag` extraction. Each
+//! WebDAV method is its own submodule.
 //!
 //! Bodies are generated from [`WebdavProperty`] selectors rather than
 //! hard-coded templates, each selector carrying its [`WebdavNamespace`], so the
@@ -68,10 +69,9 @@ pub enum WebdavAuth {
 /// An XML namespace: its URI plus the prefix used when serializing request
 /// bodies.
 ///
-/// Each RFC layer owns the namespaces it speaks (`DAV:` in [`crate::rfc4918`],
-/// CalDAV ones in [`crate::rfc4791`], CardDAV ones in [`crate::rfc6352`]); the
-/// body generators only read these fields, so they never need to know which
-/// namespaces exist.
+/// Each RFC layer owns the namespaces it speaks (`DAV:` in
+/// [`crate::rfc4918`], CalDAV in [`crate::rfc4791`], CardDAV in
+/// [`crate::rfc6352`]), so the body generators read these fields alone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WebdavNamespace {
     /// Namespace URI (e.g. `DAV:`).
@@ -120,8 +120,8 @@ pub struct WebdavResponseEntry {
     /// The `<href>` text, as returned by the server.
     pub href: String,
     /// The response-level `<status>` code, when present: the 404 of a
-    /// `sync-collection` removal row (RFC 6578 §3.4) or the 507 of a truncation
-    /// row (RFC 6578 §3.6); [`None`] on propstat-only responses.
+    /// `sync-collection` removal row (RFC 6578 §3.4) or the 507 of a
+    /// truncation row (§3.6); [`None`] on propstat-only responses.
     pub status: Option<u16>,
     /// Properties gathered from every 2xx `<propstat>` of this response.
     pub props: Vec<WebdavPropItem>,
@@ -385,9 +385,9 @@ pub fn proppatch_body(
 /// Builds a `<root><set><prop>...</prop></set></root>` body setting each
 /// `(property, value)` pair, rooted at `root`.
 ///
-/// Backs the creation requests, which have nothing to remove: extended `MKCOL`
-/// (RFC 5689 §3) and CalDAV `MKCALENDAR` (RFC 4791 §5.3.1). [`proppatch_body`]
-/// builds the update counterpart, which also carries `DAV:remove`.
+/// Backs the creation requests, which have nothing to remove: extended
+/// `MKCOL` (RFC 5689 §3) and CalDAV `MKCALENDAR` (RFC 4791 §5.3.1).
+/// [`proppatch_body`] is the update counterpart, carrying `DAV:remove`.
 pub fn prop_set_body(
     root: WebdavProperty,
     set: &[(WebdavProperty, WebdavPropValue<'_>)],
@@ -422,8 +422,9 @@ pub fn id_from_location(location: &str) -> Option<String> {
     (!segment.is_empty()).then(|| segment.to_string())
 }
 
-/// Builds an extended `MKCOL` request body (RFC 5689 §3): a `<resourcetype>` of
-/// `<collection/>` plus `resource_types`, and each `set` property value.
+/// Builds an extended `MKCOL` request body (RFC 5689 §3): a
+/// `<resourcetype>` of `<collection/>` plus `resource_types`, and each
+/// `set` property value.
 pub fn mkcol_body(
     resource_types: &[WebdavProperty],
     set: &[(WebdavProperty, WebdavPropValue<'_>)],
@@ -472,12 +473,9 @@ pub fn report_query_body(
 
 /// Parses a `multistatus` body into vocabulary-agnostic entries.
 ///
-/// Matching is by local name, namespace prefixes ignored, and only properties
-/// under 2xx `propstat`s land in `props`. A response without any 2xx propstat
-/// still survives as an entry carrying its response-level status, which is what
-/// `sync-collection` removal and truncation rows are. Predefined and numeric
-/// character references are resolved, unknown ones kept verbatim, and malformed
-/// input yields whatever was parsed before the error.
+/// Matching is by local name, prefixes ignored, and only properties under a
+/// 2xx `propstat` land in `props`. A response carrying none survives as an
+/// entry (removal and truncation rows); malformed input yields its prefix.
 pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
     let mut reader = Reader::from_str(xml);
 
@@ -678,8 +676,8 @@ pub fn resolve(base_url: &Url, path: &str) -> Url {
     base.join(path).unwrap_or_else(|_| base_url.clone())
 }
 
-/// Reads the `ETag` header (RFC 9110 §8.8.3) out of an HTTP response, stripping
-/// the surrounding double quotes when present.
+/// Reads the `ETag` header (RFC 9110 §8.8.3) out of an HTTP response,
+/// stripping the surrounding double quotes when present.
 pub fn read_etag(response: &HttpResponse) -> Option<String> {
     response
         .header("etag")
@@ -717,12 +715,9 @@ const SUMMARY_LEN: usize = 200;
 
 /// Boils an error response body down to one readable line.
 ///
-/// Servers answer an error with anything from a DAV XML condition to a full
-/// HTML page (Fastmail) to nothing at all (iCloud). The DAV
-/// `responsedescription` is the one part written for a human, so it wins, then
-/// an HTML `title`; failing both, the markup is stripped, the whitespace
-/// collapsed and the result capped. An empty body summarises to nothing, which
-/// lets a caller drop the separator rather than end its message on a colon.
+/// Servers answer with a DAV condition, an HTML page (Fastmail) or nothing
+/// (iCloud), so the human-written `responsedescription` wins, then an HTML
+/// `title`, then stripped markup. An empty body summarises to nothing.
 pub fn summarize_body(body: &str) -> String {
     let text = element_text(body, "responsedescription")
         .or_else(|| element_text(body, "title"))

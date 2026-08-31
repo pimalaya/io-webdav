@@ -1,3 +1,5 @@
+//! # List calendars
+//!
 //! `list-calendars` coroutine: PROPFIND Depth:1 against the calendar home-set
 //! URL, collecting every child collection whose resourcetype is
 //! `<C:calendar/>`.

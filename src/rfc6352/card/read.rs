@@ -1,3 +1,5 @@
+//! # Read card
+//!
 //! `read-card` coroutine: GET a card by its resource name.
 //!
 //! Stays byte-oriented: returns raw vCard bytes plus the response's ETag,

@@ -1,3 +1,5 @@
+//! # PROPPATCH
+//!
 //! Generic `PROPPATCH` coroutine (RFC 4918 §9.2).
 //!
 //! Sets each `(property, value)` pair against `path` and removes each property

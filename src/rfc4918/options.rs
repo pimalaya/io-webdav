@@ -1,3 +1,5 @@
+//! # OPTIONS
+//!
 //! Generic `OPTIONS` coroutine (RFC 4918 §9.1, §15).
 //!
 //! Sends an `OPTIONS` against `path` and returns the raw response so the caller
