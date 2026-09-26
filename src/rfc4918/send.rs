@@ -121,6 +121,20 @@ pub enum WebdavSendError {
         /// The response body, verbatim.
         body: String,
     },
+    /// The server cannot evaluate the query filter: a property, parameter or
+    /// match type it does not support (`supported-filter`), or a collation it
+    /// does not know (`supported-collation`), both RFC 6352 §8.6. Raised by
+    /// the card list coroutine, the one sending a caller's filter.
+    #[error(
+        "WebDAV server does not support the query filter (HTTP {status}){}",
+        summarized(body)
+    )]
+    UnsupportedFilter {
+        /// The status the server wrapped the refusal in.
+        status: u16,
+        /// The response body, verbatim.
+        body: String,
+    },
     /// The server returned a redirect where none was expected.
     #[error("WebDAV server returned unexpected redirect")]
     UnexpectedRedirect,

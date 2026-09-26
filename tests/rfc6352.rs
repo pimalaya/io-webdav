@@ -4,6 +4,8 @@
 
 mod common;
 
+use core::num::NonZeroU32;
+
 use common::*;
 use io_webdav::{
     rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue, send::WebdavSendError},
@@ -15,9 +17,18 @@ use io_webdav::{
             list::CarddavAddressbookList, property_set, update::CarddavAddressbookUpdate,
         },
         card::{
-            create::CarddavCardCreate, delete::CarddavCardDelete, enumerate::CarddavCardEnum,
-            join_path, list::CarddavCardList, multiget::CarddavCardMultiget, read::CarddavCardRead,
+            create::CarddavCardCreate,
+            delete::CarddavCardDelete,
+            enumerate::CarddavCardEnum,
+            join_path,
+            list::{CarddavCardList, CarddavCardListOptions},
+            multiget::CarddavCardMultiget,
+            read::CarddavCardRead,
             update::CarddavCardUpdate,
+        },
+        filter::{
+            CarddavFilter, CarddavFilterTest, CarddavMatchType, CarddavParamCond,
+            CarddavParamFilter, CarddavPropCond, CarddavPropFilter, CarddavTextMatch,
         },
     },
 };
@@ -49,10 +60,108 @@ fn property_set_keeps_only_the_present_fields() {
 
 #[test]
 fn addressbook_query_body_carries_the_allof_filter() {
-    let body = addressbook_query_body(&[GETETAG]);
+    let body = addressbook_query_body(&[GETETAG], &CarddavFilter::default(), None);
     let xml = core::str::from_utf8(&body).unwrap();
     assert!(xml.contains("<C:addressbook-query"));
-    assert!(xml.contains("<C:filter test=\"allof\"></C:filter>"));
+    assert!(xml.contains("<C:filter test=\"allof\"></C:filter></C:addressbook-query>"));
+}
+
+#[test]
+fn addressbook_query_body_serializes_the_filter_then_the_limit() {
+    let filter = CarddavFilter {
+        test: CarddavFilterTest::AnyOf,
+        props: vec![
+            CarddavPropFilter {
+                name: "EMAIL".into(),
+                test: CarddavFilterTest::AllOf,
+                cond: CarddavPropCond::Match {
+                    texts: vec![CarddavTextMatch {
+                        value: "a&b<c>".into(),
+                        negate: true,
+                        collation: Some("i;\"octet\"".into()),
+                        ..Default::default()
+                    }],
+                    params: vec![],
+                },
+            },
+            CarddavPropFilter {
+                name: "NICKNAME".into(),
+                test: CarddavFilterTest::AnyOf,
+                cond: CarddavPropCond::IsNotDefined,
+            },
+            CarddavPropFilter {
+                name: "TEL".into(),
+                test: CarddavFilterTest::AnyOf,
+                cond: CarddavPropCond::Match {
+                    texts: vec![],
+                    params: vec![
+                        CarddavParamFilter {
+                            name: "PREF".into(),
+                            cond: None,
+                        },
+                        CarddavParamFilter {
+                            name: "X-SKIP".into(),
+                            cond: Some(CarddavParamCond::IsNotDefined),
+                        },
+                        CarddavParamFilter {
+                            name: "TYPE".into(),
+                            cond: Some(CarddavParamCond::TextMatch(CarddavTextMatch {
+                                value: "cell".into(),
+                                match_type: CarddavMatchType::Equals,
+                                ..Default::default()
+                            })),
+                        },
+                    ],
+                },
+            },
+            CarddavPropFilter {
+                name: "FN".into(),
+                test: CarddavFilterTest::AnyOf,
+                cond: CarddavPropCond::Match {
+                    texts: vec![
+                        CarddavTextMatch {
+                            value: "jo".into(),
+                            match_type: CarddavMatchType::StartsWith,
+                            ..Default::default()
+                        },
+                        CarddavTextMatch {
+                            value: "doe".into(),
+                            match_type: CarddavMatchType::EndsWith,
+                            ..Default::default()
+                        },
+                    ],
+                    params: vec![],
+                },
+            },
+        ],
+    };
+
+    let body = addressbook_query_body(&[GETETAG], &filter, NonZeroU32::new(10));
+    let xml = core::str::from_utf8(&body).unwrap();
+
+    let expected = concat!(
+        "<C:filter test=\"anyof\">",
+        "<C:prop-filter name=\"EMAIL\" test=\"allof\">",
+        "<C:text-match collation=\"i;&quot;octet&quot;\" negate-condition=\"yes\" ",
+        "match-type=\"contains\">a&amp;b&lt;c&gt;</C:text-match>",
+        "</C:prop-filter>",
+        "<C:prop-filter name=\"NICKNAME\" test=\"anyof\"><C:is-not-defined/></C:prop-filter>",
+        "<C:prop-filter name=\"TEL\" test=\"anyof\">",
+        "<C:param-filter name=\"PREF\"/>",
+        "<C:param-filter name=\"X-SKIP\"><C:is-not-defined/></C:param-filter>",
+        "<C:param-filter name=\"TYPE\">",
+        "<C:text-match match-type=\"equals\">cell</C:text-match>",
+        "</C:param-filter>",
+        "</C:prop-filter>",
+        "<C:prop-filter name=\"FN\" test=\"anyof\">",
+        "<C:text-match match-type=\"starts-with\">jo</C:text-match>",
+        "<C:text-match match-type=\"ends-with\">doe</C:text-match>",
+        "</C:prop-filter>",
+        "</C:filter>",
+        "<C:limit><C:nresults>10</C:nresults></C:limit>",
+        "</C:addressbook-query>",
+    );
+    assert!(xml.ends_with(expected), "{xml}");
 }
 
 #[test]
@@ -284,12 +393,18 @@ END:VCARD</c:address-data>
 
 #[test]
 fn list_cards_maps_address_data_entries() {
-    let mut list = CarddavCardList::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
+    let mut list = CarddavCardList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &CarddavCardListOptions::default(),
+    );
     let (request, ret) = expect_exchange(&mut list, &multistatus_response(CARDS_XML));
     assert!(request.starts_with("report /dav/books/contacts/ http/1.1\r\n"));
     assert!(request.contains("<c:address-data/>"));
 
-    let cards = ret.unwrap();
+    let cards = ret.unwrap().cards;
     // NOTE: the data-less entry, the collection self-entry and the empty href
     // are all skipped. Every surviving id is the href's last segment verbatim,
     // no `.vcf` stripped, so `alice.vcf` stays `alice.vcf` and the suffix-less
@@ -592,9 +707,15 @@ fn a_listed_card_id_round_trips_through_read() {
     // NOTE: a listed id must address the very resource the server enumerated,
     // with no extension added or stripped in between. That asymmetry broke
     // read, update and delete on `.vcf`-suffixing servers.
-    let mut list = CarddavCardList::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
+    let mut list = CarddavCardList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &CarddavCardListOptions::default(),
+    );
     let (_request, ret) = expect_exchange(&mut list, &multistatus_response(CARDS_XML));
-    let cards = ret.unwrap();
+    let cards = ret.unwrap().cards;
     let alice = cards.iter().find(|card| card.id == "alice.vcf").unwrap();
 
     let mut read = CarddavCardRead::new(
@@ -667,6 +788,93 @@ fn enum_cards_flags_a_truncated_listing() {
     let refs = ret.unwrap();
     assert_eq!(refs.refs.len(), 1);
     assert!(refs.truncated);
+}
+
+#[test]
+fn list_cards_flags_a_truncated_result() {
+    // NOTE: the 507 row names the collection itself, which the self-entry skip
+    // drops, so the flag has to be read before the cards are mapped.
+    let opts = CarddavCardListOptions {
+        limit: NonZeroU32::new(1),
+        ..Default::default()
+    };
+    let mut list = CarddavCardList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &opts,
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/contacts/alice.vcf</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:getetag>"etag-1"</d:getetag>
+            <c:address-data>BEGIN:VCARD</c:address-data>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/</d:href>
+        <d:status>HTTP/1.1 507 Insufficient Storage</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (request, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+    assert!(request.contains("<c:limit><c:nresults>1</c:nresults></c:limit>"));
+
+    let ok = ret.unwrap();
+    assert_eq!(ok.cards.len(), 1);
+    assert!(ok.truncated);
+}
+
+#[test]
+fn list_cards_names_an_unsupported_filter() {
+    let list = || {
+        CarddavCardList::new(
+            &base(),
+            &WebdavAuth::None,
+            UA,
+            "/dav/books/contacts/",
+            &CarddavCardListOptions::default(),
+        )
+    };
+
+    let filter = r#"<d:error xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <c:supported-filter><c:prop-filter name="X-FOO"/></c:supported-filter>
+    </d:error>"#;
+    let (_, ret) = expect_exchange(&mut list(), &http_response("403 Forbidden", &[], filter));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::UnsupportedFilter { status: 403, .. }
+    ));
+
+    // NOTE: the RFC recommends no status, so the element outlives any.
+    let collation = r#"<d:error xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <c:supported-collation/>
+    </d:error>"#;
+    let (_, ret) = expect_exchange(&mut list(), &http_response("409 Conflict", &[], collation));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::UnsupportedFilter { status: 409, .. }
+    ));
+
+    // NOTE: a 403 carrying no precondition is a permission refusal, and an
+    // unimplemented report keeps its own name.
+    let (_, ret) = expect_exchange(&mut list(), &http_response("403 Forbidden", &[], ""));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::HttpStatus { status: 403, .. }
+    ));
+
+    let report = r#"<d:error xmlns:d="DAV:"><d:supported-report/></d:error>"#;
+    let (_, ret) = expect_exchange(&mut list(), &http_response("403 Forbidden", &[], report));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::UnsupportedReport { status: 403, .. }
+    ));
 }
 
 #[test]

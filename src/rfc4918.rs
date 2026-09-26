@@ -329,6 +329,34 @@ pub fn escape_text(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Escapes a double-quoted XML attribute value (`&`, `<`, `>`, `"`).
+pub fn escape_attr(value: &str) -> String {
+    escape_text(value).replace('"', "&quot;")
+}
+
+/// Whether `body` holds an element named one of `locals`, whatever its
+/// namespace prefix.
+///
+/// Read as XML rather than searched for as a substring, so a body merely
+/// quoting the name is not one. Preconditions are matched this way, the RFCs
+/// naming the element and only recommending the status that wraps it.
+pub(crate) fn has_element(body: &str, locals: &[&str]) -> bool {
+    let mut reader = Reader::from_str(body);
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
+                let local = element.local_name();
+                if locals.iter().any(|name| local.as_ref() == *name) {
+                    return true;
+                }
+            }
+            Ok(Event::Eof) | Err(_) => return false,
+            _ => {}
+        }
+    }
+}
+
 /// Emits a `D:prop` block listing each property as an empty element.
 pub fn prop_block(props: &[WebdavProperty]) -> String {
     let mut out = String::from("<D:prop>");

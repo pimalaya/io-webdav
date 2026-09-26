@@ -63,7 +63,7 @@ use crate::{
         GETETAG, WebdavAuth, WebdavProperty, WebdavResponseEntry, report::WebdavReport,
         send::WebdavSendError,
     },
-    rfc6352::{addressbook::addressbook_query_body, card::CarddavCardRef},
+    rfc6352::{addressbook::addressbook_query_body, card::CarddavCardRef, filter::CarddavFilter},
     webdav_try,
 };
 
@@ -99,7 +99,7 @@ impl CarddavCardEnum {
         user_agent: &str,
         addressbook_path: &str,
     ) -> Self {
-        let body = addressbook_query_body(ENUM_PROPS);
+        let body = addressbook_query_body(ENUM_PROPS, &CarddavFilter::default(), None);
         let report = WebdavReport::new(base_url, auth, user_agent, addressbook_path, 1, body);
         Self {
             state: State::WebdavReport(report),

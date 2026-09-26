@@ -81,6 +81,7 @@ use io_http::{
 use io_webdav::{
     client::WebdavClientStd, coroutine::*, rfc4791::calendar::CaldavCalendar, rfc4918::WebdavAuth,
     rfc4918::coroutine::*, rfc6352::addressbook::CarddavAddressbook,
+    rfc6352::card::list::CarddavCardListOptions,
 };
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};
 use rustls_platform_verifier::ConfigVerifierExt;
@@ -826,7 +827,10 @@ fn carddav_body(
     // --- REPORT list cards (verify present) ---
 
     client.set_stream(connect(base));
-    let cards = client.list_cards(book_id).expect("list cards");
+    let cards = client
+        .list_cards(book_id, &CarddavCardListOptions::default())
+        .expect("list cards")
+        .cards;
     // NOTE: a card is addressed by its id, i.e. the resource name the server
     // enumerates, used verbatim: we created `<card_id>.vcf`, so that is its id
     // everywhere (io-webdav never adds nor strips an extension).
@@ -982,7 +986,10 @@ fn carddav_cards_body(
     // --- REPORT list cards (verify present) ---
 
     client.set_stream(connect(base));
-    let cards = client.list_cards(addressbook_id).expect("list cards");
+    let cards = client
+        .list_cards(addressbook_id, &CarddavCardListOptions::default())
+        .expect("list cards")
+        .cards;
     // NOTE: a card is addressed by its id, i.e. the resource name the server
     // enumerates, used verbatim: we created `<card_id>.vcf`, so that is its id
     // everywhere (io-webdav never adds nor strips an extension).

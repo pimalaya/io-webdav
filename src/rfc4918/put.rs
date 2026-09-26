@@ -63,13 +63,12 @@
 use alloc::vec::Vec;
 
 use log::{debug, trace};
-use quick_xml::{Reader, events::Event};
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth,
+        WebdavAuth, has_element,
         request::WebdavRequest,
         send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
     },
@@ -156,23 +155,7 @@ pub(crate) fn duplicate_uid(err: WebdavSendError) -> WebdavSendError {
         return err;
     };
 
-    let mut reader = Reader::from_str(&body);
-    let mut refused = false;
-
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
-                if element.local_name().as_ref() == NO_UID_CONFLICT {
-                    refused = true;
-                    break;
-                }
-            }
-            Ok(Event::Eof) | Err(_) => break,
-            _ => {}
-        }
-    }
-
-    if refused {
+    if has_element(&body, &[NO_UID_CONFLICT]) {
         debug!("WebDAV collection already holds the written UID");
         return WebdavSendError::DuplicateUid { status, body };
     }

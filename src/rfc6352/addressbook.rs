@@ -12,13 +12,18 @@ pub mod home_set;
 pub mod list;
 pub mod update;
 
+use core::num::NonZeroU32;
+
 use alloc::{collections::BTreeSet, format, string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
-use crate::rfc4918::{
-    DISPLAYNAME, GETCTAG, RESOURCETYPE, SUPPORTED_REPORT_SET, SYNC_TOKEN, WebdavNamespace,
-    WebdavPropValue, WebdavProperty, escape_text, report_query_body,
+use crate::{
+    rfc4918::{
+        DISPLAYNAME, GETCTAG, RESOURCETYPE, SUPPORTED_REPORT_SET, SYNC_TOKEN, WebdavNamespace,
+        WebdavPropValue, WebdavProperty, escape_text, report_query_body,
+    },
+    rfc6352::filter::CarddavFilter,
 };
 
 /// A CardDAV addressbook collection (RFC 6352 §5).
@@ -181,15 +186,24 @@ pub fn property_updates(
     (set, remove)
 }
 
-/// Builds a CardDAV `addressbook-query` REPORT body requesting `props`, with a
-/// match-all filter.
+/// Builds a CardDAV `addressbook-query` REPORT body (RFC 6352 §8.6) requesting
+/// `props`, filtered by `filter` and capped at `limit` results (§8.6.1).
 ///
-/// RFC 6352 §8.6 requires `C:filter`, and an empty `allof` matches every
-/// card, an empty conjunction being true. Strict servers (Google) 400 a
-/// missing filter and read an empty `anyof` as matching nothing.
-pub fn addressbook_query_body(props: &[WebdavProperty]) -> Vec<u8> {
-    let filter = "<C:filter test=\"allof\"></C:filter>";
-    report_query_body(ADDRESSBOOK_QUERY, &[CARDDAV], props, filter)
+/// [`CarddavFilter::default`] matches every card.
+pub fn addressbook_query_body(
+    props: &[WebdavProperty],
+    filter: &CarddavFilter,
+    limit: Option<NonZeroU32>,
+) -> Vec<u8> {
+    let mut fragment = filter.to_xml();
+
+    if let Some(limit) = limit {
+        fragment.push_str(&format!(
+            "<C:limit><C:nresults>{limit}</C:nresults></C:limit>"
+        ));
+    }
+
+    report_query_body(ADDRESSBOOK_QUERY, &[CARDDAV], props, &fragment)
 }
 
 /// Builds a CardDAV `addressbook-multiget` REPORT body (RFC 6352 §8.7)

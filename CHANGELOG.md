@@ -4,6 +4,40 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Added the `rfc6352::filter` module, modelling the RFC 6352 §10.5 query filter.
+
+  `CarddavFilter` holds prop-filters, param-filters, is-not-defined and text-matches with every attribute. Its default is the empty `allof`, which matches every card.
+
+- Added `CarddavCardListOptions`, filtering and capping a card listing.
+
+  Its `filter` is a `CarddavFilter`, and its `limit` is sent as the RFC 6352 §8.6.1 `C:limit`.
+
+- **BREAKING** Added `WebdavSendError::UnsupportedFilter`.
+
+  Raised when a listing is refused with the `supported-filter` or `supported-collation` precondition (RFC 6352 §8.6), matched on the element whatever status wraps it.
+
+- Added `rfc4918::escape_attr`, escaping a double-quoted attribute value.
+
+### Changed
+
+- **BREAKING** Changed `CarddavCardList::new` and `WebdavClientStd::list_cards` to take a `CarddavCardListOptions`.
+
+  `CarddavCardListOptions::default()` keeps the match-all listing.
+
+- **BREAKING** Changed the card listing to return `CarddavCardListOk`, the twin of `CarddavCardEnumOk`.
+
+  Its `truncated` flag reports the 507 row a server answers when it caps the result.
+
+- **BREAKING** Changed `addressbook_query_body` to take the filter and the limit.
+
+### Fixed
+
+- Fixed a card listing reading as complete when the server truncated it.
+
+  The 507 row names the collection itself, which the self-entry skip discarded.
+
 ## [0.3.0] - 2026-08-31
 
 ### Added

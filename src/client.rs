@@ -101,7 +101,7 @@ use crate::{
             create::{CarddavCardCreate, CarddavCardCreateOk},
             delete::CarddavCardDelete,
             enumerate::{CarddavCardEnum, CarddavCardEnumOk},
-            list::CarddavCardList,
+            list::{CarddavCardList, CarddavCardListOk, CarddavCardListOptions},
             multiget::CarddavCardMultiget,
             read::{CarddavCardBody, CarddavCardRead},
             update::{CarddavCardUpdate, CarddavCardUpdateOk},
@@ -876,13 +876,16 @@ impl WebdavClientStd {
         self.run(coroutine).map(|_| ())
     }
 
-    /// Lists every card inside `addressbook_id`.
+    /// Lists the cards inside `addressbook_id` matching `opts`, every card by
+    /// default.
     pub fn list_cards(
         &mut self,
         addressbook_id: &str,
-    ) -> Result<BTreeSet<CarddavCardEntry>, WebdavClientStdError> {
+        opts: &CarddavCardListOptions,
+    ) -> Result<CarddavCardListOk, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
-        let coroutine = CarddavCardList::new(&self.base_url, &self.auth, &self.user_agent, &path);
+        let coroutine =
+            CarddavCardList::new(&self.base_url, &self.auth, &self.user_agent, &path, opts);
         self.run(coroutine)
     }
 

@@ -17,7 +17,10 @@ use io_webdav::{
     client::{WebdavClientStd, WebdavClientStdError},
     rfc4791::calendar::CaldavCalendar,
     rfc4918::{WebdavAuth, send::WebdavSendError},
-    rfc6352::addressbook::{CarddavAddressbook, CarddavAddressbookPatch},
+    rfc6352::{
+        addressbook::{CarddavAddressbook, CarddavAddressbookPatch},
+        card::list::CarddavCardListOptions,
+    },
     rfc6578::sync_collection::WebdavSyncCollectionOptions,
 };
 #[cfg(any(
@@ -485,7 +488,9 @@ fn methods_require_the_home_set_cache() {
         WebdavClientStdError::MissingAddressbookHomeSet
     ));
     assert!(matches!(
-        client.list_cards("contacts").unwrap_err(),
+        client
+            .list_cards("contacts", &CarddavCardListOptions::default())
+            .unwrap_err(),
         WebdavClientStdError::MissingAddressbookHomeSet
     ));
 }
@@ -726,7 +731,10 @@ fn card_methods_run_their_coroutines() {
         http_response("204 No Content", &[], ""),
     ]);
 
-    let cards = client.list_cards("contacts").expect("list cards");
+    let cards = client
+        .list_cards("contacts", &CarddavCardListOptions::default())
+        .expect("list cards")
+        .cards;
     assert_eq!(cards.first().unwrap().id, "alice.vcf");
 
     let refs = client.enum_cards("contacts").expect("enum cards");
