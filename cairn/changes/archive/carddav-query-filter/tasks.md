@@ -14,4 +14,4 @@ change: carddav-query-filter
 - [x] Tests: filter XML for every condition and escaping, the limit, truncation, both preconditions and a bare 403.
 - [x] `cargo test`, `cargo clippy --all-targets`, `cargo fmt`, tarpaulin at 100%.
 - [x] CHANGELOG under [Unreleased].
-- [ ] Fold the delta into cairn/spec/carddav.md, write the log entry, mark `landed`.
+- [x] Fold the delta into cairn/spec/carddav.md, write the log entry, mark `landed`.
