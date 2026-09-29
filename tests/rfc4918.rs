@@ -107,6 +107,51 @@ fn parse_multistatus_reads_cdata_and_resolves_entities() {
 }
 
 #[test]
+fn parse_multistatus_normalises_text_and_attributes() {
+    let xml = "<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">\
+      <d:response><d:href>/cal/</d:href><d:propstat><d:prop>\
+      <d:displayname>a\r\nb\rc &#65; &#xZZ; &#1114112; &amp</d:displayname>\
+      <c:supported-calendar-component-set>\
+      <c:comp name=\"V\tEV&#x45;NT\r\n\"/><c:comp x:name=\"ignored\"></c:comp>\
+      </c:supported-calendar-component-set>\
+      </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>\
+      </d:multistatus>";
+
+    let ms = parse_multistatus(xml);
+    let entry = &ms.responses[0];
+    // NOTE: line ends normalise to LF, decimal references resolve, and a
+    // reference that is not a character or lacks its `;` stays verbatim.
+    assert_eq!(
+        entry.text(DISPLAYNAME),
+        Some("a\nb\nc A &#xZZ; &#1114112; &amp")
+    );
+
+    let set = entry
+        .props
+        .iter()
+        .find(|item| item.local == "supported-calendar-component-set")
+        .expect("component set parsed");
+    // NOTE: attribute whitespace becomes a space before references resolve,
+    // and only the unprefixed `name` counts.
+    assert_eq!(set.children[0].name.as_deref(), Some("V EVENT "));
+    assert_eq!(set.children[1].name, None);
+}
+
+#[test]
+fn parse_multistatus_stops_at_a_mismatched_close() {
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response><d:href>/a/</d:href></d:response>
+      <d:response><d:href>/b/</d:wrong></d:response>
+    </d:multistatus>"#;
+
+    let hrefs: Vec<String> = parse_multistatus(xml)
+        .into_iter()
+        .map(|entry| entry.href)
+        .collect();
+    assert_eq!(hrefs, ["/a/"]);
+}
+
+#[test]
 fn parse_multistatus_ignores_unparsable_status_lines() {
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>

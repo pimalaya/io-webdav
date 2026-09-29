@@ -31,7 +31,7 @@ pub mod report;
 pub mod request;
 pub mod send;
 
-use core::fmt;
+use core::{fmt, mem};
 
 use alloc::{
     collections::BTreeSet,
@@ -44,11 +44,8 @@ use io_http::{
     rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic, rfc9110::response::HttpResponse,
 };
 use log::trace;
-use quick_xml::{
-    Reader, XmlVersion,
-    events::{BytesStart, Event},
-};
 use url::Url;
+use xmlparser::{ElementEnd, Token, Tokenizer};
 
 /// Authentication scheme used by the WebDAV client.
 ///
@@ -341,20 +338,9 @@ pub fn escape_attr(value: &str) -> String {
 /// quoting the name is not one. Preconditions are matched this way, the RFCs
 /// naming the element and only recommending the status that wraps it.
 pub(crate) fn has_element(body: &str, locals: &[&str]) -> bool {
-    let mut reader = Reader::from_str(body);
-
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
-                let local = element.local_name();
-                if locals.iter().any(|name| local.as_ref() == *name) {
-                    return true;
-                }
-            }
-            Ok(Event::Eof) | Err(_) => return false,
-            _ => {}
-        }
-    }
+    Tokenizer::from(body)
+        .map_while(Result::ok)
+        .any(|token| matches!(token, Token::ElementStart { local, .. } if locals.contains(&local.as_str())))
 }
 
 /// Emits a `D:prop` block listing each property as an empty element.
@@ -505,24 +491,43 @@ pub fn report_query_body(
 /// 2xx `propstat` land in `props`. A response carrying none survives as an
 /// entry (removal and truncation rows); malformed input yields its prefix.
 pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
-    let mut reader = Reader::from_str(xml);
-
     let mut responses: Vec<WebdavResponseEntry> = Vec::new();
     let mut sync_token: Option<String> = None;
     // NOTE: local name, accumulated descendant text, direct children.
     let mut stack: Vec<(String, String, Vec<WebdavPropChild>)> = Vec::new();
+    // NOTE: the start tag being read, up to its attributes.
+    let mut tag_local = String::new();
+    let mut tag_name: Option<String> = None;
     let mut response: Option<WebdavResponseEntry> = None;
     let mut propstat_props: Vec<WebdavPropItem> = Vec::new();
     let mut propstat_status: Option<u16> = None;
 
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) => {
-                let local = e.local_name().as_ref().to_string();
+    for token in Tokenizer::from(xml).map_while(Result::ok) {
+        match token {
+            Token::ElementStart { local, .. } => {
+                tag_local = local.to_string();
+                tag_name = None;
+            }
+            Token::Attribute {
+                prefix,
+                local,
+                value,
+                ..
+            } => {
+                if prefix.is_empty() && local.as_str() == "name" {
+                    tag_name = Some(decode_attr(&value));
+                }
+            }
+            Token::ElementEnd {
+                end: ElementEnd::Open,
+                ..
+            } => {
+                let local = mem::take(&mut tag_local);
+                let name = tag_name.take();
                 if let Some((_, _, children)) = stack.last_mut() {
                     children.push(WebdavPropChild {
                         local: local.clone(),
-                        name: name_attribute(&e),
+                        name,
                         ..Default::default()
                     });
                 }
@@ -536,8 +541,12 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                 }
                 stack.push((local, String::new(), Vec::new()));
             }
-            Ok(Event::Empty(e)) => {
-                let local = e.local_name().as_ref().to_string();
+            Token::ElementEnd {
+                end: ElementEnd::Empty,
+                ..
+            } => {
+                let local = mem::take(&mut tag_local);
+                let name = tag_name.take();
                 let parent_is_prop = stack.last().is_some_and(|(n, _, _)| n == "prop");
                 if parent_is_prop {
                     propstat_props.push(WebdavPropItem {
@@ -547,116 +556,104 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                 } else if let Some((_, _, children)) = stack.last_mut() {
                     children.push(WebdavPropChild {
                         local,
-                        name: name_attribute(&e),
+                        name,
                         ..Default::default()
                     });
                 }
             }
-            Ok(Event::Text(t)) => {
+            Token::Text { text } => {
                 if let Some((_, buf, _)) = stack.last_mut() {
-                    buf.push_str(&t.xml_content(XmlVersion::Implicit1_0));
+                    buf.push_str(&decode_text(&text));
                 }
             }
-            Ok(Event::GeneralRef(r)) => {
+            Token::Cdata { text, .. } => {
                 if let Some((_, buf, _)) = stack.last_mut() {
-                    if let Ok(Some(ch)) = r.resolve_char_ref() {
-                        buf.push(ch);
-                    } else {
-                        match r.as_ref() {
-                            "amp" => buf.push('&'),
-                            "lt" => buf.push('<'),
-                            "gt" => buf.push('>'),
-                            "quot" => buf.push('"'),
-                            "apos" => buf.push('\''),
-                            name => {
-                                // NOTE: unknown entity, kept verbatim.
-                                buf.push('&');
-                                buf.push_str(name);
-                                buf.push(';');
-                            }
-                        }
+                    buf.push_str(&text);
+                }
+            }
+            Token::ElementEnd {
+                end: ElementEnd::Close(_, close),
+                ..
+            } => {
+                // NOTE: the tokenizer does not pair tags, and a mismatched
+                // close is malformed input, which ends the parse.
+                let Some((name, text, children)) =
+                    stack.pop_if(|(name, _, _)| *name == close.as_str())
+                else {
+                    break;
+                };
+                let parent = stack.last().map(|(n, _, _)| n.clone());
+                if let Some((_, parent_text, parent_children)) = stack.last_mut() {
+                    parent_text.push_str(&text);
+                    // NOTE: the element being popped is the last child its
+                    // parent pushed, so handing it its own children there
+                    // is what keeps nested markup readable at any depth.
+                    if let Some(entry) = parent_children.last_mut() {
+                        entry.children.clone_from(&children);
                     }
                 }
-            }
-            Ok(Event::CData(t)) => {
-                if let Some((_, buf, _)) = stack.last_mut() {
-                    buf.push_str(&t.into_inner());
-                }
-            }
-            Ok(Event::End(_)) => {
-                if let Some((name, text, children)) = stack.pop() {
-                    let parent = stack.last().map(|(n, _, _)| n.clone());
-                    if let Some((_, parent_text, parent_children)) = stack.last_mut() {
-                        parent_text.push_str(&text);
-                        // NOTE: the element being popped is the last child its
-                        // parent pushed, so handing it its own children there
-                        // is what keeps nested markup readable at any depth.
-                        if let Some(entry) = parent_children.last_mut() {
-                            entry.children.clone_from(&children);
-                        }
-                    }
-                    let parent = parent.as_deref();
+                let parent = parent.as_deref();
 
-                    match name.as_str() {
-                        "response" => {
-                            if let Some(entry) = response.take() {
-                                responses.push(entry);
-                            }
+                match name.as_str() {
+                    "response" => {
+                        if let Some(entry) = response.take() {
+                            responses.push(entry);
                         }
-                        "propstat" => {
-                            if let Some(entry) = response.as_mut() {
-                                match propstat_status {
-                                    Some(status) if status / 100 == 2 => {
-                                        entry.props.append(&mut propstat_props)
-                                    }
-                                    // NOTE: a refused propstat is where a
-                                    // PROPPATCH says it changed nothing, so its
-                                    // properties are kept as failures.
-                                    Some(status) => entry.failures.extend(
-                                        propstat_props.drain(..).map(|item| WebdavPropFailure {
+                    }
+                    "propstat" => {
+                        if let Some(entry) = response.as_mut() {
+                            match propstat_status {
+                                Some(status) if status / 100 == 2 => {
+                                    entry.props.append(&mut propstat_props)
+                                }
+                                // NOTE: a refused propstat is where a
+                                // PROPPATCH says it changed nothing, so its
+                                // properties are kept as failures.
+                                Some(status) => {
+                                    entry.failures.extend(propstat_props.drain(..).map(|item| {
+                                        WebdavPropFailure {
                                             status,
                                             property: item.local,
-                                        }),
-                                    ),
-                                    None => {}
+                                        }
+                                    }))
                                 }
-                            }
-                            propstat_props.clear();
-                            propstat_status = None;
-                        }
-                        "status" if parent == Some("propstat") => {
-                            propstat_status = status_code(&text);
-                        }
-                        "status" if parent == Some("response") => {
-                            if let Some(entry) = response.as_mut() {
-                                entry.status = status_code(&text);
+                                None => {}
                             }
                         }
-                        "sync-token" if parent == Some("multistatus") => {
-                            let text = text.trim();
-                            if !text.is_empty() {
-                                sync_token = Some(text.to_string());
-                            }
-                        }
-                        "href" if parent == Some("response") => {
-                            if let Some(entry) = response.as_mut() {
-                                if entry.href.is_empty() {
-                                    entry.href = text.trim().to_string();
-                                }
-                            }
-                        }
-                        _ if parent == Some("prop") => {
-                            propstat_props.push(WebdavPropItem {
-                                local: name,
-                                text,
-                                children,
-                            });
-                        }
-                        _ => {}
+                        propstat_props.clear();
+                        propstat_status = None;
                     }
+                    "status" if parent == Some("propstat") => {
+                        propstat_status = status_code(&text);
+                    }
+                    "status" if parent == Some("response") => {
+                        if let Some(entry) = response.as_mut() {
+                            entry.status = status_code(&text);
+                        }
+                    }
+                    "sync-token" if parent == Some("multistatus") => {
+                        let text = text.trim();
+                        if !text.is_empty() {
+                            sync_token = Some(text.to_string());
+                        }
+                    }
+                    "href" if parent == Some("response") => {
+                        if let Some(entry) = response.as_mut()
+                            && entry.href.is_empty()
+                        {
+                            entry.href = text.trim().to_string();
+                        }
+                    }
+                    _ if parent == Some("prop") => {
+                        propstat_props.push(WebdavPropItem {
+                            local: name,
+                            text,
+                            children,
+                        });
+                    }
+                    _ => {}
                 }
             }
-            Ok(Event::Eof) | Err(_) => break,
             _ => {}
         }
     }
@@ -687,11 +684,11 @@ pub fn resolve(base_url: &Url, path: &str) -> Url {
         return base_url.clone();
     }
 
-    if path.starts_with('/') {
-        if let Ok(mut url) = Url::parse(base_url.as_str()) {
-            url.set_path(path);
-            return url;
-        }
+    if path.starts_with('/')
+        && let Ok(mut url) = Url::parse(base_url.as_str())
+    {
+        url.set_path(path);
+        return url;
     }
 
     let mut base = base_url.clone();
@@ -831,14 +828,61 @@ fn value_element(prop: WebdavProperty, value: &WebdavPropValue<'_>) -> String {
     format!("<{name}>{inner}</{name}>")
 }
 
-/// Reads an element's `name` attribute, ignoring a malformed or non-UTF-8
-/// value.
-fn name_attribute(element: &BytesStart) -> Option<String> {
-    let attribute = element.try_get_attribute("name").ok()??;
-    // NOTE: the parser does not track the XML declaration, and a reader seeing
-    // no version is told to assume XML 1.0, which every WebDAV body is.
-    let value = attribute.normalized_value(XmlVersion::Implicit1_0).ok()?;
-    Some(value.into_owned())
+/// Decodes raw character data, normalising line ends to `\n` (XML 1.0 §2.11)
+/// before resolving references.
+fn decode_text(raw: &str) -> String {
+    unescape(&raw.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
+/// Decodes a raw attribute value, turning each literal whitespace into a space
+/// (XML 1.0 §3.3.3) before resolving references.
+fn decode_attr(raw: &str) -> String {
+    unescape(&raw.replace("\r\n", " ").replace(['\t', '\n', '\r'], " "))
+}
+
+/// Resolves predefined and numeric character references, keeping an unknown
+/// or malformed one verbatim.
+fn unescape(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+
+    while let Some(start) = rest.find('&') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+
+        let Some(end) = rest.find(';') else {
+            break;
+        };
+
+        match resolve_reference(&rest[1..end]) {
+            Some(ch) => out.push(ch),
+            None => out.push_str(&rest[..=end]),
+        }
+
+        rest = &rest[end + 1..];
+    }
+
+    out.push_str(rest);
+    out
+}
+
+/// Resolves a reference name (the text between `&` and `;`) to its character.
+fn resolve_reference(name: &str) -> Option<char> {
+    match name {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => {
+            let code = name.strip_prefix('#')?;
+            let code = match code.strip_prefix('x') {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => code.parse().ok()?,
+            };
+            char::from_u32(code)
+        }
+    }
 }
 
 #[cfg(test)]

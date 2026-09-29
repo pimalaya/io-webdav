@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `no_std` builds pulling in `std` ([#1]).
+
+  quick-xml was replaced by xmlparser, which builds without `std`. Parsing is unchanged.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added
@@ -226,3 +232,5 @@ All notable changes to this project are documented in this file. The format is b
 [0.2.1]: https://github.com/pimalaya/io-webdav/compare/v0.2.0..v0.2.1
 [0.2.0]: https://github.com/pimalaya/io-webdav/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/pimalaya/io-webdav/compare/root..v0.1.0
+
+[#1]: https://github.com/pimalaya/io-webdav/issues/1

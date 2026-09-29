@@ -9,7 +9,7 @@ status: current
 io-webdav is an I/O-free library following the Pimalaya crate conventions: a no_std core with an optional std-blocking client, dual-licensed MIT OR Apache-2.0.
 
 ### Requirement: no_std core
-The crate SHALL be no_std unconditionally, pulling in alloc for its owned buffers. std SHALL be reachable only through the client feature.
+The crate SHALL be no_std unconditionally, pulling in alloc for its owned buffers. std SHALL be reachable only through the client feature, and no dependency SHALL pull it in otherwise: the core SHALL build for a bare-metal target.
 
 ### Requirement: Feature layering
 The crate SHALL expose a client feature gating the std-blocking client, and one feature per TLS provider (rustls-ring by default, rustls-aws, native-tls), each implying client and selecting the matching pimalaya-stream provider. A vendored feature SHALL forward weakly to pimalaya-stream. This follows the golden rule that a feature is justified only when it changes the crate set.
