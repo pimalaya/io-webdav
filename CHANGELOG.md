@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-29
+
 ### Fixed
 
 - Fixed `no_std` builds pulling in `std` ([#1]).
@@ -226,7 +228,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.4.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.4.1..HEAD
+[0.4.1]: https://github.com/pimalaya/io-webdav/compare/v0.4.0..v0.4.1
 [0.4.0]: https://github.com/pimalaya/io-webdav/compare/v0.3.0..v0.4.0
 [0.3.0]: https://github.com/pimalaya/io-webdav/compare/v0.2.1..v0.3.0
 [0.2.1]: https://github.com/pimalaya/io-webdav/compare/v0.2.0..v0.2.1

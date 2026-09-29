@@ -495,7 +495,6 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
     let mut sync_token: Option<String> = None;
     // NOTE: local name, accumulated descendant text, direct children.
     let mut stack: Vec<(String, String, Vec<WebdavPropChild>)> = Vec::new();
-    // NOTE: the start tag being read, up to its attributes.
     let mut tag_local = String::new();
     let mut tag_name: Option<String> = None;
     let mut response: Option<WebdavResponseEntry> = None;
@@ -575,8 +574,6 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                 end: ElementEnd::Close(_, close),
                 ..
             } => {
-                // NOTE: the tokenizer does not pair tags, and a mismatched
-                // close is malformed input, which ends the parse.
                 let Some((name, text, children)) =
                     stack.pop_if(|(name, _, _)| *name == close.as_str())
                 else {
@@ -585,9 +582,7 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                 let parent = stack.last().map(|(n, _, _)| n.clone());
                 if let Some((_, parent_text, parent_children)) = stack.last_mut() {
                     parent_text.push_str(&text);
-                    // NOTE: the element being popped is the last child its
-                    // parent pushed, so handing it its own children there
-                    // is what keeps nested markup readable at any depth.
+                    // NOTE: the popped element is its parent's last child.
                     if let Some(entry) = parent_children.last_mut() {
                         entry.children.clone_from(&children);
                     }
@@ -606,9 +601,6 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                                 Some(status) if status / 100 == 2 => {
                                     entry.props.append(&mut propstat_props)
                                 }
-                                // NOTE: a refused propstat is where a
-                                // PROPPATCH says it changed nothing, so its
-                                // properties are kept as failures.
                                 Some(status) => {
                                     entry.failures.extend(propstat_props.drain(..).map(|item| {
                                         WebdavPropFailure {
@@ -951,8 +943,6 @@ mod tests {
         );
         let xml = core::str::from_utf8(&body).unwrap();
 
-        // NOTE: a set-only body would leave the removed property untouched,
-        // which is the whole point of the second instruction block.
         assert!(xml.contains("xmlns:C=\"urn:ietf:params:xml:ns:caldav\""));
         assert!(
             xml.contains("<D:set><D:prop><D:displayname>Renamed</D:displayname></D:prop></D:set>")
@@ -997,8 +987,6 @@ mod tests {
         let comps = WebdavPropValue::Raw("<C:comp name=\"VEVENT\"/>".to_string());
         let body = proppatch_body(&[(COMPONENT_SET, comps)], &[]);
         let xml = core::str::from_utf8(&body).unwrap();
-        // NOTE: escaping raw markup would turn the children into text and lose
-        // the property's whole value.
         assert!(xml.contains(
             "<C:supported-calendar-component-set><C:comp name=\"VEVENT\"/></C:supported-calendar-component-set>"
         ));
@@ -1028,8 +1016,6 @@ mod tests {
         };
         let ms = parse_multistatus(xml);
         let children = &ms.responses[0].prop(COMPONENT_SET).unwrap().children;
-        // NOTE: the value lives in the attribute, not in a text node, so a
-        // text-only reading of this property returns nothing at all.
         let names: Vec<_> = children
             .iter()
             .filter_map(|child| child.name.clone())

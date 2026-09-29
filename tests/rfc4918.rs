@@ -97,8 +97,6 @@ fn parse_multistatus_reads_cdata_and_resolves_entities() {
     let entry = &ms.responses[0];
     assert_eq!(entry.href, "/dav/books/contacts/");
     assert_eq!(entry.id(), "contacts");
-    // NOTE: predefined and numeric references resolve; the unknown entity is
-    // kept verbatim.
     assert_eq!(entry.text(DISPLAYNAME), Some("A & B <> \"' ! &bogus;"));
 
     let etag = entry.prop(GETETAG).expect("empty getetag kept as a prop");
@@ -119,8 +117,6 @@ fn parse_multistatus_normalises_text_and_attributes() {
 
     let ms = parse_multistatus(xml);
     let entry = &ms.responses[0];
-    // NOTE: line ends normalise to LF, decimal references resolve, and a
-    // reference that is not a character or lacks its `;` stays verbatim.
     assert_eq!(
         entry.text(DISPLAYNAME),
         Some("a\nb\nc A &#xZZ; &#1114112; &amp")
@@ -131,8 +127,6 @@ fn parse_multistatus_normalises_text_and_attributes() {
         .iter()
         .find(|item| item.local == "supported-calendar-component-set")
         .expect("component set parsed");
-    // NOTE: attribute whitespace becomes a space before references resolve,
-    // and only the unprefixed `name` counts.
     assert_eq!(set.children[0].name.as_deref(), Some("V EVENT "));
     assert_eq!(set.children[1].name, None);
 }
@@ -167,8 +161,6 @@ fn parse_multistatus_ignores_unparsable_status_lines() {
 
     let ms = parse_multistatus(xml);
     let entry = &ms.responses[0];
-    // NOTE: unparsable statuses resolve to no code, so the propstat is not 2xx
-    // and its props are dropped; the blank sync-token is ignored.
     assert_eq!(entry.status, None);
     assert!(entry.props.is_empty());
     assert!(ms.sync_token.is_none());
@@ -176,8 +168,6 @@ fn parse_multistatus_ignores_unparsable_status_lines() {
 
 #[test]
 fn parse_multistatus_keeps_refused_properties_as_failures() {
-    // NOTE: what a PROPPATCH answers when it changed nothing: a 207 whose
-    // propstats carry the refusal.
     let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
       <d:response>
         <d:href>/dav/books/contacts/</d:href>
@@ -221,7 +211,6 @@ fn summarize_body_strips_markup_and_caps_the_rest() {
     let html = "<html>\n  <head><title>404 Not Found</title></head>\n  <body><h1>Not Found</h1></body>\n</html>";
     assert_eq!(summarize_body(html), "404 Not Found");
 
-    // NOTE: no description and no title, so the markup is stripped.
     assert_eq!(
         summarize_body("<p>Denied</p>  <p>twice</p>"),
         "Denied twice"
@@ -238,9 +227,6 @@ fn summarize_body_strips_markup_and_caps_the_rest() {
 
 #[test]
 fn parse_multistatus_reads_the_supported_report_set() {
-    // NOTE: the report names sit three levels below the property, so a parser
-    // keeping only direct children reads an empty set out of a server that
-    // advertises everything.
     let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:card="urn:ietf:params:xml:ns:carddav">
       <d:response>
         <d:href>/dav/books/contacts/</d:href>
@@ -272,8 +258,6 @@ fn parse_multistatus_reads_the_supported_report_set() {
     assert!(reports.contains("addressbook-multiget"));
     assert!(reports.contains("addressbook-query"));
 
-    // NOTE: a collection that advertises nothing reads as an empty set, not as
-    // a collection supporting every report.
     assert!(ms.responses[1].supported_reports().is_empty());
 }
 
@@ -293,8 +277,6 @@ fn parse_multistatus_survives_malformed_xml() {
     assert_eq!(ms.responses.len(), 1);
     assert_eq!(ms.responses[0].text(DISPLAYNAME), Some("A"));
 
-    // NOTE: a stray entity reference before the root element must not derail
-    // the parse either.
     let ms = parse_multistatus("&amp;<d:multistatus xmlns:d=\"DAV:\"/>");
     assert!(ms.responses.is_empty());
 }
@@ -335,7 +317,6 @@ fn response_entry_helpers_handle_missing_data() {
     assert!(entry.text(unknown).is_none(), "blank text is filtered");
     assert!(!entry.has_resource_type(RESOURCETYPE, CALENDAR));
 
-    // NOTE: only logs; must not panic on unrecognized properties.
     trace_unrecognized(&entry, &[DISPLAYNAME]);
 }
 
@@ -486,8 +467,6 @@ fn send_raw_surfaces_transport_errors() {
     let request = WebdavRequest::get(&base(), &WebdavAuth::None, UA, "x").body(Vec::new());
     let mut send = WebdavSendRaw::new(request);
 
-    // NOTE: an immediate EOF while reading the response head surfaces the
-    // underlying HTTP/1.1 send error.
     let (_, ret) = expect_exchange(&mut send, b"");
     assert!(matches!(ret.unwrap_err(), WebdavSendError::Send(_)));
 }
@@ -672,9 +651,6 @@ fn report_sends_the_query_body_and_parses_the_multistatus() {
 
 #[test]
 fn report_names_an_unimplemented_report_and_leaves_the_rest_alone() {
-    // NOTE: the precondition names the refusal whatever status carries it, and
-    // a 403 is equally what a server answers when the credential may not read
-    // the collection.
     let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
     let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
     let refusal = r#"<d:error xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns">
@@ -692,8 +668,6 @@ fn report_names_an_unimplemented_report_and_leaves_the_rest_alone() {
     assert!(message.contains("does not implement the report"));
     assert!(message.contains("ReportNotSupported"));
 
-    // NOTE: a 405 says the same thing with an empty body, which renders as no
-    // summary at all rather than a message ending on a colon.
     let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
     let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
     let (_, ret) = expect_exchange(
@@ -702,8 +676,6 @@ fn report_names_an_unimplemented_report_and_leaves_the_rest_alone() {
     );
     assert!(ret.unwrap_err().to_string().ends_with("(HTTP 405)"));
 
-    // NOTE: a failure that never carried a status passes through untouched,
-    // there being no precondition to read out of it.
     let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
     let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
     let redirect = http_response(
