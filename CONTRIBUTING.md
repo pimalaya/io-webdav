@@ -41,7 +41,7 @@ FASTMAIL_EMAIL="user@fastmail.com" FASTMAIL_APP_PASSWORD="<app-password>" \
 ```
 
 ```sh
-GOOGLE_ACCESS_TOKEN="<oauth-access-token>" \
+GOOGLE_SERVICE_ACCOUNT_KEY_FILE="<key.json>" \
   cargo test --test google -- --ignored
 ```
 
@@ -51,4 +51,6 @@ ICLOUD_EMAIL="user@icloud.com" ICLOUD_APP_PASSWORD="<app-password>" \
   cargo test --test icloud -- --ignored
 ```
 
-Each flow creates its own collections and cleans everything up on success.
+Google acts as `google@pimalaya.org` through a service account with domain-wide delegation; `GOOGLE_ACCESS_TOKEN` takes a hand-minted token instead. Google and iCloud refuse collection creation, so their flows work inside an existing collection.
+
+Each flow cleans up what it created, on failure too.

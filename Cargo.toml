@@ -31,9 +31,11 @@ required-features = ["rustls-ring"]
 
 [dev-dependencies]
 env_logger = "0.11"
+io-oauth = { version = "0.3", default-features = false, features = ["jwt-bearer", "rustls-ring"] }
 pimalaya-stream = { version = "0.3", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7"
+secrecy = { version = "0.10", default-features = false }
 serde_json = "1"
 url = { version = "2.5", default-features = false }
 

@@ -34,6 +34,8 @@ mod common;
 
 use std::env;
 
+use common::CarddavCardsChecks;
+
 /// CalDAV event CRUD inside an existing iCloud calendar.
 #[test]
 #[ignore = "requires ICLOUD_{EMAIL,APP_PASSWORD,CALENDAR_ID} env vars and --ignored"]
@@ -61,5 +63,9 @@ fn carddav() {
         "https://contacts.icloud.com/",
         common::basic_auth(&email, &password),
         &addressbook_id,
+        CarddavCardsChecks {
+            sync: true,
+            if_match: true,
+        },
     );
 }
