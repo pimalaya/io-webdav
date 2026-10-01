@@ -23,12 +23,6 @@ use io_webdav::{
     },
     rfc6578::sync_collection::WebdavSyncCollectionOptions,
 };
-#[cfg(any(
-    feature = "rustls-aws",
-    feature = "rustls-ring",
-    feature = "native-tls"
-))]
-use pimalaya_stream::tls::Tls;
 use url::Url;
 
 /// Stream replaying canned HTTP responses: each read pops and serves the next
@@ -267,7 +261,7 @@ fn connect_opens_plain_tcp_for_http() {
     let port = listener.local_addr().unwrap().port();
     let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
-    let client = WebdavClientStd::connect(&url, &Tls::default(), WebdavAuth::None)
+    let client = WebdavClientStd::connect(&url, WebdavAuth::None, Default::default())
         .expect("plain TCP connect");
     assert_eq!(client.base_url, url);
 }
@@ -280,7 +274,7 @@ fn connect_opens_plain_tcp_for_http() {
 #[test]
 fn connect_rejects_hostless_urls() {
     let url = Url::parse("data:,x").unwrap();
-    let err = WebdavClientStd::connect(&url, &Tls::default(), WebdavAuth::None).unwrap_err();
+    let err = WebdavClientStd::connect(&url, WebdavAuth::None, Default::default()).unwrap_err();
     assert!(matches!(err, WebdavClientStdError::UrlMissingHost(_)));
 }
 
@@ -292,7 +286,7 @@ fn connect_rejects_hostless_urls() {
 #[test]
 fn connect_rejects_unsupported_schemes() {
     let url = Url::parse("ftp://dav.example.org/").unwrap();
-    let err = WebdavClientStd::connect(&url, &Tls::default(), WebdavAuth::None).unwrap_err();
+    let err = WebdavClientStd::connect(&url, WebdavAuth::None, Default::default()).unwrap_err();
     let WebdavClientStdError::UrlUnsupportedScheme(_, scheme) = err else {
         panic!("expected UrlUnsupportedScheme, got {err:?}");
     };
@@ -313,7 +307,7 @@ fn connect_surfaces_tls_failures() {
     drop(listener);
 
     let url = Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap();
-    let result = WebdavClientStd::connect(&url, &Tls::default(), WebdavAuth::None);
+    let result = WebdavClientStd::connect(&url, WebdavAuth::None, Default::default());
     assert!(result.is_err(), "expected the TLS connect to fail");
 }
 

@@ -18,7 +18,6 @@ use std::env;
 
 use io_http::rfc7617::basic::HttpAuthBasic;
 use io_webdav::{client::WebdavClientStd, rfc4918::WebdavAuth};
-use pimalaya_stream::tls::Tls;
 use url::Url;
 
 fn main() {
@@ -33,7 +32,7 @@ fn main() {
     let password = env::var("WEBDAV_PASSWORD").expect("WEBDAV_PASSWORD env var");
     let auth = WebdavAuth::Basic(HttpAuthBasic::new(username, password));
 
-    let mut client = WebdavClientStd::connect(&url, &Tls::default(), auth).unwrap();
+    let mut client = WebdavClientStd::connect(&url, auth, Default::default()).unwrap();
     client.calendar_home_set().unwrap();
 
     for calendar in client.list_calendars().unwrap() {

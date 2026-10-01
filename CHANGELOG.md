@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING** Changed `WebdavClientStd::connect` to take `WebdavClientStdConnectOptions` after the credential, replacing the `&Tls` argument.
+
+  Its `proxy` routes the connection through a SOCKS5 or HTTP proxy; the default resolves it from the environment, as before.
+
 ## [0.4.1] - 2026-09-29
 
 ### Fixed

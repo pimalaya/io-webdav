@@ -12,7 +12,7 @@ The optional std layer, gated behind the client feature: a ready-made pump for c
 The client SHALL wrap a single stream the caller opened, any blocking reader and writer, and expose one method per WebDAV operation. It SHALL also expose the stream, so a higher-level crate can pump its own coroutines against the same connection while reusing the discovery cache.
 
 ### Requirement: Full client
-Under one of the TLS features the client SHALL additionally open http and https URLs itself, handling the TCP connection and the TLS negotiation through pimalaya-stream.
+Under one of the TLS features the client SHALL additionally open http and https URLs itself, handling the TCP connection and the TLS negotiation through pimalaya-stream. The connection SHALL go through the proxy the caller names in the connect options, the default resolving it from the environment.
 
 ### Requirement: TLS providers
 The crate SHALL offer Rustls with ring crypto as the default, Rustls with aws crypto, and native-tls, each as its own feature implying the client feature.

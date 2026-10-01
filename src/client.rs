@@ -59,6 +59,7 @@ use std::io::{self, Read, Write};
     feature = "native-tls"
 ))]
 use pimalaya_stream::{
+    proxy::Proxy,
     stream::{Stream, TcpConnectOptions, TlsConnectOptions},
     tls::Tls,
 };
@@ -112,6 +113,25 @@ use crate::{
         WebdavSyncDelta,
     },
 };
+
+/// Optional settings for [`WebdavClientStd::connect`].
+///
+/// The default uses the TLS backend default and resolves the proxy from
+/// the environment.
+#[cfg(any(
+    feature = "rustls-aws",
+    feature = "rustls-ring",
+    feature = "native-tls"
+))]
+#[derive(Clone, Debug, Default)]
+pub struct WebdavClientStdConnectOptions {
+    /// How `https` connections are secured.
+    pub tls: Tls,
+    /// How the connection reaches the server: [`Proxy::System`]
+    /// resolves it from the environment, [`Proxy::None`] connects
+    /// directly.
+    pub proxy: Proxy,
+}
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 
@@ -359,14 +379,20 @@ impl WebdavClientStd {
         }
     }
 
-    /// Connects to `url`'s host and runs the TLS handshake when the scheme is
-    /// `https`. `http` goes through plain TCP. ALPN is set to `http/1.1`.
+    /// Connects to `url`'s host through `opts.proxy`, running the TLS
+    /// handshake when the scheme is `https`. `http` goes through plain TCP.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
         feature = "native-tls"
     ))]
-    pub fn connect(url: &Url, tls: &Tls, auth: WebdavAuth) -> Result<Self, WebdavClientStdError> {
+    pub fn connect(
+        url: &Url,
+        auth: WebdavAuth,
+        opts: WebdavClientStdConnectOptions,
+    ) -> Result<Self, WebdavClientStdError> {
+        let WebdavClientStdConnectOptions { tls, proxy } = opts;
+
         let host = url
             .host_str()
             .ok_or_else(|| WebdavClientStdError::UrlMissingHost(url.to_string()))?;
@@ -374,12 +400,18 @@ impl WebdavClientStd {
         let stream = match url.scheme() {
             "http" => {
                 let port = url.port().unwrap_or(80);
-                Stream::connect_tcp(host, port, TcpConnectOptions::default())?
+                let opts = TcpConnectOptions {
+                    proxy,
+                    ..Default::default()
+                };
+
+                Stream::connect_tcp(host, port, opts)?
             }
             "https" => {
                 let port = url.port().unwrap_or(443);
                 let opts = TlsConnectOptions {
-                    tls: tls.clone(),
+                    tls,
+                    proxy,
                     ..Default::default()
                 };
 
