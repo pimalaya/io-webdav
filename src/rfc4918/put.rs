@@ -149,13 +149,15 @@ impl WebdavCoroutine for WebdavPut {
 /// 409 carrying none of it being any of the other conflicts a write meets. It
 /// is read as an element rather than searched for as a substring, so a body
 /// merely quoting the words is not one, and the namespace prefix is ignored,
-/// which is how both flavours of the element reach the one variant.
+/// which is how both flavours of the element reach the one variant. RFC 6638
+/// widens the same refusal to every calendar of the user for a scheduling
+/// object resource, under its own precondition, which is matched too.
 pub(crate) fn duplicate_uid(err: WebdavSendError) -> WebdavSendError {
     let WebdavSendError::HttpStatus { status, body } = err else {
         return err;
     };
 
-    if has_element(&body, &[NO_UID_CONFLICT]) {
+    if has_element(&body, &[NO_UID_CONFLICT, UNIQUE_SCHEDULING_OBJECT_RESOURCE]) {
         debug!("WebDAV collection already holds the written UID");
         return WebdavSendError::DuplicateUid { status, body };
     }
@@ -167,6 +169,12 @@ pub(crate) fn duplicate_uid(err: WebdavSendError) -> WebdavSendError {
 /// `CALDAV:no-uid-conflict` (RFC 4791 §5.3.2) and `CARDDAV:no-uid-conflict`
 /// (RFC 6352 §6.3.2).
 const NO_UID_CONFLICT: &str = "no-uid-conflict";
+
+/// Local name of the precondition RFC 6638 refuses a scheduling object
+/// resource with when another one of the user, in any calendar, already
+/// carries its `UID`: `CALDAV:unique-scheduling-object-resource`. Fastmail
+/// refuses a duplicate event with it, in a 403.
+const UNIQUE_SCHEDULING_OBJECT_RESOURCE: &str = "unique-scheduling-object-resource";
 
 #[derive(Debug)]
 enum State {

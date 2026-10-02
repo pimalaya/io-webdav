@@ -35,7 +35,7 @@ A `PROPPATCH` SHALL return its parsed multistatus together with the properties t
 A non-2xx status SHALL render as a summary of the body: its DAV responsedescription when it carries one, else an HTML title, else the body with markup stripped, whitespace collapsed and length capped. An empty body SHALL render as the status alone. The raw body SHALL remain available on the error value for consumers that inspect it.
 
 ### Requirement: A refused duplicate UID is named
-A write answered with the CalDAV or CardDAV no-uid-conflict precondition SHALL surface as a dedicated error, distinct from any other send failure, carrying the status and the raw body like the others. The precondition element SHALL be what is matched, not the status, since the RFCs name the element and recommend the status.
+A write answered with the CalDAV or CardDAV no-uid-conflict precondition, or with the CalDAV unique-scheduling-object-resource precondition (RFC 6638, the same refusal across every calendar of the user), SHALL surface as a dedicated error, distinct from any other send failure, carrying the status and the raw body like the others. The precondition element SHALL be what is matched, not the status, since the RFCs name the element and recommend the status.
 
 The refusal is the server saying the collection already holds this UID, which is a state a consumer acts on: it names the resource to fix and the collection to fix it in. Left as an opaque conflict it is indistinguishable from a quota or a lock, and a consumer can only report a number.
 

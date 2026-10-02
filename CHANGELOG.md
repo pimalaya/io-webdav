@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `is_duplicate_uid` missing the refusal Fastmail sends: a write refused with RFC 6638's `CALDAV:unique-scheduling-object-resource` precondition, the UID already held by another event of the user, now surfaces as `WebdavSendError::DuplicateUid` too, whatever the status (Fastmail answers 403).
+
 ## [0.5.0] - 2026-10-01
 
 ### Changed

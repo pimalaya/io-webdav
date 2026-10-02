@@ -558,6 +558,33 @@ fn create_and_update_name_a_refused_duplicate_uid() {
         WebdavSendError::DuplicateUid { status: 409, .. }
     ));
 
+    // NOTE: RFC 6638 refuses the same UID across every calendar of the user
+    // for a scheduling object resource, under its own precondition; Fastmail
+    // answers a duplicate event with it, in a 403.
+    const SCHEDULING: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <C:unique-scheduling-object-resource>
+    <D:href>/dav/calendars/user/alice/personal/other.ics</D:href>
+  </C:unique-scheduling-object-resource>
+</D:error>
+"#;
+    let mut create = CaldavItemCreate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "event-1.ics",
+        b"BEGIN:VCALENDAR".to_vec(),
+    );
+    let (_, ret) = expect_exchange(
+        &mut create,
+        &http_response("403 Forbidden", &[], SCHEDULING),
+    );
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::DuplicateUid { status: 403, .. }
+    ));
+
     // NOTE: a 409 carrying no precondition is any of the other conflicts a
     // write meets, and one merely spelling the words in its description is
     // none: the element is what classifies, not the text.

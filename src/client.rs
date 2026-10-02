@@ -226,7 +226,8 @@ impl WebdavClientStdError {
     ///
     /// A PUT follows no redirects, so the one variant is every way the
     /// refusal arrives. It is named on the RFC 4791 §5.3.2 and RFC 6352
-    /// §6.3.2 precondition rather than on the status wrapping it.
+    /// §6.3.2 precondition, or the RFC 6638 one widening it to every calendar
+    /// of the user, rather than on the status wrapping it.
     pub fn is_duplicate_uid(&self) -> bool {
         matches!(self, Self::Send(WebdavSendError::DuplicateUid { .. }))
     }
