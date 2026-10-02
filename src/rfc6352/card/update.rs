@@ -5,6 +5,12 @@
 //! Supports the optional `If-Match` precondition so callers can gate the write
 //! on the last-known ETag (RFC 9110 §13.1.1).
 //!
+//! Not every server enforces it. Google CardDAV answers 204 and applies the
+//! write whatever the `If-Match` value, a garbage one included (verified
+//! 2026-10-01). Against such a server the precondition guards nothing: a
+//! caller that needs it there compares the current ETag itself first, at the
+//! cost of one more request and of a race between the check and the write.
+//!
 //! A collection that already holds the card's `UID` under another resource
 //! refuses the PUT with the `CARDDAV:no-uid-conflict` precondition (RFC 6352
 //! §6.3.2), surfaced as

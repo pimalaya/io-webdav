@@ -5,6 +5,12 @@
 //! Supports the optional `If-Match` precondition so callers can gate the
 //! deletion on the last-known ETag (RFC 9110 §13.1.1).
 //!
+//! Not every server enforces it. Google CalDAV answers 204 and deletes the
+//! item whatever the `If-Match` value, a garbage one included (verified
+//! 2026-10-01). Against such a server the precondition guards nothing: a
+//! caller that needs it there compares the current ETag itself first, at the
+//! cost of one more request and of a race between the check and the write.
+//!
 //! # Example
 //!
 //! ```rust,no_run

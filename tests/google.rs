@@ -45,7 +45,7 @@
 //! - CardDAV sync deltas report neither the creation nor the removal of a
 //!   card made over CardDAV, and CardDAV applies a `PUT` whose `If-Match` no
 //!   longer matches instead of answering 412, so the CardDAV test skips both
-//!   checks. CalDAV honours both.
+//!   checks. CalDAV honours both, though it ignores `If-Match` on DELETE.
 //! - CardDAV rewrites the vCard `UID` to its own id, so the UID query uses
 //!   the UID read back from the server.
 
