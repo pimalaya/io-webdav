@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-02
+
 ### Fixed
 
 - Fixed `is_duplicate_uid` missing the refusal Fastmail sends: a write refused with RFC 6638's `CALDAV:unique-scheduling-object-resource` precondition, the UID already held by another event of the user, now surfaces as `WebdavSendError::DuplicateUid` too, whatever the status (Fastmail answers 403).
@@ -240,7 +242,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.5.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.5.1..HEAD
+[0.5.1]: https://github.com/pimalaya/io-webdav/compare/v0.5.0..v0.5.1
 [0.5.0]: https://github.com/pimalaya/io-webdav/compare/v0.4.1..v0.5.0
 [0.4.1]: https://github.com/pimalaya/io-webdav/compare/v0.4.0..v0.4.1
 [0.4.0]: https://github.com/pimalaya/io-webdav/compare/v0.3.0..v0.4.0
