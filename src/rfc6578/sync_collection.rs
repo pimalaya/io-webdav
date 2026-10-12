@@ -380,7 +380,10 @@ mod tests {
           <d:sync-token>http://example.com/ns/sync/1234</d:sync-token>
         </d:multistatus>"#;
 
-        let delta = from_multistatus(parse_multistatus(xml), "/dav/addressbooks/contacts");
+        let delta = from_multistatus(
+            parse_multistatus(xml).unwrap(),
+            "/dav/addressbooks/contacts",
+        );
 
         assert_eq!(delta.changed.len(), 1);
         assert_eq!(
@@ -418,7 +421,10 @@ mod tests {
           </d:response>
         </d:multistatus>"#;
 
-        let delta = from_multistatus(parse_multistatus(xml), "/17170244959/carddavhome/card/");
+        let delta = from_multistatus(
+            parse_multistatus(xml).unwrap(),
+            "/17170244959/carddavhome/card/",
+        );
 
         assert_eq!(delta.changed.len(), 1);
         assert_eq!(

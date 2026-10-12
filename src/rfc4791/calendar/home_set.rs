@@ -103,7 +103,11 @@ impl WebdavCoroutine for CaldavCalendarHomeSet {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
                 let xml = String::from_utf8_lossy(&ok.body);
-                let url = parse_multistatus(&xml)
+                let multistatus = match parse_multistatus(&xml) {
+                    Ok(multistatus) => multistatus,
+                    Err(err) => return WebdavCoroutineState::Complete(Err(err.into())),
+                };
+                let url = multistatus
                     .responses
                     .iter()
                     .find_map(|entry| entry.text(CALENDAR_HOME_SET))

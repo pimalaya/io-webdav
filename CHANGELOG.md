@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING** Changed `rfc4918::parse_multistatus` to return `Result<WebdavMultistatus, WebdavMultistatusParseError>`, failing on elements nested deeper than `MULTISTATUS_MAX_DEPTH` (64). `WebdavSendError` and `WebdavFollowRedirectsError` gained the matching `Multistatus` variant.
+
+### Fixed
+
+- Fixed `rfc4918::parse_multistatus` cloning every closed subtree into its parent and copying its text into every ancestor: a body was parsed in quadratic time, and about 35 KB of nested elements overflowed a 1 MiB stack. Children are now moved, and nesting is capped.
+
 ## [0.5.1] - 2026-10-02
 
 ### Fixed

@@ -102,7 +102,7 @@ impl WebdavCoroutine for WebdavPropfind {
                 let ok = webdav_try!(send, arg);
                 let xml = String::from_utf8_lossy(&ok.body);
                 trace!("received multistatus body {xml}");
-                WebdavCoroutineState::Complete(Ok(parse_multistatus(&xml)))
+                WebdavCoroutineState::Complete(parse_multistatus(&xml).map_err(Into::into))
             }
         }
     }

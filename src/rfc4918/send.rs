@@ -63,7 +63,10 @@ use io_http::{
 use log::trace;
 use thiserror::Error;
 
-use crate::{coroutine::*, rfc4918::summarized};
+use crate::{
+    coroutine::*,
+    rfc4918::{WebdavMultistatusParseError, summarized},
+};
 
 /// Successful terminal output of a WebDAV send coroutine.
 #[derive(Debug)]
@@ -138,6 +141,9 @@ pub enum WebdavSendError {
     /// The server returned a redirect where none was expected.
     #[error("WebDAV server returned unexpected redirect")]
     UnexpectedRedirect,
+    /// The multistatus body could not be parsed.
+    #[error(transparent)]
+    Multistatus(#[from] WebdavMultistatusParseError),
     /// The underlying HTTP/1.1 send failed.
     #[error(transparent)]
     Send(#[from] Http11SendError),

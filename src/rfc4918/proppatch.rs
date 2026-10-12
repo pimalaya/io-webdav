@@ -126,8 +126,12 @@ impl WebdavCoroutine for WebdavProppatch {
                 let ok = webdav_try!(send, arg);
                 let xml = String::from_utf8_lossy(&ok.body);
                 trace!("response body: {xml}");
+                let multistatus = match parse_multistatus(&xml) {
+                    Ok(multistatus) => multistatus,
+                    Err(err) => return WebdavCoroutineState::Complete(Err(err.into())),
+                };
                 WebdavCoroutineState::Complete(Ok(WebdavProppatchOk {
-                    multistatus: parse_multistatus(&xml),
+                    multistatus,
                     requested: mem::take(&mut self.requested),
                 }))
             }

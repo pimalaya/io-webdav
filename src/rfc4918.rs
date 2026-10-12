@@ -44,6 +44,7 @@ use io_http::{
     rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic, rfc9110::response::HttpResponse,
 };
 use log::trace;
+use thiserror::Error;
 use url::Url;
 use xmlparser::{ElementEnd, Token, Tokenizer};
 
@@ -485,16 +486,44 @@ pub fn report_query_body(
     body.into_bytes()
 }
 
+/// Deepest element nesting [`parse_multistatus`] accepts.
+///
+/// RFC 4918 bodies nest about eight levels at most, the property values
+/// included; the bound keeps the parse linear and the recursive drop of
+/// [`WebdavPropChild`] off the end of the stack.
+pub const MULTISTATUS_MAX_DEPTH: usize = 64;
+
+/// Elements whose descendant text is never read.
+const STRUCTURAL: [&str; 4] = ["multistatus", "response", "propstat", "prop"];
+
+/// Failure causes while parsing a multistatus body.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub enum WebdavMultistatusParseError {
+    /// The body nests elements deeper than the given depth.
+    #[error("WebDAV multistatus nests elements deeper than {0}")]
+    TooDeep(usize),
+}
+
+/// An element open while parsing a multistatus body.
+struct OpenElement {
+    /// The local name.
+    local: String,
+    /// The accumulated descendant text.
+    text: String,
+    /// The direct children.
+    children: Vec<WebdavPropChild>,
+}
+
 /// Parses a `multistatus` body into vocabulary-agnostic entries.
 ///
 /// Matching is by local name, prefixes ignored, and only properties under a
 /// 2xx `propstat` land in `props`. A response carrying none survives as an
 /// entry (removal and truncation rows); malformed input yields its prefix.
-pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
+/// Nesting past [`MULTISTATUS_MAX_DEPTH`] fails.
+pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistatusParseError> {
     let mut responses: Vec<WebdavResponseEntry> = Vec::new();
     let mut sync_token: Option<String> = None;
-    // NOTE: local name, accumulated descendant text, direct children.
-    let mut stack: Vec<(String, String, Vec<WebdavPropChild>)> = Vec::new();
+    let mut stack: Vec<OpenElement> = Vec::new();
     let mut tag_local = String::new();
     let mut tag_name: Option<String> = None;
     let mut response: Option<WebdavResponseEntry> = None;
@@ -521,10 +550,15 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                 end: ElementEnd::Open,
                 ..
             } => {
+                if stack.len() == MULTISTATUS_MAX_DEPTH {
+                    let err = WebdavMultistatusParseError::TooDeep(MULTISTATUS_MAX_DEPTH);
+                    return Err(err);
+                }
+
                 let local = mem::take(&mut tag_local);
                 let name = tag_name.take();
-                if let Some((_, _, children)) = stack.last_mut() {
-                    children.push(WebdavPropChild {
+                if let Some(parent) = stack.last_mut() {
+                    parent.children.push(WebdavPropChild {
                         local: local.clone(),
                         name,
                         ..Default::default()
@@ -538,7 +572,11 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                     }
                     _ => {}
                 }
-                stack.push((local, String::new(), Vec::new()));
+                stack.push(OpenElement {
+                    local,
+                    text: String::new(),
+                    children: Vec::new(),
+                });
             }
             Token::ElementEnd {
                 end: ElementEnd::Empty,
@@ -546,14 +584,14 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
             } => {
                 let local = mem::take(&mut tag_local);
                 let name = tag_name.take();
-                let parent_is_prop = stack.last().is_some_and(|(n, _, _)| n == "prop");
+                let parent_is_prop = stack.last().is_some_and(|parent| parent.local == "prop");
                 if parent_is_prop {
                     propstat_props.push(WebdavPropItem {
                         local,
                         ..Default::default()
                     });
-                } else if let Some((_, _, children)) = stack.last_mut() {
-                    children.push(WebdavPropChild {
+                } else if let Some(parent) = stack.last_mut() {
+                    parent.children.push(WebdavPropChild {
                         local,
                         name,
                         ..Default::default()
@@ -561,33 +599,47 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
                 }
             }
             Token::Text { text } => {
-                if let Some((_, buf, _)) = stack.last_mut() {
-                    buf.push_str(&decode_text(&text));
+                if let Some(open) = stack.last_mut() {
+                    open.text.push_str(&decode_text(&text));
                 }
             }
             Token::Cdata { text, .. } => {
-                if let Some((_, buf, _)) = stack.last_mut() {
-                    buf.push_str(&text);
+                if let Some(open) = stack.last_mut() {
+                    open.text.push_str(&text);
                 }
             }
             Token::ElementEnd {
                 end: ElementEnd::Close(_, close),
                 ..
             } => {
-                let Some((name, text, children)) =
-                    stack.pop_if(|(name, _, _)| *name == close.as_str())
+                let Some(OpenElement {
+                    local: name,
+                    text,
+                    mut children,
+                }) = stack.pop_if(|open| open.local == close.as_str())
                 else {
                     break;
                 };
-                let parent = stack.last().map(|(n, _, _)| n.clone());
-                if let Some((_, parent_text, parent_children)) = stack.last_mut() {
-                    parent_text.push_str(&text);
-                    // NOTE: the popped element is its parent's last child.
-                    if let Some(entry) = parent_children.last_mut() {
-                        entry.children.clone_from(&children);
+
+                let parent = stack.last().map(|parent| parent.local.clone());
+                let parent = parent.as_deref();
+
+                // NOTE: the popped element is its parent's last child, and
+                // takes its children along, moved rather than cloned. A
+                // property keeps them instead, below. Structural elements
+                // skip the descendant text nobody reads, so each octet is
+                // copied once per property level at most.
+                if let Some(open) = stack.last_mut()
+                    && parent != Some("prop")
+                {
+                    if !STRUCTURAL.contains(&open.local.as_str()) {
+                        open.text.push_str(&text);
+                    }
+
+                    if let Some(entry) = open.children.last_mut() {
+                        entry.children = mem::take(&mut children);
                     }
                 }
-                let parent = parent.as_deref();
 
                 match name.as_str() {
                     "response" => {
@@ -650,10 +702,10 @@ pub fn parse_multistatus(xml: &str) -> WebdavMultistatus {
         }
     }
 
-    WebdavMultistatus {
+    Ok(WebdavMultistatus {
         responses,
         sync_token,
-    }
+    })
 }
 
 /// Returns the value of the HTTP `Authorization` header for the given scheme,
@@ -1014,7 +1066,7 @@ mod tests {
             ns: CALDAV,
             local: "supported-calendar-component-set",
         };
-        let ms = parse_multistatus(xml);
+        let ms = parse_multistatus(xml).unwrap();
         let children = &ms.responses[0].prop(COMPONENT_SET).unwrap().children;
         let names: Vec<_> = children
             .iter()
@@ -1062,7 +1114,7 @@ mod tests {
           </d:response>
         </d:multistatus>"#;
 
-        let ms = parse_multistatus(xml);
+        let ms = parse_multistatus(xml).unwrap();
         assert_eq!(ms.responses.len(), 2);
 
         let first = &ms.responses[0];
@@ -1095,7 +1147,7 @@ mod tests {
           <d:sync-token>http://example.com/ns/sync/1234</d:sync-token>
         </d:multistatus>"#;
 
-        let ms = parse_multistatus(xml);
+        let ms = parse_multistatus(xml).unwrap();
         assert_eq!(
             ms.sync_token.as_deref(),
             Some("http://example.com/ns/sync/1234")
@@ -1133,7 +1185,7 @@ mod tests {
             ns: DAV,
             local: "current-user-principal",
         };
-        let ms = parse_multistatus(xml);
+        let ms = parse_multistatus(xml).unwrap();
         let entry = &ms.responses[0];
         assert_eq!(entry.text(principal), Some("/principals/alice/"));
     }

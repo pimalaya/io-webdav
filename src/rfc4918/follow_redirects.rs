@@ -75,7 +75,9 @@ use thiserror::Error;
 
 use crate::{
     coroutine::*,
-    rfc4918::{coroutine::WebdavRedirectYield, send::WebdavSendOk, summarized},
+    rfc4918::{
+        WebdavMultistatusParseError, coroutine::WebdavRedirectYield, send::WebdavSendOk, summarized,
+    },
 };
 
 /// Failure causes during a redirect-aware WebDAV send.
@@ -90,6 +92,9 @@ pub enum WebdavFollowRedirectsError {
         /// The response body, verbatim.
         body: String,
     },
+    /// The multistatus body could not be parsed.
+    #[error(transparent)]
+    Multistatus(#[from] WebdavMultistatusParseError),
     /// The underlying HTTP/1.1 send failed.
     #[error(transparent)]
     Send(#[from] Http11SendError),

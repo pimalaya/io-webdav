@@ -6,8 +6,9 @@ mod common;
 
 use common::*;
 use io_webdav::rfc4918::{
-    DAV, DISPLAYNAME, GETETAG, RESOURCETYPE, WebdavAuth, WebdavNamespace, WebdavPropFailure,
-    WebdavPropItem, WebdavPropValue, WebdavProperty, WebdavResponseEntry,
+    DAV, DISPLAYNAME, GETETAG, MULTISTATUS_MAX_DEPTH, RESOURCETYPE, WebdavAuth,
+    WebdavMultistatusParseError, WebdavNamespace, WebdavPropFailure, WebdavPropItem,
+    WebdavPropValue, WebdavProperty, WebdavResponseEntry,
     copy::WebdavCopy as CopyResource,
     delete::WebdavDelete,
     follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
@@ -93,7 +94,7 @@ fn parse_multistatus_reads_cdata_and_resolves_entities() {
       </d:response>
     </d:multistatus>"#;
 
-    let ms = parse_multistatus(xml);
+    let ms = parse_multistatus(xml).unwrap();
     let entry = &ms.responses[0];
     assert_eq!(entry.href, "/dav/books/contacts/");
     assert_eq!(entry.id(), "contacts");
@@ -115,7 +116,7 @@ fn parse_multistatus_normalises_text_and_attributes() {
       </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>\
       </d:multistatus>";
 
-    let ms = parse_multistatus(xml);
+    let ms = parse_multistatus(xml).unwrap();
     let entry = &ms.responses[0];
     assert_eq!(
         entry.text(DISPLAYNAME),
@@ -130,6 +131,89 @@ fn parse_multistatus_normalises_text_and_attributes() {
     assert_eq!(set.children[0].name.as_deref(), Some("V EVENT "));
     assert_eq!(set.children[1].name, None);
 }
+#[test]
+fn parse_multistatus_fails_past_the_max_depth() {
+    // NOTE: 6000 levels, a 42 KB body that overflowed a 1 MiB stack
+    // through the recursive clone of the children; run on a stack the
+    // size of an Android thread.
+    let xml = nested(6000);
+    let err = on_small_stack(move || parse_multistatus(&xml).unwrap_err());
+    assert_eq!(
+        err,
+        WebdavMultistatusParseError::TooDeep(MULTISTATUS_MAX_DEPTH)
+    );
+}
+
+#[test]
+fn parse_multistatus_fails_past_the_max_depth_on_a_large_body() {
+    let xml = nested(200_000);
+    let err = on_small_stack(move || parse_multistatus(&xml).unwrap_err());
+    assert_eq!(
+        err,
+        WebdavMultistatusParseError::TooDeep(MULTISTATUS_MAX_DEPTH)
+    );
+}
+
+#[test]
+fn parse_multistatus_keeps_the_children_at_the_max_depth() {
+    // NOTE: multistatus, response, propstat, prop and the property
+    // itself take five levels.
+    let levels = MULTISTATUS_MAX_DEPTH - 5;
+    let xml = nested(levels);
+    let ms = on_small_stack(move || parse_multistatus(&xml).unwrap());
+
+    let mut depth = 0;
+    let mut children = &ms.responses[0].props[0].children;
+    while let Some(child) = children.first() {
+        depth += 1;
+        children = &child.children;
+    }
+
+    assert_eq!(depth, levels);
+    assert_eq!(ms.responses[0].props[0].text, "x");
+}
+
+#[test]
+fn parse_multistatus_is_linear_in_wide_bodies() {
+    // NOTE: 20000 responses, each with nested property markup; the old
+    // parser copied every subtree into each ancestor on close.
+    let row = "<D:response><D:href>/a/</D:href><D:propstat><D:prop>\
+               <D:supported-report-set><D:supported-report><D:report>\
+               <D:sync-collection/></D:report></D:supported-report>\
+               </D:supported-report-set></D:prop>\
+               <D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>";
+    let xml = format!(
+        "<D:multistatus xmlns:D=\"DAV:\">{}</D:multistatus>",
+        row.repeat(20_000)
+    );
+    let ms = on_small_stack(move || parse_multistatus(&xml).unwrap());
+    assert_eq!(ms.responses.len(), 20_000);
+    assert!(
+        ms.responses[19_999]
+            .supported_reports()
+            .contains("sync-collection")
+    );
+}
+
+/// A multistatus whose single property nests `levels` elements.
+fn nested(levels: usize) -> String {
+    format!(
+        "<multistatus><response><href>/a/</href><propstat><prop><p>{}x{}</p></prop>\
+         <status>HTTP/1.1 200 OK</status></propstat></response></multistatus>",
+        "<a>".repeat(levels),
+        "</a>".repeat(levels),
+    )
+}
+
+/// Runs `f` on a 1 MiB stack, the size of an ordinary Android thread.
+fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap()
+}
 
 #[test]
 fn parse_multistatus_stops_at_a_mismatched_close() {
@@ -139,6 +223,7 @@ fn parse_multistatus_stops_at_a_mismatched_close() {
     </d:multistatus>"#;
 
     let hrefs: Vec<String> = parse_multistatus(xml)
+        .unwrap()
         .into_iter()
         .map(|entry| entry.href)
         .collect();
@@ -159,7 +244,7 @@ fn parse_multistatus_ignores_unparsable_status_lines() {
       <d:sync-token>   </d:sync-token>
     </d:multistatus>"#;
 
-    let ms = parse_multistatus(xml);
+    let ms = parse_multistatus(xml).unwrap();
     let entry = &ms.responses[0];
     assert_eq!(entry.status, None);
     assert!(entry.props.is_empty());
@@ -182,7 +267,7 @@ fn parse_multistatus_keeps_refused_properties_as_failures() {
       </d:response>
     </d:multistatus>"#;
 
-    let ms = parse_multistatus(xml);
+    let ms = parse_multistatus(xml).unwrap();
     let entry = &ms.responses[0];
 
     assert_eq!(entry.props.len(), 1);
@@ -250,7 +335,7 @@ fn parse_multistatus_reads_the_supported_report_set() {
       </d:response>
     </d:multistatus>"#;
 
-    let ms = parse_multistatus(xml);
+    let ms = parse_multistatus(xml).unwrap();
     let reports = ms.responses[0].supported_reports();
 
     assert_eq!(reports.len(), 3);
@@ -273,11 +358,11 @@ fn parse_multistatus_survives_malformed_xml() {
       </d:response>
       <d:response><d:href>/dav/b/</d:href><broken"#;
 
-    let ms = parse_multistatus(xml);
+    let ms = parse_multistatus(xml).unwrap();
     assert_eq!(ms.responses.len(), 1);
     assert_eq!(ms.responses[0].text(DISPLAYNAME), Some("A"));
 
-    let ms = parse_multistatus("&amp;<d:multistatus xmlns:d=\"DAV:\"/>");
+    let ms = parse_multistatus("&amp;<d:multistatus xmlns:d=\"DAV:\"/>").unwrap();
     assert!(ms.responses.is_empty());
 }
 
@@ -289,6 +374,7 @@ fn multistatus_iterates_over_its_responses() {
     </d:multistatus>"#;
 
     let hrefs: Vec<String> = parse_multistatus(xml)
+        .unwrap()
         .into_iter()
         .map(|entry| entry.href)
         .collect();
