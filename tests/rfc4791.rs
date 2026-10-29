@@ -15,8 +15,8 @@ use io_webdav::{
         },
         item::{
             create::CaldavItemCreate, delete::CaldavItemDelete, enumerate::CaldavItemEnum,
-            join_path, list::CaldavItemList, multiget::CaldavItemMultiget, read::CaldavItemRead,
-            update::CaldavItemUpdate,
+            join_path, list::CaldavItemList, r#move::CaldavItemMove, multiget::CaldavItemMultiget,
+            read::CaldavItemRead, update::CaldavItemUpdate,
         },
     },
     rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue, send::WebdavSendError},
@@ -751,4 +751,148 @@ fn enum_items_flags_a_truncated_listing() {
     let refs = ret.unwrap();
     assert_eq!(refs.refs.len(), 1);
     assert!(refs.truncated);
+}
+
+#[test]
+fn list_calendars_names_a_calendar_outside_the_home_set_by_its_path() {
+    // NOTE: Google's shape: the primary calendar is the home set's `events`,
+    // every other calendar an `events` of its own elsewhere.
+    let mut list = CaldavCalendarList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/caldav/v2/alice%40example.org/",
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <d:response>
+        <d:href>/caldav/v2/alice@example.org/events/</d:href>
+        <d:propstat>
+          <d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>https://dav.example.org/caldav/v2/team%40group.example.org/events/</d:href>
+        <d:propstat>
+          <d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+    let ids: Vec<String> = ret
+        .unwrap()
+        .into_iter()
+        .map(|calendar| calendar.id)
+        .collect();
+    assert_eq!(
+        ids,
+        ["/caldav/v2/team%40group.example.org/events", "events"]
+    );
+}
+
+#[test]
+fn a_calendar_id_starting_with_a_slash_addresses_its_path() {
+    let id = "/caldav/v2/team%40group.example.org/events";
+    let calendar = CaldavCalendar {
+        id: id.into(),
+        display_name: Some("Team".into()),
+        ..Default::default()
+    };
+
+    let mut update = CaldavCalendarUpdate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/caldav/v2/alice/",
+        &calendar,
+    );
+    let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
+    let (request, _) = expect_exchange(&mut update, &reply);
+    assert!(
+        request.starts_with("proppatch /caldav/v2/team%40group.example.org/events/ http/1.1\r\n")
+    );
+
+    let mut delete =
+        CaldavCalendarDelete::new(&base(), &WebdavAuth::None, UA, "/caldav/v2/alice/", id);
+    let (request, _) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
+    assert!(request.starts_with("delete /caldav/v2/team%40group.example.org/events/ http/1.1\r\n"));
+}
+
+#[test]
+fn move_item_moves_the_resource_without_overwriting() {
+    let mut mv = CaldavItemMove::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "task-1.ics",
+        "/dav/calendars/work/",
+        Some("etag-1"),
+    );
+    let (request, ret) = expect_exchange(
+        &mut mv,
+        &http_response("201 Created", &[("ETag", "\"etag-2\"")], ""),
+    );
+    assert!(request.starts_with("move /dav/calendars/personal/task-1.ics http/1.1\r\n"));
+    assert!(
+        request.contains("destination: https://dav.example.org/dav/calendars/work/task-1.ics\r\n")
+    );
+    assert!(request.contains("overwrite: f\r\n"));
+    assert!(request.contains("if-match: \"etag-1\"\r\n"));
+
+    let moved = ret.unwrap();
+    assert_eq!(moved.id, "task-1.ics");
+    assert_eq!(moved.etag.as_deref(), Some("etag-2"));
+
+    let mut mv = CaldavItemMove::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "task-1.ics",
+        "/dav/calendars/work/",
+        None,
+    );
+    let (request, ret) = expect_exchange(&mut mv, &http_response("204 No Content", &[], ""));
+    assert!(!request.contains("if-match"));
+    assert_eq!(ret.unwrap().etag, None);
+}
+
+#[test]
+fn move_item_names_a_refused_duplicate_uid() {
+    const REFUSAL: &str = r#"<d:error xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <c:no-uid-conflict><d:href>/dav/calendars/work/other.ics</d:href></c:no-uid-conflict>
+    </d:error>"#;
+
+    let mut mv = CaldavItemMove::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "task-1.ics",
+        "/dav/calendars/work/",
+        None,
+    );
+    let (_, ret) = expect_exchange(&mut mv, &http_response("403 Forbidden", &[], REFUSAL));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::DuplicateUid { status: 403, .. }
+    ));
+
+    let mut mv = CaldavItemMove::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "task-1.ics",
+        "/dav/calendars/work/",
+        None,
+    );
+    let (_, ret) = expect_exchange(&mut mv, &http_response("412 Precondition Failed", &[], ""));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::HttpStatus { status: 412, .. }
+    ));
 }

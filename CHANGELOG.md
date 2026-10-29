@@ -4,12 +4,21 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Added `rfc4791::item::r#move::CaldavItemMove` and `WebdavClientStd::move_item`, moving a calendar item into another calendar of the same server with `MOVE`, `Overwrite: F` and an optional `If-Match`, keeping its id. A refused `UID` surfaces as `WebdavSendError::DuplicateUid`. Fastmail, which keeps one `UID` per account, takes it where a create then a delete is refused; Google answers 404.
+- Added `WebdavClientStd::set_reconnect`: a client given a way to open a fresh connection resends a request, once, when the server closed the connection before answering it. `connect` sets it to the URL and options it connected with; `set_stream` drops it.
+- Added `rfc4918::collection_id` and `rfc4918::collection_path`.
+
 ### Changed
+
+- **BREAKING** Changed the id of a listed calendar or address book outside the home set: it is now the href's path, starting with a slash, rather than its last segment, and an id starting with a slash addresses that path. A collection directly under the home set keeps its id. Google lists every calendar as `/caldav/v2/<calendar>/events/`, so every calendar was named `events` and every verb reached the primary calendar.
 
 - **BREAKING** Changed `rfc4918::parse_multistatus` to return `Result<WebdavMultistatus, WebdavMultistatusParseError>`, failing on elements nested deeper than `MULTISTATUS_MAX_DEPTH` (64). `WebdavSendError` and `WebdavFollowRedirectsError` gained the matching `Multistatus` variant.
 
 ### Fixed
 
+- Fixed the client failing the request after one the server answered with `Connection: close` (Radicale does after a PUT, its built-in server after every response), or after an idle keep-alive timed out: a client from `connect` now reconnects and resends it.
 - Fixed `rfc4918::parse_multistatus` cloning every closed subtree into its parent and copying its text into every ancestor: a body was parsed in quadratic time, and about 35 KB of nested elements overflowed a 1 MiB stack. Children are now moved, and nesting is capped.
 
 ## [0.5.1] - 2026-10-02

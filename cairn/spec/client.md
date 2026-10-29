@@ -27,3 +27,11 @@ The client SHALL never follow a redirect. It owns a single connected stream, so 
 - GIVEN a client configured with a context root the provider redirects away from
 - WHEN discovery runs
 - THEN the call fails with the redirect target, and the caller reconnects there and retries
+
+### Requirement: Closed connection
+A client given a way to reconnect SHALL, when the server closed the connection before any byte of the response to a request arrived, open a fresh connection and resend that request, once. The full client's connect SHALL give it that way, to the URL and options it connected with. A client without one SHALL surface the I/O error. Swapping the stream SHALL drop the way to reconnect, so a client moved to another host never reconnects to the old one.
+
+#### Scenario: The server closed after a write
+- GIVEN a server answering a PUT with Connection: close and closing
+- WHEN the client sends its next request
+- THEN the request reaches the server on a fresh connection and its answer is returned

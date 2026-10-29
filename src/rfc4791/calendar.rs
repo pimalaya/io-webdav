@@ -18,14 +18,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::rfc4918::{
     DISPLAYNAME, GETCTAG, RESOURCETYPE, SUPPORTED_REPORT_SET, SYNC_TOKEN, WebdavNamespace,
-    WebdavPropValue, WebdavProperty, escape_text, prop_set_body, report_query_body,
+    WebdavPropValue, WebdavProperty, collection_path, escape_text, prop_set_body,
+    report_query_body,
 };
 
 /// A CalDAV calendar collection (RFC 4791 §4).
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub struct CaldavCalendar {
     /// Calendar identifier: the last non-empty path segment of the calendar
-    /// collection URL.
+    /// collection URL when the calendar is a direct child of the home set, the
+    /// URL's path otherwise, starting with a slash (see
+    /// [`collection_id`](crate::rfc4918::collection_id)).
     pub id: String,
     /// Human-readable display name (DAV:displayname).
     pub display_name: Option<String>,
@@ -136,11 +139,10 @@ pub const LIST_PROPS: &[WebdavProperty] = &[
 ];
 
 /// Joins a home-set path with a calendar id into a collection path (trailing
-/// slash included).
+/// slash included); an id starting with a slash is the path itself (see
+/// [`collection_path`]).
 pub fn join_path(home: &str, id: &str) -> String {
-    let home = home.trim_end_matches('/');
-    let id = id.trim_start_matches('/');
-    format!("{home}/{id}/")
+    collection_path(home, id)
 }
 
 /// Builds a CalDAV `MKCALENDAR` request body (RFC 4791 §5.3.1) setting the

@@ -49,7 +49,7 @@ The refusal is the server saying the collection already holds this UID, which is
 A parsed property SHALL expose its direct child elements, each carrying its local name and its name attribute when it has one. Attribute-valued properties like supported-calendar-component-set are unreadable otherwise.
 
 ### Requirement: Resource identity
-A resource id SHALL be the last non-empty path segment of its href. The crate SHALL never add nor strip a file extension anywhere in that derivation.
+An item or card id SHALL be the last non-empty path segment of its href. A collection's id SHALL follow its layer's identity rule (Calendar identity, Address book identity). The crate SHALL never add nor strip a file extension anywhere in that derivation.
 
 ### Requirement: Location header
 When a server reports a created resource in a Location header, the id SHALL be that header's last path segment, query and fragment dropped, falling back to the caller-supplied name when the header is absent or its segment is empty.

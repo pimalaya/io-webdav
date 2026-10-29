@@ -26,6 +26,19 @@ fn caldav() {
     );
 }
 
+/// An item moved between two calendars: Fastmail keeps one UID per account,
+/// so only a `MOVE` gets it there.
+#[test]
+#[ignore = "requires FASTMAIL_{EMAIL,APP_PASSWORD} env vars and --ignored"]
+fn caldav_move() {
+    let email = env::var("FASTMAIL_EMAIL").expect("FASTMAIL_EMAIL not set");
+    let password = env::var("FASTMAIL_APP_PASSWORD").expect("FASTMAIL_APP_PASSWORD not set");
+    common::caldav_move(
+        "https://caldav.fastmail.com/dav/",
+        common::basic_auth(&email, &password),
+    );
+}
+
 /// Full CardDAV addressbook/card CRUD against Fastmail.
 #[test]
 #[ignore = "requires FASTMAIL_{EMAIL,APP_PASSWORD} env vars and --ignored"]

@@ -14,11 +14,20 @@ The crate SHALL provide list, create, update and delete coroutines for calendar 
 ### Requirement: Calendar properties
 A listed calendar SHALL carry its id, display name, description, color, component set, ctag, sync token, default time zone and the reports the server advertises for it. Every property the listing reads SHALL also be writable, the advertised report set excepted, which RFC 3253 section 3.1.5 protects, so a calendar round-trips through create and update.
 
+### Requirement: Calendar identity
+A listed calendar whose collection is a direct child of the home set SHALL carry the last path segment of its href as its id. Any other listed calendar SHALL carry its href's path as its id, starting with a slash, percent-encoding kept as the server served it. The home set and the href SHALL be compared percent-decoded. A calendar id starting with a slash SHALL address that path; any other id SHALL address the home set joined with it.
+
+#### Scenario: Calendars outside the home set
+- GIVEN a home set /caldav/v2/alice/ listing /caldav/v2/alice/events/ and /caldav/v2/team/events/
+- WHEN the caller lists the calendars
+- THEN the first carries the id events and the second the id /caldav/v2/team/events
+- AND a write into the second addresses /caldav/v2/team/events/, never the home set's events
+
 ### Requirement: Component set
 The component types a calendar holds SHALL be read from and written to supported-calendar-component-set (RFC 4791 section 5.2.3), whose value is a list of comp children carrying a name attribute. An empty set means the server advertises no restriction, which the RFC defines as accepting any type. A server fixes the set at creation time, so setting it is only meaningful on create.
 
 ### Requirement: Item verbs
-The crate SHALL provide read, create, update and delete coroutines for calendar items, plus list, ETag-only enumeration and batch multiget.
+The crate SHALL provide read, create, update, delete and move coroutines for calendar items, plus list, ETag-only enumeration and batch multiget.
 
 ### Requirement: Item identity
 An item SHALL be addressed by its resource id, the href's last path segment used verbatim. The crate SHALL NOT append nor strip the .ics extension, so the caller owns the whole resource name and an id read from a listing addresses the resource it came from.
@@ -27,6 +36,14 @@ An item SHALL be addressed by its resource id, the href's last path segment used
 - GIVEN a listing returning an item whose href last segment carries no extension
 - WHEN the caller reads that id back
 - THEN the GET targets the very resource the server enumerated
+
+### Requirement: Item move
+The crate SHALL provide a coroutine moving a calendar item into another calendar of the same server with MOVE (RFC 4918 section 9.9), sending Overwrite F and, when the caller names an ETag, If-Match. The moved item SHALL keep its resource id. A refusal naming the no-uid-conflict or unique-scheduling-object-resource precondition SHALL be the duplicate-UID error, as for a create.
+
+#### Scenario: A task filed into another calendar
+- GIVEN a server keeping one UID per account
+- WHEN the caller moves an item from one calendar into another
+- THEN the server moves the resource itself, and no request ever puts a second resource with that UID
 
 ### Requirement: Listing
 Listing SHALL use a calendar-query REPORT at Depth 1, requesting the ETag and the calendar data. The caller SHALL pass the optional VCALENDAR child filter, an empty string listing every component type. The iCalendar payload SHALL be returned as raw bytes, parsed upstream.

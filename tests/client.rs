@@ -894,3 +894,297 @@ fn a_refused_duplicate_uid_is_recognised_on_create_and_update() {
         "a bare conflict is not a duplicate UID",
     );
 }
+
+// --- closed connections ---
+
+/// Reads one HTTP request off `stream`: its head, then the body its
+/// `Content-Length` announces. Returns the request line.
+fn read_request(stream: &mut std::net::TcpStream) -> String {
+    let mut raw = Vec::new();
+    let mut byte = [0u8; 1];
+    while !raw.ends_with(b"\r\n\r\n") {
+        if stream.read(&mut byte).unwrap() == 0 {
+            return String::new();
+        }
+        raw.push(byte[0]);
+    }
+    let head = String::from_utf8_lossy(&raw).to_lowercase();
+    let length = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length: "))
+        .map_or(0, |n| n.trim().parse().unwrap());
+    let mut body = vec![0u8; length];
+    stream.read_exact(&mut body).unwrap();
+    head.lines().next().unwrap_or_default().to_string()
+}
+
+#[cfg(any(
+    feature = "rustls-aws",
+    feature = "rustls-ring",
+    feature = "native-tls"
+))]
+#[test]
+fn a_connected_client_resends_a_request_after_the_server_closed() {
+    // NOTE: Radicale's shape: a PUT answered with `Connection: close`, the
+    // next request meeting a closed socket before the server read it.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let line = read_request(&mut first);
+        first
+            .write_all(&http_response(
+                "201 Created",
+                &[("Connection", "close")],
+                "",
+            ))
+            .unwrap();
+        drop(first);
+
+        let (mut second, _) = listener.accept().unwrap();
+        let resent = read_request(&mut second);
+        second
+            .write_all(&http_response("204 No Content", &[], ""))
+            .unwrap();
+        (line, resent)
+    });
+
+    let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let mut client =
+        WebdavClientStd::connect(&url, WebdavAuth::None, Default::default()).expect("connect");
+    client.calendar_home_set = Some(url.join("/dav/calendars/").unwrap());
+
+    client
+        .create_item("personal", "task-1.ics", b"BEGIN:VCALENDAR".to_vec())
+        .expect("create item");
+    client
+        .delete_item("personal", "task-1.ics", None)
+        .expect("delete item on a fresh connection");
+
+    let (line, resent) = server.join().unwrap();
+    assert_eq!(line, "put /dav/calendars/personal/task-1.ics http/1.1");
+    assert_eq!(resent, "delete /dav/calendars/personal/task-1.ics http/1.1");
+}
+
+/// Stream whose peer closed: every read ends the stream, every write is lost.
+struct ClosedStream;
+
+impl Read for ClosedStream {
+    fn read(&mut self, _: &mut [u8]) -> IoResult<usize> {
+        Ok(0)
+    }
+}
+
+impl Write for ClosedStream {
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> IoResult<()> {
+        Ok(())
+    }
+}
+
+/// Stream whose writes fail as on a socket the peer reset.
+struct ResetStream;
+
+impl Read for ResetStream {
+    fn read(&mut self, _: &mut [u8]) -> IoResult<usize> {
+        Err(IoError::from(std::io::ErrorKind::ConnectionReset))
+    }
+}
+
+impl Write for ResetStream {
+    fn write(&mut self, _: &[u8]) -> IoResult<usize> {
+        Err(IoError::from(std::io::ErrorKind::BrokenPipe))
+    }
+
+    fn flush(&mut self) -> IoResult<()> {
+        Ok(())
+    }
+}
+
+/// Stream recording what is written to it into a shared buffer, serving
+/// `responses` as [`ScriptedStream`] does.
+struct RecordingStream {
+    written: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    script: ScriptedStream,
+}
+
+impl Read for RecordingStream {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        self.script.read(buf)
+    }
+}
+
+impl Write for RecordingStream {
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+        self.written.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> IoResult<()> {
+        Ok(())
+    }
+}
+
+/// Client over `stream` with its calendar home set cached.
+fn client_over<S: Read + Write + Send + 'static>(stream: S) -> WebdavClientStd {
+    WebdavClientStd::from_parts(
+        stream,
+        WebdavAuth::None,
+        base(),
+        None,
+        Some(Url::parse("https://dav.example.org/dav/calendars/").unwrap()),
+        None,
+    )
+}
+
+#[test]
+fn a_client_given_a_way_to_reconnect_resends_once() {
+    let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let reconnects = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    let mut client = client_over(ClosedStream);
+    let (sink, count) = (written.clone(), reconnects.clone());
+    client.set_reconnect(Box::new(move || {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Box::new(RecordingStream {
+            written: sink.clone(),
+            script: ScriptedStream::new([http_response("204 No Content", &[], "")]),
+        }))
+    }));
+
+    client
+        .delete_item("personal", "task-1.ics", None)
+        .expect("delete item on a fresh connection");
+    assert_eq!(reconnects.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let written = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+    assert!(written.starts_with("DELETE /dav/calendars/personal/task-1.ics HTTP/1.1\r\n"));
+}
+
+#[test]
+fn a_write_meeting_a_reset_socket_is_resent() {
+    let mut client = client_over(ResetStream);
+    client.set_reconnect(Box::new(|| {
+        Ok(Box::new(ScriptedStream::new([http_response(
+            "204 No Content",
+            &[],
+            "",
+        )])))
+    }));
+
+    client
+        .delete_item("personal", "task-1.ics", None)
+        .expect("delete item on a fresh connection");
+}
+
+#[test]
+fn a_read_meeting_a_reset_socket_is_resent() {
+    /// Accepts writes, then fails the read as a socket the peer reset.
+    struct ResetOnRead;
+
+    impl Read for ResetOnRead {
+        fn read(&mut self, _: &mut [u8]) -> IoResult<usize> {
+            Err(IoError::from(std::io::ErrorKind::ConnectionReset))
+        }
+    }
+
+    impl Write for ResetOnRead {
+        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+    }
+
+    let mut client = client_over(ResetOnRead);
+    client.set_reconnect(Box::new(|| {
+        Ok(Box::new(ScriptedStream::new([http_response(
+            "204 No Content",
+            &[],
+            "",
+        )])))
+    }));
+
+    client
+        .delete_item("personal", "task-1.ics", None)
+        .expect("delete item on a fresh connection");
+}
+
+#[test]
+fn a_request_is_resent_once_at_most() {
+    let mut client = client_over(ClosedStream);
+    client.set_reconnect(Box::new(|| Ok(Box::new(ClosedStream))));
+
+    let err = client
+        .delete_item("personal", "task-1.ics", None)
+        .unwrap_err();
+    assert!(err.to_string().contains("EOF"), "{err}");
+}
+
+#[test]
+fn a_failed_reconnect_surfaces() {
+    let mut client = client_over(ClosedStream);
+    client.set_reconnect(Box::new(|| Err(IoError::other("refused"))));
+
+    let err = client
+        .delete_item("personal", "task-1.ics", None)
+        .unwrap_err();
+    assert!(err.to_string().contains("refused"), "{err}");
+}
+
+#[test]
+fn a_client_without_a_way_to_reconnect_surfaces_the_closed_stream() {
+    let mut client = client_over(ClosedStream);
+    client.set_reconnect(Box::new(|| {
+        panic!("a swapped stream must never reconnect to the old server")
+    }));
+    // NOTE: a stream swapped in leads elsewhere; the old way back is dropped.
+    client.set_stream(ClosedStream);
+
+    assert!(client.delete_item("personal", "task-1.ics", None).is_err());
+
+    let mut client = client_over(ResetStream);
+    assert!(client.delete_item("personal", "task-1.ics", None).is_err());
+}
+
+#[test]
+fn a_discovery_request_is_resent_too() {
+    let mut client = WebdavClientStd::new(ClosedStream, WebdavAuth::None, base());
+    client.set_reconnect(Box::new(|| {
+        Ok(Box::new(ScriptedStream::new([multistatus_response(
+            PRINCIPAL_XML,
+        )])))
+    }));
+
+    let url = client.current_user_principal().expect("principal");
+    assert_eq!(url.path(), "/principals/alice/");
+}
+
+#[test]
+fn move_item_addresses_both_calendars() {
+    let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut client = client_over(RecordingStream {
+        written: written.clone(),
+        script: ScriptedStream::new([http_response("201 Created", &[], "")]),
+    });
+
+    let moved = client
+        .move_item(
+            "personal",
+            "task-1.ics",
+            "/caldav/v2/team%40g/events",
+            Some("etag-1"),
+        )
+        .expect("move item");
+    assert_eq!(moved.id, "task-1.ics");
+
+    let written = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+    assert!(written.starts_with("MOVE /dav/calendars/personal/task-1.ics HTTP/1.1\r\n"));
+    assert!(written.to_lowercase().contains(
+        "\r\ndestination: https://dav.example.org/caldav/v2/team%40g/events/task-1.ics\r\n"
+    ));
+}

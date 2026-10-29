@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     rfc4918::{
         DISPLAYNAME, GETCTAG, RESOURCETYPE, SUPPORTED_REPORT_SET, SYNC_TOKEN, WebdavNamespace,
-        WebdavPropValue, WebdavProperty, escape_text, report_query_body,
+        WebdavPropValue, WebdavProperty, collection_path, escape_text, report_query_body,
     },
     rfc6352::filter::CarddavFilter,
 };
@@ -30,7 +30,9 @@ use crate::{
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub struct CarddavAddressbook {
     /// Addressbook identifier: the last non-empty path segment of the
-    /// addressbook collection URL.
+    /// addressbook collection URL when it is a direct child of the home set,
+    /// the URL's path otherwise, starting with a slash (see
+    /// [`collection_id`](crate::rfc4918::collection_id)).
     pub id: String,
     /// Human-readable display name (DAV:displayname).
     pub display_name: Option<String>,
@@ -64,8 +66,8 @@ pub struct CarddavAddressbook {
 /// (`DAV:remove`, RFC 4918 §9.2) and `Some(Some(value))` sets it (`DAV:set`).
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub struct CarddavAddressbookPatch {
-    /// Identifier of the addressbook to patch: the last non-empty path segment
-    /// of its collection URL.
+    /// Identifier of the addressbook to patch, as
+    /// [`CarddavAddressbook::id`] carries it.
     pub id: String,
     /// New human-readable display name (DAV:displayname).
     pub display_name: Option<Option<String>>,
@@ -134,11 +136,10 @@ pub const LIST_PROPS: &[WebdavProperty] = &[
 ];
 
 /// Joins a home-set path with an addressbook id into a collection path
-/// (trailing slash included).
+/// (trailing slash included); an id starting with a slash is the path itself
+/// (see [`collection_path`]).
 pub fn join_path(home: &str, id: &str) -> String {
-    let home = home.trim_end_matches('/');
-    let id = id.trim_start_matches('/');
-    format!("{home}/{id}/")
+    collection_path(home, id)
 }
 
 /// Turns the display name, color and description of `addressbook` into `MKCOL`

@@ -1466,3 +1466,77 @@ fn vcard_uid(data: &[u8]) -> String {
         .trim()
         .to_owned()
 }
+
+/// Moves an item between two calendars the run creates, on one client that
+/// keeps its first stream: a server closing the connection after a response
+/// (Radicale does after a PUT) is met by the client reconnecting itself.
+///
+/// The server must move the resource whole: on one keeping one UID per
+/// account (Fastmail), a create in the target then a delete in the source is
+/// refused, a `MOVE` never is.
+pub fn caldav_move(base_url: &str, auth: WebdavAuth) {
+    let _ = env_logger::try_init();
+    let base = Url::parse(base_url).expect("parse base URL");
+    let mut client = WebdavClientStd::connect(&base, auth, Default::default()).expect("connect");
+    client
+        .current_user_principal()
+        .expect("current-user-principal discovery");
+    client
+        .calendar_home_set()
+        .expect("calendar-home-set discovery");
+
+    let ts = unique_suffix();
+    let source = format!("io-webdav-move-{ts}-a");
+    let target = format!("io-webdav-move-{ts}-b");
+    let item_name = format!("task-{ts}.ics");
+
+    // NOTE: the calendars created so far ride with the client, so the cleanup
+    // removes exactly those.
+    let mut state = (client, Vec::<String>::new());
+    with_cleanup(
+        &mut state,
+        |(client, created)| {
+            for id in [&source, &target] {
+                let calendar = CaldavCalendar {
+                    id: id.clone(),
+                    display_name: Some(id.clone()),
+                    components: ["VEVENT".to_owned(), "VTODO".to_owned()].into(),
+                    ..Default::default()
+                };
+                client.create_calendar(&calendar).expect("create calendar");
+                created.push(id.clone());
+            }
+
+            let ics = format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//io-webdav//tests//EN\r\n\
+                 BEGIN:VTODO\r\nUID:task-{ts}@io-webdav.test\r\nDTSTAMP:20261029T080000Z\r\n\
+                 SUMMARY:io-webdav move\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+            );
+            let put = client
+                .create_item(&source, &item_name, ics.into_bytes())
+                .expect("create item");
+
+            let moved = client
+                .move_item(&source, &put.id, &target, put.etag.as_deref())
+                .expect("move item");
+            assert_eq!(moved.id, put.id, "a moved item keeps its id");
+
+            let read = client
+                .read_item(&target, &moved.id)
+                .expect("read moved item");
+            assert!(
+                String::from_utf8_lossy(&read.data).contains("SUMMARY:io-webdav move"),
+                "moved item lost its body"
+            );
+            let left = client.read_item(&source, &put.id);
+            assert!(left.is_err(), "the source still holds the moved item");
+        },
+        |(client, created)| {
+            for id in created.iter() {
+                if let Err(err) = client.delete_calendar(id) {
+                    report_leftover("calendar", id, &err);
+                }
+            }
+        },
+    );
+}

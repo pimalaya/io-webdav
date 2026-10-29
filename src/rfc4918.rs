@@ -185,7 +185,7 @@ impl WebdavResponseEntry {
     }
 
     /// Returns the last non-empty path segment of [`href`](Self::href), the
-    /// conventional collection or resource identifier.
+    /// resource identifier.
     pub fn id(&self) -> &str {
         self.href
             .trim_end_matches('/')
@@ -193,6 +193,82 @@ impl WebdavResponseEntry {
             .next()
             .unwrap_or("")
     }
+
+    /// Returns the id of the collection this entry lists under the home set
+    /// `home` (see [`collection_id`]).
+    pub fn collection_id(&self, home: &str) -> String {
+        collection_id(home, &self.href)
+    }
+}
+
+/// Returns the id of the collection at `href` listed under the home set path
+/// `home`: the last path segment when the collection is a direct child of
+/// `home`, the href's path otherwise, starting with a slash and kept as the
+/// server served it.
+///
+/// RFC 4791 and RFC 6352 make a collection URL opaque: Google lists every
+/// calendar as `/caldav/v2/<calendar>/events/`, outside the home set, where a
+/// last segment alone would name them all `events`. Both paths are compared
+/// percent-decoded, a server being free to encode either differently.
+pub fn collection_id(home: &str, href: &str) -> String {
+    let path = href_path(href).trim_end_matches('/');
+    let (parent, last) = path.rsplit_once('/').unwrap_or(("", path));
+
+    // NOTE: a relative href names no parent to compare; it keeps the last
+    // segment, as every id did before.
+    if !path.starts_with('/') || decoded(parent) == decoded(home.trim_end_matches('/')) {
+        return last.to_string();
+    }
+
+    path.to_string()
+}
+
+/// Returns the path a collection id addresses, trailing slash included: the
+/// id itself when it starts with a slash (a collection outside the home set,
+/// see [`collection_id`]), the home set path `home` joined with it otherwise.
+pub fn collection_path(home: &str, id: &str) -> String {
+    if id.starts_with('/') {
+        return format!("{}/", id.trim_end_matches('/'));
+    }
+
+    let home = home.trim_end_matches('/');
+    let id = id.trim_matches('/');
+    format!("{home}/{id}/")
+}
+
+/// Returns the path of `href`, an absolute URL or a reference, without its
+/// query or fragment.
+fn href_path(href: &str) -> &str {
+    let href = href.split(['?', '#']).next().unwrap_or(href);
+    match href.split_once("://") {
+        Some((_, rest)) => rest.find('/').map_or("/", |start| &rest[start..]),
+        None => href,
+    }
+}
+
+/// Percent-decodes `path` (RFC 3986 §2.1), leaving a malformed escape as it
+/// stands.
+fn decoded(path: &str) -> Vec<u8> {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|hex| u8::from_str_radix(core::str::from_utf8(hex).ok()?, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                i += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 /// A single property returned inside a `<prop>` element.

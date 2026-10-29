@@ -45,7 +45,10 @@
 //! println!("{} calendars", calendars.len());
 //! ```
 
-use alloc::{collections::BTreeSet, string::ToString};
+use alloc::{
+    collections::BTreeSet,
+    string::{String, ToString},
+};
 
 use log::trace;
 use url::Url;
@@ -66,6 +69,7 @@ use crate::{
 /// Coroutine that lists calendars under `home_set_path`.
 #[derive(Debug)]
 pub struct CaldavCalendarList {
+    home_set_path: String,
     state: State,
 }
 
@@ -75,6 +79,7 @@ impl CaldavCalendarList {
         let propfind =
             WebdavPropfind::new(base_url, auth, user_agent, home_set_path, 1, LIST_PROPS);
         Self {
+            home_set_path: home_set_path.to_string(),
             state: State::WebdavPropfind(propfind),
         }
     }
@@ -92,7 +97,7 @@ impl WebdavCoroutine for CaldavCalendarList {
                 let calendars = multistatus
                     .responses
                     .iter()
-                    .filter_map(from_entry)
+                    .filter_map(|entry| from_entry(entry, &self.home_set_path))
                     .collect();
                 WebdavCoroutineState::Complete(Ok(calendars))
             }
@@ -100,13 +105,13 @@ impl WebdavCoroutine for CaldavCalendarList {
     }
 }
 
-fn from_entry(entry: &WebdavResponseEntry) -> Option<CaldavCalendar> {
+fn from_entry(entry: &WebdavResponseEntry, home_set_path: &str) -> Option<CaldavCalendar> {
     if !entry.has_resource_type(RESOURCETYPE, CALENDAR) {
         trace!("skip non-calendar response {}", entry.href);
         return None;
     }
 
-    let id = entry.id();
+    let id = entry.collection_id(home_set_path);
     if id.is_empty() {
         return None;
     }
@@ -126,7 +131,7 @@ fn from_entry(entry: &WebdavResponseEntry) -> Option<CaldavCalendar> {
         .unwrap_or_default();
 
     Some(CaldavCalendar {
-        id: id.to_string(),
+        id,
         display_name: entry.text(DISPLAYNAME).map(ToString::to_string),
         description: entry.text(CALENDAR_DESCRIPTION).map(ToString::to_string),
         color: entry.text(CALENDAR_COLOR).map(ToString::to_string),

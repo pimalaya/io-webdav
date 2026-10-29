@@ -893,3 +893,38 @@ fn enum_cards_surfaces_an_unimplemented_report() {
         WebdavSendError::UnsupportedReport { status: 403, .. }
     ));
 }
+
+#[test]
+fn list_addressbooks_names_one_outside_the_home_set_by_its_path() {
+    let mut list = CarddavAddressbookList::new(&base(), &WebdavAuth::None, UA, "/dav/books/alice/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:card="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/alice/contacts/</d:href>
+        <d:propstat>
+          <d:prop><d:resourcetype><d:collection/><card:addressbook/></d:resourcetype></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/shared/contacts/</d:href>
+        <d:propstat>
+          <d:prop><d:resourcetype><d:collection/><card:addressbook/></d:resourcetype></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+    let ids: Vec<String> = ret.unwrap().into_iter().map(|book| book.id).collect();
+    assert_eq!(ids, ["/dav/books/shared/contacts", "contacts"]);
+
+    let mut delete = CarddavAddressbookDelete::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/alice/",
+        "/dav/books/shared/contacts",
+    );
+    let (request, _) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
+    assert!(request.starts_with("delete /dav/books/shared/contacts/ http/1.1\r\n"));
+}

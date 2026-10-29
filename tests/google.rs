@@ -54,6 +54,7 @@ mod common;
 use std::{borrow::Cow, env, fs, time::Duration};
 
 use common::CarddavCardsChecks;
+use io_webdav::client::WebdavClientStd;
 
 use io_oauth::{
     client::Oauth20ClientStd,
@@ -82,6 +83,79 @@ fn caldav() {
         common::bearer_auth(&token()),
         &calendar_id,
     );
+}
+
+/// A secondary calendar is addressed by its own path, never as the home set's
+/// `events`, which is the primary calendar: an event written there lands there.
+/// Then a `MOVE` of it into a second calendar, whose outcome is printed.
+///
+/// `GOOGLE_SCRATCH_CALENDARS` names two calendars the caller created for the
+/// run (Calendar API ids, comma-separated) and deletes afterwards: Google
+/// refuses `MKCALENDAR`. The test writes into those two only.
+#[test]
+#[ignore = "requires GOOGLE_SCRATCH_CALENDARS, a token or key, and --ignored"]
+fn caldav_secondary_calendars() {
+    let scratch = env::var("GOOGLE_SCRATCH_CALENDARS").expect("GOOGLE_SCRATCH_CALENDARS not set");
+    let scratch: Vec<&str> = scratch.split(',').collect();
+    let [source, target] = scratch[..] else {
+        panic!("GOOGLE_SCRATCH_CALENDARS names two calendars");
+    };
+
+    let base = Url::parse("https://apidata.googleusercontent.com/caldav/v2/").unwrap();
+    let auth = common::bearer_auth(&token());
+    let mut client = WebdavClientStd::connect(&base, auth, Default::default()).expect("connect");
+    client.current_user_principal().expect("principal");
+    client.calendar_home_set().expect("home set");
+
+    let calendars = client.list_calendars().expect("list calendars");
+    let find = |id: &str| {
+        calendars
+            .iter()
+            .find(|calendar| calendar.id.replace("%40", "@").contains(id))
+            .unwrap_or_else(|| panic!("scratch calendar {id} not listed"))
+            .clone()
+    };
+    let (source, target) = (find(source), find(target));
+    eprintln!("source id {} components {:?}", source.id, source.components);
+    eprintln!("target id {} components {:?}", target.id, target.components);
+    assert!(
+        source.id.starts_with('/'),
+        "a secondary calendar is named by its path"
+    );
+    assert_ne!(source.id, target.id);
+
+    let uid = format!("io-webdav-{}", std::process::id());
+    let ics = format!(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//io-webdav//tests//EN\r\n\
+         BEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261029T080000Z\r\n\
+         DTSTART:20261030T090000Z\r\nDTEND:20261030T100000Z\r\n\
+         SUMMARY:io-webdav secondary\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    );
+    let created = client
+        .create_item(&source.id, &format!("{uid}.ics"), ics.into_bytes())
+        .expect("create event in the secondary calendar");
+    let read = client.read_item(&source.id, &created.id);
+    assert!(
+        read.is_ok(),
+        "event not found where it was written: {read:?}"
+    );
+
+    let moved = client.move_item(&source.id, &created.id, &target.id, None);
+    eprintln!("move: {moved:?}");
+    if moved.is_ok() {
+        eprintln!(
+            "after move, target read: {:?}",
+            client.read_item(&target.id, &created.id).map(|_| ())
+        );
+        eprintln!(
+            "after move, source read: {:?}",
+            client.read_item(&source.id, &created.id).map(|_| ())
+        );
+    }
+
+    for calendar in [&source, &target] {
+        let _ = client.delete_item(&calendar.id, &created.id, None);
+    }
 }
 
 /// CardDAV card CRUD inside the subject's `default` address book, discovered

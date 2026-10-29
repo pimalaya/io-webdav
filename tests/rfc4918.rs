@@ -8,7 +8,7 @@ use common::*;
 use io_webdav::rfc4918::{
     DAV, DISPLAYNAME, GETETAG, MULTISTATUS_MAX_DEPTH, RESOURCETYPE, WebdavAuth,
     WebdavMultistatusParseError, WebdavNamespace, WebdavPropFailure, WebdavPropItem,
-    WebdavPropValue, WebdavProperty, WebdavResponseEntry,
+    WebdavPropValue, WebdavProperty, WebdavResponseEntry, collection_id, collection_path,
     copy::WebdavCopy as CopyResource,
     delete::WebdavDelete,
     follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
@@ -801,4 +801,46 @@ fn copy_and_move_carry_destination_overwrite_and_depth() {
     assert!(request.contains("destination: /dav/c.ics\r\n"));
     assert!(request.contains("overwrite: f\r\n"));
     ret.unwrap();
+}
+
+#[test]
+fn a_collection_under_the_home_set_keeps_its_last_segment() {
+    assert_eq!(collection_id("/dav/cal/", "/dav/cal/work/"), "work");
+    assert_eq!(
+        collection_id("/dav/cal", "https://dav.example.org/dav/cal/work"),
+        "work"
+    );
+    // NOTE: the two sides may encode differently.
+    assert_eq!(collection_id("/u/a%40b/", "/u/a@b/events/"), "events");
+    assert_eq!(collection_id("/u/a@b/", "/u/a%40b/events/"), "events");
+    // NOTE: a relative href names no parent, as before.
+    assert_eq!(collection_id("/dav/cal/", "work/"), "work");
+}
+
+#[test]
+fn a_collection_elsewhere_is_named_by_its_path() {
+    assert_eq!(
+        collection_id("/caldav/v2/alice/", "/caldav/v2/team%40g/events/?x=1#f"),
+        "/caldav/v2/team%40g/events"
+    );
+    assert_eq!(
+        collection_id("/dav/cal/", "/dav/cal/sub/work/"),
+        "/dav/cal/sub/work"
+    );
+    // NOTE: a malformed escape is compared as it stands.
+    assert_eq!(collection_id("/u/%zz/", "/u/%zz/events/"), "events");
+    assert_eq!(collection_id("/u/%4/", "/u/%41/events/"), "/u/%41/events");
+    // NOTE: a root href (or a URL without a path) is no collection: empty.
+    assert_eq!(collection_id("/dav/cal/", "https://dav.example.org"), "");
+    assert_eq!(collection_id("/dav/cal/", "/"), "");
+}
+
+#[test]
+fn a_collection_path_takes_an_id_starting_with_a_slash_as_is() {
+    assert_eq!(collection_path("/dav/cal/", "work"), "/dav/cal/work/");
+    assert_eq!(collection_path("/dav/cal", "/work/"), "/work/");
+    assert_eq!(
+        collection_path("/dav/cal/", "/caldav/v2/x/events"),
+        "/caldav/v2/x/events/"
+    );
 }

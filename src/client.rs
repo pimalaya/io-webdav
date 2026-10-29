@@ -46,13 +46,13 @@ use core::fmt;
 use alloc::{
     boxed::Box,
     collections::{BTreeMap, BTreeSet},
-    format,
     string::{String, ToString},
     vec::Vec,
 };
 
 use std::io::{self, Read, Write};
 
+use log::debug;
 #[cfg(any(
     feature = "rustls-aws",
     feature = "rustls-ring",
@@ -80,13 +80,14 @@ use crate::{
             delete::CaldavItemDelete,
             enumerate::{CaldavItemEnum, CaldavItemEnumOk},
             list::CaldavItemList,
+            r#move::{CaldavItemMove, CaldavItemMoveOk},
             multiget::CaldavItemMultiget,
             read::{CaldavItemBody, CaldavItemRead},
             update::{CaldavItemUpdate, CaldavItemUpdateOk},
         },
     },
     rfc4918::{
-        GETETAG, WebdavAuth, WebdavPropFailure, coroutine::WebdavRedirectYield,
+        GETETAG, WebdavAuth, WebdavPropFailure, collection_path, coroutine::WebdavRedirectYield,
         follow_redirects::WebdavFollowRedirectsError, proppatch::WebdavProppatchOk,
         send::WebdavSendError,
     },
@@ -313,7 +314,16 @@ pub struct WebdavClientStd {
     ///
     /// [`list_addressbooks`]: WebdavClientStd::list_addressbooks
     pub addressbook_reports: BTreeMap<String, BTreeSet<String>>,
+    /// How to open a fresh connection when the server closed this one before
+    /// answering a request (see [`set_reconnect`]).
+    ///
+    /// [`set_reconnect`]: WebdavClientStd::set_reconnect
+    reconnect: Option<WebdavReconnect>,
 }
+
+/// Opens a fresh stream to the server a client talks to, for
+/// [`WebdavClientStd::set_reconnect`].
+pub type WebdavReconnect = Box<dyn FnMut() -> io::Result<Box<dyn WebdavStream>> + Send>;
 
 impl fmt::Debug for WebdavClientStd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -354,6 +364,7 @@ impl WebdavClientStd {
             addressbook_home_set: None,
             calendar_reports: BTreeMap::new(),
             addressbook_reports: BTreeMap::new(),
+            reconnect: None,
         }
     }
 
@@ -377,6 +388,7 @@ impl WebdavClientStd {
             addressbook_home_set,
             calendar_reports: BTreeMap::new(),
             addressbook_reports: BTreeMap::new(),
+            reconnect: None,
         }
     }
 
@@ -392,47 +404,44 @@ impl WebdavClientStd {
         auth: WebdavAuth,
         opts: WebdavClientStdConnectOptions,
     ) -> Result<Self, WebdavClientStdError> {
-        let WebdavClientStdConnectOptions { tls, proxy } = opts;
+        let stream = open(url, &opts)?;
+        let mut client = Self::new(stream, auth, url.clone());
 
-        let host = url
-            .host_str()
-            .ok_or_else(|| WebdavClientStdError::UrlMissingHost(url.to_string()))?;
+        let url = url.clone();
+        client.reconnect = Some(Box::new(move || {
+            let stream = open(&url, &opts).map_err(io::Error::other)?;
+            Ok(Box::new(stream) as Box<dyn WebdavStream>)
+        }));
 
-        let stream = match url.scheme() {
-            "http" => {
-                let port = url.port().unwrap_or(80);
-                let opts = TcpConnectOptions {
-                    proxy,
-                    ..Default::default()
-                };
-
-                Stream::connect_tcp(host, port, opts)?
-            }
-            "https" => {
-                let port = url.port().unwrap_or(443);
-                let opts = TlsConnectOptions {
-                    tls,
-                    proxy,
-                    ..Default::default()
-                };
-
-                Stream::connect_tls(host, port, opts)?
-            }
-            scheme => {
-                return Err(WebdavClientStdError::UrlUnsupportedScheme(
-                    url.to_string(),
-                    scheme.to_string(),
-                ));
-            }
-        };
-
-        Ok(Self::new(stream, auth, url.clone()))
+        Ok(client)
     }
 
     /// Replaces the underlying stream; useful when discovery surfaces a new
     /// authority and the caller has to reconnect.
+    ///
+    /// Drops the way to reconnect [`connect`] or [`set_reconnect`] gave, which
+    /// leads to the old stream's server: a client moved to another host never
+    /// sends a request back there.
+    ///
+    /// [`connect`]: WebdavClientStd::connect
+    /// [`set_reconnect`]: WebdavClientStd::set_reconnect
     pub fn set_stream<S: Read + Write + Send + 'static>(&mut self, stream: S) {
         self.stream = Box::new(stream);
+        self.reconnect = None;
+    }
+
+    /// Sets how to open a fresh connection to this client's server.
+    ///
+    /// A server may close the connection after any response (`Connection:
+    /// close`, an idle keep-alive timing out), and the next request then meets
+    /// a closed stream before the server read a byte of it. With a way to
+    /// reconnect, the client opens a fresh connection and resends that
+    /// request, once; without one it surfaces the I/O error. [`connect`] sets
+    /// it to the URL and options it connected with.
+    ///
+    /// [`connect`]: WebdavClientStd::connect
+    pub fn set_reconnect(&mut self, reconnect: WebdavReconnect) {
+        self.reconnect = Some(reconnect);
     }
 
     /// Returns the active authentication scheme.
@@ -450,13 +459,17 @@ impl WebdavClientStd {
     {
         let mut buf = [0u8; READ_BUFFER_SIZE];
         let mut arg: Option<&[u8]> = None;
+        let mut exchange = Exchange::default();
 
         let ret = loop {
             match coroutine.resume(arg.take()) {
                 WebdavCoroutineState::Complete(ret) => break ret,
-                WebdavCoroutineState::Yielded(yielded) => {
-                    let n = pump(&mut *self.stream, &mut buf, yielded)?;
-                    arg = n.map(|n| &buf[..n]);
+                WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
+                    self.write_request(&mut exchange, &bytes)?;
+                }
+                WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => {
+                    let n = self.read_response(&mut exchange, &mut buf)?;
+                    arg = Some(&buf[..n]);
                 }
             }
         };
@@ -481,17 +494,18 @@ impl WebdavClientStd {
     ) -> Result<Option<Url>, WebdavClientStdError> {
         let mut buf = [0u8; READ_BUFFER_SIZE];
         let mut arg: Option<&[u8]> = None;
+        let mut exchange = Exchange::default();
 
         loop {
             match coroutine.resume(arg.take()) {
                 WebdavCoroutineState::Complete(Ok(url)) => return Ok(url),
                 WebdavCoroutineState::Complete(Err(err)) => return Err(err.into()),
                 WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRead) => {
-                    let n = self.stream.read(&mut buf)?;
+                    let n = self.read_response(&mut exchange, &mut buf)?;
                     arg = Some(&buf[..n]);
                 }
                 WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsWrite(bytes)) => {
-                    self.stream.write_all(&bytes)?;
+                    self.write_request(&mut exchange, &bytes)?;
                     arg = None;
                 }
                 WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRedirect {
@@ -502,6 +516,102 @@ impl WebdavClientStd {
             }
         }
     }
+
+    /// Writes `bytes` of the request in flight, resending the whole request on
+    /// a fresh connection when the server closed this one.
+    fn write_request(&mut self, exchange: &mut Exchange, bytes: &[u8]) -> io::Result<()> {
+        // NOTE: a write after a response began is the next request.
+        if exchange.answered {
+            *exchange = Exchange::default();
+        }
+        exchange.sent.extend_from_slice(bytes);
+
+        match self.stream.write_all(bytes) {
+            Err(err) if is_closed(&err) && self.resend(exchange)? => Ok(()),
+            res => res,
+        }
+    }
+
+    /// Reads a chunk of the response into `buf`, resending the request on a
+    /// fresh connection when the server closed this one before answering.
+    fn read_response(&mut self, exchange: &mut Exchange, buf: &mut [u8]) -> io::Result<usize> {
+        let n = match self.stream.read(buf) {
+            Ok(0) if !exchange.answered && self.resend(exchange)? => self.stream.read(buf)?,
+            Err(err) if !exchange.answered && is_closed(&err) && self.resend(exchange)? => {
+                self.stream.read(buf)?
+            }
+            res => res?,
+        };
+
+        if n > 0 {
+            exchange.answered = true;
+        }
+
+        Ok(n)
+    }
+
+    /// Opens a fresh connection and writes the request in flight on it, once
+    /// per request. Returns whether it did: a client with no way to reconnect,
+    /// or one that already resent this request, surfaces the error instead.
+    fn resend(&mut self, exchange: &mut Exchange) -> io::Result<bool> {
+        if exchange.resent {
+            return Ok(false);
+        }
+        let Some(reconnect) = self.reconnect.as_mut() else {
+            return Ok(false);
+        };
+
+        debug!("WebDAV server closed the connection, resending on a fresh one");
+        self.stream = reconnect()?;
+        exchange.resent = true;
+        self.stream.write_all(&exchange.sent)?;
+        Ok(true)
+    }
+}
+
+/// Opens a connection to `url`'s host through `opts.proxy`, running the TLS
+/// handshake when the scheme is `https`. `http` goes through plain TCP.
+#[cfg(any(
+    feature = "rustls-aws",
+    feature = "rustls-ring",
+    feature = "native-tls"
+))]
+fn open(url: &Url, opts: &WebdavClientStdConnectOptions) -> Result<Stream, WebdavClientStdError> {
+    let WebdavClientStdConnectOptions { tls, proxy } = opts.clone();
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| WebdavClientStdError::UrlMissingHost(url.to_string()))?;
+
+    let stream = match url.scheme() {
+        "http" => {
+            let port = url.port().unwrap_or(80);
+            let opts = TcpConnectOptions {
+                proxy,
+                ..Default::default()
+            };
+
+            Stream::connect_tcp(host, port, opts)?
+        }
+        "https" => {
+            let port = url.port().unwrap_or(443);
+            let opts = TlsConnectOptions {
+                tls,
+                proxy,
+                ..Default::default()
+            };
+
+            Stream::connect_tls(host, port, opts)?
+        }
+        scheme => {
+            return Err(WebdavClientStdError::UrlUnsupportedScheme(
+                url.to_string(),
+                scheme.to_string(),
+            ));
+        }
+    };
+
+    Ok(stream)
 }
 
 /// Discovery, the entry point of every other method (RFC 5397).
@@ -767,6 +877,29 @@ impl WebdavClientStd {
             &path,
             id,
             ical,
+            if_match,
+        );
+        self.run(coroutine)
+    }
+
+    /// Moves a calendar item into `target_calendar_id` with `MOVE`, keeping
+    /// its id, gated on `if_match` when given (see [`CaldavItemMove`]).
+    pub fn move_item(
+        &mut self,
+        calendar_id: &str,
+        item_id: &str,
+        target_calendar_id: &str,
+        if_match: Option<&str>,
+    ) -> Result<CaldavItemMoveOk, WebdavClientStdError> {
+        let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        let target = calendar_path(self.calendar_home_set.as_ref(), target_calendar_id)?;
+        let coroutine = CaldavItemMove::new(
+            &self.base_url,
+            &self.auth,
+            &self.user_agent,
+            &path,
+            item_id,
+            &target,
             if_match,
         );
         self.run(coroutine)
@@ -1047,27 +1180,32 @@ impl WebdavClientStd {
     }
 }
 
-/// Runs one standard I/O yield against the stream: writes the bytes, or reads a
-/// chunk into `buf` and returns its length.
-fn pump(
-    stream: &mut dyn WebdavStream,
-    buf: &mut [u8],
-    yielded: WebdavYield,
-) -> Result<Option<usize>, io::Error> {
-    match yielded {
-        WebdavYield::WantsRead => Ok(Some(stream.read(buf)?)),
-        WebdavYield::WantsWrite(bytes) => {
-            stream.write_all(&bytes)?;
-            Ok(None)
-        }
-    }
+/// The request in flight on the client's stream: its bytes so far, whether a
+/// byte of its response arrived, and whether it was already resent.
+#[derive(Default)]
+struct Exchange {
+    sent: Vec<u8>,
+    answered: bool,
+    resent: bool,
+}
+
+/// Whether `err` says the peer closed the connection, which a server does
+/// between two requests without having read the second.
+fn is_closed(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::UnexpectedEof
+    )
 }
 
 fn calendar_path(home: Option<&Url>, calendar_id: &str) -> Result<String, WebdavClientStdError> {
     let home = home.ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
-    let base = home.path().trim_end_matches('/');
-    let id = calendar_id.trim_matches('/');
-    Ok(format!("{base}/{id}"))
+    let path = collection_path(home.path(), calendar_id);
+    Ok(path.trim_end_matches('/').to_string())
 }
 
 fn addressbook_path(
@@ -1075,9 +1213,8 @@ fn addressbook_path(
     addressbook_id: &str,
 ) -> Result<String, WebdavClientStdError> {
     let home = home.ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
-    let base = home.path().trim_end_matches('/');
-    let id = addressbook_id.trim_matches('/');
-    Ok(format!("{base}/{id}"))
+    let path = collection_path(home.path(), addressbook_id);
+    Ok(path.trim_end_matches('/').to_string())
 }
 
 /// Marker for everything the client can run against; auto-implemented for any

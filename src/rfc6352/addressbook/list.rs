@@ -46,7 +46,10 @@
 //! println!("{} addressbooks", addressbooks.len());
 //! ```
 
-use alloc::{collections::BTreeSet, string::ToString};
+use alloc::{
+    collections::BTreeSet,
+    string::{String, ToString},
+};
 
 use log::trace;
 use url::Url;
@@ -66,6 +69,7 @@ use crate::{
 /// Coroutine that lists addressbooks under `home_set_path`.
 #[derive(Debug)]
 pub struct CarddavAddressbookList {
+    home_set_path: String,
     state: State,
 }
 
@@ -75,6 +79,7 @@ impl CarddavAddressbookList {
         let propfind =
             WebdavPropfind::new(base_url, auth, user_agent, home_set_path, 1, LIST_PROPS);
         Self {
+            home_set_path: home_set_path.to_string(),
             state: State::WebdavPropfind(propfind),
         }
     }
@@ -92,7 +97,7 @@ impl WebdavCoroutine for CarddavAddressbookList {
                 let addressbooks = multistatus
                     .responses
                     .iter()
-                    .filter_map(from_entry)
+                    .filter_map(|entry| from_entry(entry, &self.home_set_path))
                     .collect();
                 WebdavCoroutineState::Complete(Ok(addressbooks))
             }
@@ -100,13 +105,13 @@ impl WebdavCoroutine for CarddavAddressbookList {
     }
 }
 
-fn from_entry(entry: &WebdavResponseEntry) -> Option<CarddavAddressbook> {
+fn from_entry(entry: &WebdavResponseEntry, home_set_path: &str) -> Option<CarddavAddressbook> {
     if !entry.has_resource_type(RESOURCETYPE, ADDRESSBOOK) {
         trace!("skip non-addressbook response {}", entry.href);
         return None;
     }
 
-    let id = entry.id();
+    let id = entry.collection_id(home_set_path);
     if id.is_empty() {
         return None;
     }
@@ -114,7 +119,7 @@ fn from_entry(entry: &WebdavResponseEntry) -> Option<CarddavAddressbook> {
     trace_unrecognized(entry, LIST_PROPS);
 
     Some(CarddavAddressbook {
-        id: id.to_string(),
+        id,
         display_name: entry.text(DISPLAYNAME).map(ToString::to_string),
         description: entry.text(ADDRESSBOOK_DESCRIPTION).map(ToString::to_string),
         color: entry.text(ADDRESSBOOK_COLOR).map(ToString::to_string),

@@ -11,6 +11,7 @@ pub mod create;
 pub mod delete;
 pub mod enumerate;
 pub mod list;
+pub mod r#move;
 pub mod multiget;
 pub mod read;
 pub mod update;
