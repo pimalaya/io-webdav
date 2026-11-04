@@ -65,10 +65,7 @@ fn main() {
 fn run(variant: &str, kind: Kind, body: &[u8]) {
     let xml = || core::str::from_utf8(body).unwrap();
     match variant {
-        "pre" => {
-            let copy = black_box(body.to_vec());
-            black_box(core::str::from_utf8(&copy).is_ok());
-        }
+        "pre" => drop(black_box(core::str::from_utf8(black_box(body)))),
         "parse-old" => drop(black_box(io_webdav_old::rfc4918::parse_multistatus(xml()))),
         "parse-new" => drop(black_box(io_webdav::rfc4918::parse_multistatus(xml()))),
         "map-old" => drop(black_box(old_map(kind, xml()))),

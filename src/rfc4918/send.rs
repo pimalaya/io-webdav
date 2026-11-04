@@ -49,6 +49,8 @@
 //! println!("{} bytes, keep-alive: {}", ok.body.len(), ok.keep_alive);
 //! ```
 
+use core::mem;
+
 use alloc::{string::String, vec::Vec};
 
 use io_http::{
@@ -71,7 +73,8 @@ use crate::{
 /// Successful terminal output of a WebDAV send coroutine.
 #[derive(Debug)]
 pub struct WebdavSendOk<T> {
-    /// The HTTP response head (status line and headers).
+    /// The HTTP response head (status line and headers), its body moved to
+    /// [`body`](Self::body).
     pub response: HttpResponse,
     /// Whether the server allows reusing the connection.
     pub keep_alive: bool,
@@ -193,7 +196,7 @@ impl WebdavCoroutine for WebdavSendRaw {
                 };
 
                 let HttpSendOutput {
-                    response,
+                    mut response,
                     keep_alive,
                     ..
                 } = out;
@@ -207,7 +210,7 @@ impl WebdavCoroutine for WebdavSendRaw {
                     return WebdavCoroutineState::Complete(Err(err));
                 }
 
-                let body = response.body.clone();
+                let body = mem::take(&mut response.body);
                 WebdavCoroutineState::Complete(Ok(WebdavSendOk {
                     response,
                     keep_alive,

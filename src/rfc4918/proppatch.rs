@@ -53,7 +53,7 @@
 
 use core::mem;
 
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 
 use log::trace;
 use url::Url;
@@ -61,8 +61,8 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, WebdavMultistatus, WebdavPropValue, WebdavProperty, parse_multistatus,
-        proppatch_body,
+        WebdavAuth, WebdavMultistatus, WebdavPropValue, WebdavProperty, body_text,
+        parse_multistatus, proppatch_body,
         request::WebdavRequest,
         send::{WebdavSendError, WebdavSendRaw},
     },
@@ -124,7 +124,7 @@ impl WebdavCoroutine for WebdavProppatch {
         match &mut self.state {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
-                let xml = String::from_utf8_lossy(&ok.body);
+                let xml = body_text(&ok.body);
                 trace!("response body: {xml}");
                 let multistatus = match parse_multistatus(&xml) {
                     Ok(multistatus) => multistatus,

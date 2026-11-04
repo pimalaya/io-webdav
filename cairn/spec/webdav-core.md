@@ -9,7 +9,7 @@ status: current
 The RFC 4918 layer: the HTTP methods WebDAV adds, the property model every higher layer speaks, the multistatus parser, and the authentication modes. CalDAV and CardDAV are built entirely on top of it.
 
 ### Requirement: Methods
-The crate SHALL provide one coroutine per WebDAV method: PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, DELETE, GET, PUT, OPTIONS and REPORT, plus the low-level send coroutine they all build on. PROPFIND and REPORT SHALL parse their multistatus into the representation the caller picks, vocabulary-agnostic (Multistatus parsing) or typed (Typed multistatus).
+The crate SHALL provide one coroutine per WebDAV method: PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, DELETE, GET, PUT, OPTIONS and REPORT, plus the low-level send coroutine they all build on. The send coroutine SHALL hand a successful response's body over once, apart from the response head, so no body is held twice. PROPFIND and REPORT SHALL parse their multistatus into the representation the caller picks, vocabulary-agnostic (Multistatus parsing) or typed (Typed multistatus).
 
 ### Requirement: Property model
 A property SHALL be identified by a namespace (URI plus preferred prefix) and a local name. Each RFC layer SHALL own the namespaces and property constants it speaks. The body generators SHALL emit XML from those values rather than from hard-coded templates, so no central namespace table exists.

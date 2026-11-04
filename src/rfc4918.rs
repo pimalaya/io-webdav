@@ -33,7 +33,7 @@ pub mod send;
 pub mod typed;
 pub(crate) mod xml;
 
-use core::{fmt, mem};
+use core::{fmt, mem, str};
 
 use alloc::{
     borrow::Cow,
@@ -261,7 +261,7 @@ fn decoded(path: &str) -> Vec<u8> {
         let hex = bytes
             .get(i + 1..i + 3)
             .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit))
-            .and_then(|hex| u8::from_str_radix(core::str::from_utf8(hex).ok()?, 16).ok());
+            .and_then(|hex| u8::from_str_radix(str::from_utf8(hex).ok()?, 16).ok());
         match (bytes[i], hex) {
             (b'%', Some(byte)) => {
                 out.push(byte);
@@ -1012,6 +1012,18 @@ pub(crate) fn status_code(text: &str) -> Option<u16> {
     text.split_whitespace().nth(1)?.parse().ok()
 }
 
+/// Returns a response body as text, borrowed when it is UTF-8, each invalid
+/// sequence replaced otherwise.
+///
+/// `str::from_utf8` checks ASCII a word at a time, where
+/// `String::from_utf8_lossy` reads byte by byte.
+pub(crate) fn body_text(body: &[u8]) -> Cow<'_, str> {
+    match str::from_utf8(body) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(_) => String::from_utf8_lossy(body),
+    }
+}
+
 /// Maximum length of a summarised error body, in characters.
 const SUMMARY_LEN: usize = 200;
 
@@ -1107,7 +1119,7 @@ fn value_element(prop: WebdavProperty, value: &WebdavPropValue<'_>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use alloc::string::ToString;
+    use alloc::{borrow::Cow, string::ToString};
 
     use io_http::{rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic};
 
@@ -1218,6 +1230,16 @@ mod tests {
         assert!(xml.contains(
             "<C:supported-calendar-component-set><C:comp name=\"VEVENT\"/></C:supported-calendar-component-set>"
         ));
+    }
+
+    #[test]
+    fn body_text_borrows_utf8_and_replaces_invalid_sequences() {
+        let body = "<d:a>é</d:a>".as_bytes();
+        let Cow::Borrowed(text) = body_text(body) else {
+            panic!("UTF-8 body copied");
+        };
+        assert_eq!(text.as_ptr(), body.as_ptr());
+        assert_eq!(body_text(b"<a>\xff</a>"), "<a>\u{fffd}</a>");
     }
 
     #[test]

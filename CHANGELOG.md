@@ -18,9 +18,17 @@ All notable changes to this project are documented in this file. The format is b
 
 - **BREAKING** Changed `WebdavMultistatusParseError` to carry `InvalidProps`.
 
+- **BREAKING** Changed `WebdavSendRaw` and `WebdavFollowRedirects` to move the response body into `WebdavSendOk::body` rather than copy it.
+
+  `WebdavSendOk::response` keeps the status line and headers, its `body` left empty, so a body is no longer held twice.
+
 - Changed the multistatus parser to a scanner built for WebDAV bodies, replacing xmlparser.
 
   The output is unchanged and the parse runs 3.4 to 9 times faster, probing short spans with SSE2 or NEON compares; the CalDAV and CardDAV mappers read typed properties, 4 to 8.7 times faster end to end.
+
+- Changed PROPFIND, PROPPATCH, REPORT and the home-set lookups to check their body's UTF-8 a word at a time, replacing invalid sequences only when there are some.
+
+  The step before parsing drops from about 1 cycle per byte to 0.06.
 
 ## [0.6.0] - 2026-11-04
 

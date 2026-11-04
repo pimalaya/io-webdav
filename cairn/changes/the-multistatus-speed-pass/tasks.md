@@ -12,6 +12,6 @@ change: the-multistatus-speed-pass
 - [x] Scanner fast paths for short spans (tag end, whitespace runs, name end)
 - [x] Typed path allocations: `Children::seen` (attribute keys left, rare)
 - [x] Envelope string matching by length and first byte (byte-string matches, `same_name`)
-- [ ] Ask the user about the success-path body copy in src/rfc4918/send.rs (carried to the-multistatus-second-pass)
+- [x] Ask the user about the success-path body copy in src/rfc4918/send.rs (done in the-body-moved-out)
 - [x] After each lever: `check`, fuzzer, tests, clippy, fmt, cycle table; keep only measured wins
 - [x] Log the pass with its final table, and a handoff for the next one

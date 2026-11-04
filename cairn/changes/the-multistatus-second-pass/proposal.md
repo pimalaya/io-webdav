@@ -13,7 +13,7 @@ This is the handoff for the next session on io-webdav's multistatus speed, after
 
 ## State of the repository
 
-Nothing is committed since 39bb548 (0.6.0). The working tree holds three things in sequence, all uncommitted: the scanned multistatus (change the-scanned-multistatus), the first speed pass, and the `:name` attribute fix found during it. Commit, release and version bump are the user's.
+Three commits on master since 39bb548 (0.6.0), pushed on 2026-11-04: the scanned multistatus (change the-scanned-multistatus), the first speed pass with the `:name` attribute fix found during it, and the body moved out (change the-body-moved-out). 0.6.0 is still the last release; version bump and release are the user's.
 
 ## Where it stands
 
@@ -28,7 +28,7 @@ Cycles per byte on this machine (harness cycles.sh, O3, best of three) for 0.6.0
 | sync5000 | 25.29 | 4.09 | 27.00 | 4.15 |
 | propfind30 | 24.42 | 7.22 | 26.66 | 6.27 |
 
-The body copy and UTF-8 check every coroutine does before parsing cost 0.13 c/B, about 10% of a typed LF multiget now.
+Before parsing, the coroutines now only check the body's UTF-8, 0.06 c/B: change the-body-moved-out dropped the body copy and the byte-by-byte lossy check, which cost about 1 c/B and which the tables of the first pass did not measure. Its log has the path after the exchange.
 
 ## Where the time goes
 
@@ -46,12 +46,11 @@ The mapper column is the harness's copy of the crate's mappers (`id()`, unquoted
 
 ## Levers, ranked
 
-1. **The success-path body copy** (src/rfc4918/send.rs, `response.body.clone()`). Half of the 0.13 c/B before parsing; moving the body out leaves `WebdavSendOk::response.body` empty, a visible change to the send coroutine's output. The user decides.
-2. **The response push** in `parse_multistatus_as`: the `WebdavResponseOf` is built on the stack, its 4-byte `status` store then read inside a 16-byte load when it moves into the list, a store-forwarding stall worth about 6% of sync at O3. Reserving first and pushing one response late did not help; a fix needs the struct built where it lands.
-3. **Allocations.** Per response: the href, every string property, the list's growth; the mappers then copy the id and the unquoted etag. Trimming the etag in place measured under 1% (the `drain` costs what the allocation did). Worth measuring on an allocator like scudo before judging.
-4. **Field matching in serde derive.** Under fat LTO, `match value { "getetag" => .. }` in derived field visitors compiles to `bcmp` calls: about 5% of sync and 4% of PROPFIND. The crate could hand identifiers to `visit_borrowed_bytes`, which derived visitors match inline, but hand-written identifier visitors without `visit_bytes` would then fail: not done.
-5. **Decoder copies.** Each run between rewritten bytes is one `push_str`, a memcpy call: 7 to 8% of CRLF and `&#13;` rows at `opt-level = "s"`. Writing 16-byte blocks into the string's spare capacity would remove them, at the cost of an `unsafe` beyond the SIMD intrinsics: a question for the user first.
-6. **The untyped parser on markup** (17% faster on sync at `opt-level = "s"` against 27% for the typed path): it keeps `Vec<OpenElement>` pushes and a `pop_if` closure; it reads small bodies only (PROPPATCH, principal, home sets), so low priority.
+1. **The response push** in `parse_multistatus_as`: the `WebdavResponseOf` is built on the stack, its 4-byte `status` store then read inside a 16-byte load when it moves into the list, a store-forwarding stall worth about 6% of sync at O3. Reserving first and pushing one response late did not help; a fix needs the struct built where it lands.
+2. **Allocations.** Per response: the href, every string property, the list's growth; the mappers then copy the id and the unquoted etag. Trimming the etag in place measured under 1% (the `drain` costs what the allocation did). Worth measuring on an allocator like scudo before judging.
+3. **Field matching in serde derive.** Under fat LTO, `match value { "getetag" => .. }` in derived field visitors compiles to `bcmp` calls: about 5% of sync and 4% of PROPFIND. The crate could hand identifiers to `visit_borrowed_bytes`, which derived visitors match inline, but hand-written identifier visitors without `visit_bytes` would then fail: not done.
+4. **Decoder copies.** Each run between rewritten bytes is one `push_str`, a memcpy call: 7 to 8% of CRLF and `&#13;` rows at `opt-level = "s"`. Writing 16-byte blocks into the string's spare capacity would remove them, at the cost of an `unsafe` beyond the SIMD intrinsics: a question for the user first.
+5. **The untyped parser on markup** (17% faster on sync at `opt-level = "s"` against 27% for the typed path): it keeps `Vec<OpenElement>` pushes and a `pop_if` closure; it reads small bodies only (PROPPATCH, principal, home sets), so low priority.
 
 Measured not worth it: an AVX2 or AVX-512 path through simd-cpu (a `-C target-cpu=native` build slowed CRLF by 8% and sync by 7%), block decoders writing a byte buffer, and portable mask folds left to the vectorizer (not vectorized inside loops, and unrolled poorly at `opt-level = "s"`).
 

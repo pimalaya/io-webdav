@@ -517,6 +517,7 @@ fn send_raw_returns_the_response_body() {
     let ok = ok.unwrap();
     assert!(request.starts_with("get /dav/file.txt http/1.1\r\n"));
     assert_eq!(ok.body, b"hello");
+    assert!(ok.response.body.is_empty());
     assert_eq!(*ok.response.status, 200);
     assert!(ok.keep_alive);
 }
@@ -563,7 +564,9 @@ fn follow_redirects_returns_the_success_body() {
     let mut send = WebdavFollowRedirects::new(request);
 
     let (_, ret) = expect_redirect_exchange(&mut send, &http_response("200 OK", &[], "body"));
-    assert_eq!(ret.unwrap().body, b"body");
+    let ok = ret.unwrap();
+    assert_eq!(ok.body, b"body");
+    assert!(ok.response.body.is_empty());
 }
 
 #[test]

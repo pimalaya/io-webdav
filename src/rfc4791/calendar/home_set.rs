@@ -50,8 +50,6 @@
 //! println!("{home_set:?}");
 //! ```
 
-use alloc::string::String;
-
 use log::trace;
 use url::Url;
 
@@ -59,7 +57,7 @@ use crate::{
     coroutine::*,
     rfc4791::calendar::CALENDAR_HOME_SET,
     rfc4918::{
-        WebdavAuth,
+        WebdavAuth, body_text,
         coroutine::WebdavRedirectYield,
         follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
         parse_multistatus, propfind_body,
@@ -102,7 +100,7 @@ impl WebdavCoroutine for CaldavCalendarHomeSet {
         match &mut self.state {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
-                let xml = String::from_utf8_lossy(&ok.body);
+                let xml = body_text(&ok.body);
                 let multistatus = match parse_multistatus(&xml) {
                     Ok(multistatus) => multistatus,
                     Err(err) => return WebdavCoroutineState::Complete(Err(err.into())),

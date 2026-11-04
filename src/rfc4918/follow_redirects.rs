@@ -63,6 +63,8 @@
 //! println!("{} bytes", ok.body.len());
 //! ```
 
+use core::mem;
+
 use alloc::{string::String, vec::Vec};
 
 use io_http::{
@@ -137,7 +139,7 @@ impl WebdavCoroutine for WebdavFollowRedirects {
                 };
 
                 let HttpSendOutput {
-                    response,
+                    mut response,
                     keep_alive,
                     ..
                 } = out;
@@ -151,7 +153,7 @@ impl WebdavCoroutine for WebdavFollowRedirects {
                     return WebdavCoroutineState::Complete(Err(err));
                 }
 
-                let body = response.body.clone();
+                let body = mem::take(&mut response.body);
                 WebdavCoroutineState::Complete(Ok(WebdavSendOk {
                     response,
                     keep_alive,

@@ -56,7 +56,7 @@
 
 use core::marker::PhantomData;
 
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 
 use log::{debug, trace};
 use url::Url;
@@ -64,7 +64,7 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, WebdavMultistatus, WebdavMultistatusParse,
+        WebdavAuth, WebdavMultistatus, WebdavMultistatusParse, body_text,
         request::WebdavRequest,
         send::{WebdavSendError, WebdavSendRaw},
     },
@@ -117,7 +117,7 @@ impl<M: WebdavMultistatusParse> WebdavCoroutine for WebdavReport<M> {
                     WebdavCoroutineState::Complete(Ok(ok)) => ok,
                 };
 
-                let xml = String::from_utf8_lossy(&ok.body);
+                let xml = body_text(&ok.body);
                 trace!("received multistatus body {xml}");
                 WebdavCoroutineState::Complete(M::parse(&xml).map_err(Into::into))
             }

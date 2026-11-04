@@ -64,15 +64,14 @@
 
 use core::marker::PhantomData;
 
-use alloc::string::String;
-
 use log::trace;
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, WebdavMultistatus, WebdavMultistatusParse, WebdavProperty, propfind_body,
+        WebdavAuth, WebdavMultistatus, WebdavMultistatusParse, WebdavProperty, body_text,
+        propfind_body,
         request::WebdavRequest,
         send::{WebdavSendError, WebdavSendRaw},
     },
@@ -117,7 +116,7 @@ impl<M: WebdavMultistatusParse> WebdavCoroutine for WebdavPropfind<M> {
         match &mut self.state {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
-                let xml = String::from_utf8_lossy(&ok.body);
+                let xml = body_text(&ok.body);
                 trace!("received multistatus body {xml}");
                 WebdavCoroutineState::Complete(M::parse(&xml).map_err(Into::into))
             }
