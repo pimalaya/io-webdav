@@ -36,12 +36,10 @@
 //!
 //! Two modules span the RFC modules and therefore live at the crate root.
 //! [`coroutine`] defines the coroutine contract every state machine
-//! implements.
-//!
-//! The optional [`client`] module (`client` feature) is the std-blocking pump:
-//! a light client wrapping any stream you opened yourself, or a full client
-//! opening the TCP/TLS connection itself when one of the TLS features is
-//! enabled.
+//! implements. The optional [`client`] module (`client` feature) is the
+//! std-blocking pump: a light client wrapping any stream you opened yourself,
+//! or a full client opening the TCP/TLS connection itself when one of the TLS
+//! features is enabled.
 //!
 //! ## The coroutine contract
 //!
