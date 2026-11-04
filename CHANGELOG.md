@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-04
+
 ### Added
 
 - Added `rfc4918::typed::parse_multistatus_as` and `WebdavMultistatusOf`.
@@ -20,15 +22,11 @@ All notable changes to this project are documented in this file. The format is b
 
 - **BREAKING** Changed `WebdavSendRaw` and `WebdavFollowRedirects` to move the response body into `WebdavSendOk::body` rather than copy it.
 
-  `WebdavSendOk::response` keeps the status line and headers, its `body` left empty, so a body is no longer held twice.
+  `WebdavSendOk::response` keeps the status line and headers, its `body` left empty.
 
 - Changed the multistatus parser to a scanner built for WebDAV bodies, replacing xmlparser.
 
-  The output is unchanged and the parse runs 3.4 to 9 times faster, probing short spans with SSE2 or NEON compares; the CalDAV and CardDAV mappers read typed properties, 4 to 8.7 times faster end to end.
-
-- Changed PROPFIND, PROPPATCH, REPORT and the home-set lookups to check their body's UTF-8 a word at a time, replacing invalid sequences only when there are some.
-
-  The step before parsing drops from about 1 cycle per byte to 0.06.
+  The output is unchanged and the parse runs 3.4 to 9 times faster. Past the HTTP exchange, a CalDAV or CardDAV listing, multiget or sync spends 4.4 to 9 times less per body.
 
 ## [0.6.0] - 2026-11-04
 
@@ -308,7 +306,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.6.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.7.0..HEAD
+[0.7.0]: https://github.com/pimalaya/io-webdav/compare/v0.6.0..v0.7.0
 [0.6.0]: https://github.com/pimalaya/io-webdav/compare/v0.5.1..v0.6.0
 [0.5.1]: https://github.com/pimalaya/io-webdav/compare/v0.5.0..v0.5.1
 [0.5.0]: https://github.com/pimalaya/io-webdav/compare/v0.4.1..v0.5.0
