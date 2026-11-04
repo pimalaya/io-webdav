@@ -22,15 +22,13 @@ This library is composed of 3 feature-gated layers:
 
 ## Features
 
-- **CalDAV**: calendar collections and calendar object resources, with discovery of the calendar home set.
+- **I/O-free coroutines**: no_std state machines, usable from any blocking or async runtime.
+- **CalDAV**: calendar collections and calendar object resources, items moved between calendars, with discovery of the calendar home set.
 - **CardDAV**: address book collections and contact cards, with discovery of the address book home set.
 - **Discovery**: current-user-principal lookup and home-set resolution, surfacing redirects to the caller instead of following them.
 - **Incremental sync**: collection synchronization with sync tokens, batch multiget and ETag-only enumeration for change detection, on both calendars and address books.
 - **Authentication**: HTTP Basic and Bearer.
-- Full standard, blocking client with **TLS** support:
-  - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature, enabled by default)
-  - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
-  - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
+- **Full client**: blocking client with TLS via Rustls (`rustls-ring` default, `rustls-aws`) or Native TLS (`native-tls`), reconnecting when the server closed the connection.
 
 > [!TIP]
 > I/O WebDAV is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate the client layers. The default feature set is declared in [Cargo.toml](./Cargo.toml) or on [docs.rs](https://docs.rs/crate/io-webdav/latest/features).

@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file. The format is b
 
 - **BREAKING** Changed the id of a listed calendar or address book outside the home set: it is now the href's path, starting with a slash, rather than its last segment, and an id starting with a slash addresses that path. A collection directly under the home set keeps its id. Google lists every calendar as `/caldav/v2/<calendar>/events/`, so every calendar was named `events` and every verb reached the primary calendar.
 
+- **BREAKING** Bumped io-http to 0.6. The coroutines take and yield its types, so a consumer bumps in step for a single version to resolve.
+- Changed the minimum Rust version to 1.89.
+
 - **BREAKING** Changed `rfc4918::parse_multistatus` to return `Result<WebdavMultistatus, WebdavMultistatusParseError>`, failing on elements nested deeper than `MULTISTATUS_MAX_DEPTH` (64). `WebdavSendError` and `WebdavFollowRedirectsError` gained the matching `Multistatus` variant.
 
 ### Fixed
