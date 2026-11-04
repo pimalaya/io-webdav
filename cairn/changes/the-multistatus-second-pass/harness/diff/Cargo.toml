@@ -1,0 +1,17 @@
+[package]
+name = "wddiff"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+io-webdav = { path = "../../../../..", default-features = false }
+# NOTE: the baseline, snapshotted by base.sh.
+io-webdav-base = { path = "../../../../../target/wdxml-ab/base-crate", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+
+[profile.release]
+debug-assertions = true
+overflow-checks = true

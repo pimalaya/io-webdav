@@ -25,6 +25,7 @@ use core::{cell::Cell, fmt, mem};
 
 use alloc::{
     borrow::Cow,
+    collections::BTreeSet,
     string::{String, ToString},
     vec::Vec,
 };
@@ -43,7 +44,7 @@ use crate::rfc4918::{
     MULTISTATUS_MAX_DEPTH, WebdavMultistatusParse, WebdavMultistatusParseError, WebdavPropFailure,
     sealed::Sealed,
     status_code,
-    xml::{XmlAttrs, XmlEvent, XmlScanner, decode_attr, decode_text, local},
+    xml::{XmlAttrs, XmlEvent, XmlScanner, decode_attr, decode_text, local, same_name},
 };
 
 /// Parsed `multistatus` body (RFC 4918 §14.16) whose responses carry typed
@@ -98,153 +99,187 @@ impl<P: DeserializeOwned> WebdavMultistatusParse for WebdavMultistatusOf<P> {
 pub fn parse_multistatus_as<'a, P: Deserialize<'a>>(
     xml: &'a str,
 ) -> Result<WebdavMultistatusOf<P>, WebdavMultistatusParseError> {
-    let mut out = WebdavMultistatusOf {
-        responses: Vec::new(),
-        sync_token: None,
-    };
-    let mut frames: Vec<(Frame, &str)> = Vec::with_capacity(16);
-    let mut nodes: Vec<Node<'a>> = Vec::new();
-    let mut text: Cow<'a, str> = Cow::Borrowed("");
-    let mut href: Option<String> = None;
-    let mut status = None;
-    let mut failures = Vec::new();
-    let mut propstat_status = None;
-    let mut propstat_root = NONE;
+    let mut envelope = Envelope::new(xml);
+    let mut responses = Vec::new();
 
-    for event in XmlScanner::new(xml) {
-        match event {
-            XmlEvent::Start {
-                local,
-                attrs,
-                empty,
-            } => {
-                let frame = match frames.last().map(|(frame, _)| frame) {
-                    None if local == "multistatus" => Frame::Multistatus,
-                    Some(Frame::Multistatus) => match local {
-                        "response" => Frame::Response,
-                        "sync-token" => Frame::Text(Field::SyncToken),
-                        _ => Frame::Skip,
-                    },
-                    Some(Frame::Response) => match local {
-                        "href" => Frame::Text(Field::Href),
-                        "status" => Frame::Text(Field::Status),
-                        "propstat" => Frame::Propstat,
-                        _ => Frame::Skip,
-                    },
-                    Some(Frame::Propstat) => match local {
-                        "status" => Frame::Text(Field::PropstatStatus),
-                        "prop" => Frame::Node(propstat_root),
-                        _ => Frame::Skip,
-                    },
-                    Some(&Frame::Node(parent)) => {
-                        Frame::Node(push_node(&mut nodes, parent, local, attrs))
-                    }
-                    _ => Frame::Skip,
-                };
-
-                match frame {
-                    Frame::Response => {
-                        nodes.clear();
-                        nodes.push(Node::new("prop", ""));
-                        href = None;
-                        status = None;
-                        failures.clear();
-                    }
-                    Frame::Propstat => {
-                        propstat_status = None;
-                        propstat_root = nodes.len() as u32;
-                        nodes.push(Node::new("prop", ""));
-                    }
-                    Frame::Text(_) => text = Cow::Borrowed(""),
-                    _ => {}
-                }
-
-                if !empty {
-                    if frames.len() == MULTISTATUS_MAX_DEPTH {
-                        let err = WebdavMultistatusParseError::TooDeep(MULTISTATUS_MAX_DEPTH);
-                        return Err(err);
-                    }
-                    frames.push((frame, local));
-                }
+    while envelope.next_response()? {
+        let href = envelope.href.take().unwrap_or_default();
+        let root = NodeDe {
+            nodes: envelope.nodes.as_slice(),
+            i: 0,
+        };
+        let props = match P::deserialize(root) {
+            Ok(props) => props,
+            Err(DeError(reason)) => {
+                return Err(WebdavMultistatusParseError::InvalidProps { href, reason });
             }
-            XmlEvent::Text { raw, clean } => match frames.last().map(|(frame, _)| frame) {
-                Some(Frame::Text(_)) => push_text(&mut text, raw, clean),
-                Some(&Frame::Node(i)) if i != propstat_root => {
-                    let mut own = nodes[i as usize].text.take();
-                    push_text(&mut own, raw, clean);
-                    nodes[i as usize].text.set(own);
-                }
-                _ => {}
-            },
-            XmlEvent::Cdata(raw) => match frames.last().map(|(frame, _)| frame) {
-                Some(Frame::Text(_)) => push_text(&mut text, raw, true),
-                Some(&Frame::Node(i)) if i != propstat_root => {
-                    let mut own = nodes[i as usize].text.take();
-                    push_text(&mut own, raw, true);
-                    nodes[i as usize].text.set(own);
-                }
-                _ => {}
-            },
-            XmlEvent::End(close) => {
-                let Some((frame, _)) = frames.pop_if(|(_, local)| *local == close) else {
-                    break;
-                };
+        };
 
-                match frame {
-                    Frame::Text(Field::Href) if href.is_none() => {
-                        href = Some(text.trim().to_string());
-                    }
-                    Frame::Text(Field::Status) => status = status_code(&text),
-                    Frame::Text(Field::PropstatStatus) => propstat_status = status_code(&text),
-                    Frame::Text(Field::SyncToken) => {
-                        let token = text.trim();
-                        if !token.is_empty() {
-                            out.sync_token = Some(token.to_string());
-                        }
-                    }
-                    Frame::Propstat => match propstat_status {
-                        Some(code) if code / 100 == 2 => splice(&mut nodes, 0, propstat_root),
-                        Some(code) => {
-                            let mut child = nodes[propstat_root as usize].first;
-                            while child != NONE {
-                                failures.push(WebdavPropFailure {
-                                    status: code,
-                                    property: nodes[child as usize].local.to_string(),
-                                });
-                                child = nodes[child as usize].next;
-                            }
-                        }
-                        None => {}
-                    },
-                    Frame::Response => {
-                        let href = href.take().unwrap_or_default();
-                        let root = NodeDe {
-                            nodes: &nodes,
-                            i: 0,
-                        };
-                        let props = match P::deserialize(root) {
-                            Ok(props) => props,
-                            Err(DeError(reason)) => {
-                                let err =
-                                    WebdavMultistatusParseError::InvalidProps { href, reason };
-                                return Err(err);
-                            }
-                        };
+        responses.push(WebdavResponseOf {
+            href,
+            status: envelope.status.take(),
+            props,
+            failures: mem::take(&mut envelope.failures),
+        });
+    }
 
-                        out.responses.push(WebdavResponseOf {
-                            href,
-                            status: status.take(),
-                            props,
-                            failures: mem::take(&mut failures),
-                        });
-                    }
-                    _ => {}
-                }
-            }
+    Ok(WebdavMultistatusOf {
+        responses,
+        sync_token: envelope.sync_token,
+    })
+}
+
+/// A `multistatus` body walked response by response, the generic part of the
+/// parse left to the caller.
+struct Envelope<'a> {
+    events: XmlScanner<'a>,
+    frames: Vec<(Frame, &'a str)>,
+    /// The property elements of the response read last.
+    nodes: Nodes<'a>,
+    text: Cow<'a, str>,
+    href: Option<String>,
+    status: Option<u16>,
+    failures: Vec<WebdavPropFailure>,
+    propstat_status: Option<u16>,
+    propstat_root: u32,
+    sync_token: Option<String>,
+}
+
+impl<'a> Envelope<'a> {
+    fn new(xml: &'a str) -> Self {
+        Self {
+            events: XmlScanner::new(xml),
+            frames: Vec::with_capacity(16),
+            nodes: Nodes::default(),
+            text: Cow::Borrowed(""),
+            href: None,
+            status: None,
+            failures: Vec::new(),
+            propstat_status: None,
+            propstat_root: NONE,
+            sync_token: None,
         }
     }
 
-    Ok(out)
+    /// Reads up to the end of the next response, returning whether there was
+    /// one: its href, status, failures and property nodes are then at hand.
+    fn next_response(&mut self) -> Result<bool, WebdavMultistatusParseError> {
+        let nodes = &mut self.nodes;
+
+        for event in self.events.by_ref() {
+            match event {
+                XmlEvent::Start {
+                    local,
+                    attrs,
+                    empty,
+                } => {
+                    let frame = match self.frames.last().map(|(frame, _)| frame) {
+                        None if matches!(local.as_bytes(), b"multistatus") => Frame::Multistatus,
+                        Some(Frame::Multistatus) => match local.as_bytes() {
+                            b"response" => Frame::Response,
+                            b"sync-token" => Frame::Text(Field::SyncToken),
+                            _ => Frame::Skip,
+                        },
+                        Some(Frame::Response) => match local.as_bytes() {
+                            b"href" => Frame::Text(Field::Href),
+                            b"status" => Frame::Text(Field::Status),
+                            b"propstat" => Frame::Propstat,
+                            _ => Frame::Skip,
+                        },
+                        Some(Frame::Propstat) => match local.as_bytes() {
+                            b"status" => Frame::Text(Field::PropstatStatus),
+                            b"prop" => Frame::Node(self.propstat_root),
+                            _ => Frame::Skip,
+                        },
+                        Some(&Frame::Node(parent)) => {
+                            Frame::Node(nodes.add_child(parent, local, attrs))
+                        }
+                        _ => Frame::Skip,
+                    };
+
+                    match frame {
+                        Frame::Response => {
+                            nodes.clear();
+                            nodes.add("prop", "");
+                            self.href = None;
+                            self.status = None;
+                            self.failures.clear();
+                        }
+                        Frame::Propstat => {
+                            self.propstat_status = None;
+                            self.propstat_root = nodes.add("prop", "");
+                        }
+                        Frame::Text(_) => self.text = Cow::Borrowed(""),
+                        _ => {}
+                    }
+
+                    if !empty {
+                        if self.frames.len() == MULTISTATUS_MAX_DEPTH {
+                            let err = WebdavMultistatusParseError::TooDeep(MULTISTATUS_MAX_DEPTH);
+                            return Err(err);
+                        }
+                        self.frames.push((frame, local));
+                    }
+                }
+                XmlEvent::Text { raw, clean } => match self.frames.last().map(|(frame, _)| frame) {
+                    Some(Frame::Text(_)) => push_text(&mut self.text, raw, clean),
+                    Some(&Frame::Node(i)) if i != self.propstat_root => {
+                        push_text(nodes.slots[i as usize].text.get_mut(), raw, clean);
+                    }
+                    _ => {}
+                },
+                XmlEvent::Cdata(raw) => match self.frames.last().map(|(frame, _)| frame) {
+                    Some(Frame::Text(_)) => push_text(&mut self.text, raw, raw.len()),
+                    Some(&Frame::Node(i)) if i != self.propstat_root => {
+                        push_text(nodes.slots[i as usize].text.get_mut(), raw, raw.len());
+                    }
+                    _ => {}
+                },
+                XmlEvent::End(close) => {
+                    let frame = match self.frames.last() {
+                        Some(&(frame, local)) if same_name(local, close) => frame,
+                        _ => return Ok(false),
+                    };
+                    self.frames.pop();
+
+                    match frame {
+                        Frame::Text(Field::Href) if self.href.is_none() => {
+                            self.href = Some(self.text.trim().to_string());
+                        }
+                        Frame::Text(Field::Status) => self.status = status_code(&self.text),
+                        Frame::Text(Field::PropstatStatus) => {
+                            self.propstat_status = status_code(&self.text);
+                        }
+                        Frame::Text(Field::SyncToken) => {
+                            let token = self.text.trim();
+                            if !token.is_empty() {
+                                self.sync_token = Some(token.to_string());
+                            }
+                        }
+                        Frame::Propstat => match self.propstat_status {
+                            Some(code) if code / 100 == 2 => nodes.splice(0, self.propstat_root),
+                            Some(code) => {
+                                let nodes = nodes.as_slice();
+                                let mut child = nodes[self.propstat_root as usize].first;
+                                while child != NONE {
+                                    self.failures.push(WebdavPropFailure {
+                                        status: code,
+                                        property: nodes[child as usize].local.to_string(),
+                                    });
+                                    child = nodes[child as usize].next;
+                                }
+                            }
+                            None => {}
+                        },
+                        Frame::Response => return Ok(true),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        Ok(false)
+    }
 }
 
 const NONE: u32 = u32::MAX;
@@ -291,6 +326,16 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// Makes the node a new one, in place.
+    fn reset(&mut self, local: &'a str, attrs: &'a str) {
+        self.local = local;
+        self.attrs = attrs;
+        *self.text.get_mut() = Cow::Borrowed("");
+        self.first = NONE;
+        self.last = NONE;
+        self.next = NONE;
+    }
+
     /// Takes the trimmed text out, read once.
     fn take_text(&self) -> Cow<'a, str> {
         match self.text.take() {
@@ -308,42 +353,73 @@ impl<'a> Node<'a> {
     }
 }
 
-fn push_node<'a>(nodes: &mut Vec<Node<'a>>, parent: u32, local: &'a str, attrs: &'a str) -> u32 {
-    let i = nodes.len() as u32;
-    nodes.push(Node::new(local, attrs));
-
-    match nodes[parent as usize].last {
-        NONE => nodes[parent as usize].first = i,
-        last => nodes[last as usize].next = i,
-    }
-    nodes[parent as usize].last = i;
-
-    i
+/// The property elements of the response being read, in slots reused from
+/// one response to the next: a node is reset in place rather than moved in.
+#[derive(Default)]
+struct Nodes<'a> {
+    slots: Vec<Node<'a>>,
+    len: usize,
 }
 
-/// Moves the children of `from` to the end of `to`'s.
-fn splice(nodes: &mut [Node], to: u32, from: u32) {
-    let (first, last) = (nodes[from as usize].first, nodes[from as usize].last);
-    if first == NONE {
-        return;
+impl<'a> Nodes<'a> {
+    fn clear(&mut self) {
+        self.len = 0;
     }
 
-    match nodes[to as usize].last {
-        NONE => nodes[to as usize].first = first,
-        tail => nodes[tail as usize].next = first,
+    fn as_slice(&self) -> &[Node<'a>] {
+        &self.slots[..self.len]
     }
-    nodes[to as usize].last = last;
+
+    /// Adds a node, returning its index.
+    fn add(&mut self, local: &'a str, attrs: &'a str) -> u32 {
+        match self.slots.get_mut(self.len) {
+            Some(node) => node.reset(local, attrs),
+            None => self.slots.push(Node::new(local, attrs)),
+        }
+
+        self.len += 1;
+        self.len as u32 - 1
+    }
+
+    /// Adds a node as the last child of `parent`, returning its index.
+    fn add_child(&mut self, parent: u32, local: &'a str, attrs: &'a str) -> u32 {
+        let i = self.add(local, attrs);
+        let slots = &mut self.slots;
+
+        match slots[parent as usize].last {
+            NONE => slots[parent as usize].first = i,
+            last => slots[last as usize].next = i,
+        }
+        slots[parent as usize].last = i;
+
+        i
+    }
+
+    /// Moves the children of `from` to the end of `to`'s.
+    fn splice(&mut self, to: u32, from: u32) {
+        let slots = &mut self.slots;
+        let (first, last) = (slots[from as usize].first, slots[from as usize].last);
+        if first == NONE {
+            return;
+        }
+
+        match slots[to as usize].last {
+            NONE => slots[to as usize].first = first,
+            tail => slots[tail as usize].next = first,
+        }
+        slots[to as usize].last = last;
+    }
 }
 
 /// Appends a text piece, skipping the indentation before any content, which
 /// trimming drops anyway.
-fn push_text<'a>(text: &mut Cow<'a, str>, raw: &'a str, clean: bool) {
+fn push_text<'a>(text: &mut Cow<'a, str>, raw: &'a str, clean: usize) {
     if text.is_empty() && raw.bytes().all(|b| b.is_ascii_whitespace()) {
         return;
     }
 
-    if !clean {
-        decode_text(raw, text.to_mut());
+    if clean < raw.len() {
+        decode_text(raw, clean, text.to_mut());
     } else if text.is_empty() {
         *text = Cow::Borrowed(raw);
     } else {
@@ -502,7 +578,7 @@ impl<'n, 'a> Deserializer<'a> for NodeDe<'n, 'a> {
             nodes: self.nodes,
             attrs: XmlAttrs(self.node().attrs),
             cur: self.node().first,
-            seen: Vec::new(),
+            seen: Seen::default(),
             value: Value::None,
         })
     }
@@ -709,10 +785,14 @@ impl<'n, 'a> SeqAccess<'a> for Siblings<'n, 'a> {
 }
 
 /// The value of the key a [`Children`] map last returned.
-enum Value<'n, 'a> {
+enum Value<'a> {
     None,
     Attr(&'a str),
-    Group(Group<'n, 'a>),
+    /// The `len` same-named siblings from node `first`.
+    Group {
+        first: u32,
+        len: u32,
+    },
 }
 
 /// An element's attributes, then its children grouped by name, as a map.
@@ -720,8 +800,39 @@ struct Children<'n, 'a> {
     nodes: &'n [Node<'a>],
     attrs: XmlAttrs<'a>,
     cur: u32,
-    seen: Vec<&'a str>,
-    value: Value<'n, 'a>,
+    seen: Seen<'a>,
+    value: Value<'a>,
+}
+
+/// The child names a [`Children`] map returned, the nodes of the first eight
+/// inline.
+#[derive(Default)]
+struct Seen<'a> {
+    inline: [u32; 8],
+    len: usize,
+    spill: BTreeSet<&'a str>,
+}
+
+impl<'a> Seen<'a> {
+    /// Adds the name of node `i`, returning whether it was new.
+    fn insert(&mut self, nodes: &[Node<'a>], i: u32) -> bool {
+        let name = nodes[i as usize].local;
+        let inline = &self.inline[..self.len];
+        if inline
+            .iter()
+            .any(|&seen| same_name(nodes[seen as usize].local, name))
+        {
+            return false;
+        }
+
+        if self.len == self.inline.len() {
+            return self.spill.insert(name);
+        }
+
+        self.inline[self.len] = i;
+        self.len += 1;
+        true
+    }
 }
 
 impl<'n, 'a> MapAccess<'a> for Children<'n, 'a> {
@@ -753,21 +864,16 @@ impl<'n, 'a> MapAccess<'a> for Children<'n, 'a> {
             let first = self.cur;
             let local = self.nodes[first as usize].local;
             let mut len = 0;
-            while self.cur != NONE && self.nodes[self.cur as usize].local == local {
+            while self.cur != NONE && same_name(self.nodes[self.cur as usize].local, local) {
                 self.cur = self.nodes[self.cur as usize].next;
                 len += 1;
             }
 
-            if self.seen.contains(&local) {
+            if !self.seen.insert(self.nodes, first) {
                 continue;
             }
-            self.seen.push(local);
 
-            let first = NodeDe {
-                nodes: self.nodes,
-                i: first,
-            };
-            self.value = Value::Group(Group { first, len });
+            self.value = Value::Group { first, len };
             return seed.deserialize(Key(local)).map(Some);
         }
     }
@@ -775,7 +881,16 @@ impl<'n, 'a> MapAccess<'a> for Children<'n, 'a> {
     fn next_value_seed<S: DeserializeSeed<'a>>(&mut self, seed: S) -> Result<S::Value, DeError> {
         match mem::replace(&mut self.value, Value::None) {
             Value::Attr(raw) => seed.deserialize(Attr(raw)),
-            Value::Group(group) => seed.deserialize(group),
+            Value::Group { first, len } => {
+                let first = NodeDe {
+                    nodes: self.nodes,
+                    i: first,
+                };
+                seed.deserialize(Group {
+                    first,
+                    len: len as usize,
+                })
+            }
             Value::None => Err(de::Error::custom(
                 "WebDAV property value read before its key",
             )),

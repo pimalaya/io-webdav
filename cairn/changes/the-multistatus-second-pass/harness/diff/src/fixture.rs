@@ -1,0 +1,1 @@
+../../../../the-scanned-multistatus/harness/src/fixture.rs

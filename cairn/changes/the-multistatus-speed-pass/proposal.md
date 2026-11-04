@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: the-multistatus-speed-pass
-status: active
+status: landed
 created: 2026-11-04
 ---
 
@@ -118,3 +118,17 @@ taskset -c 12 ./target/release/wdxml time 15     # wall clock, best of 15 rounds
 - A bare-metal build (`thumbv7em-none-eabihf`) is unchecked: no such target is installed here.
 - Live suites not run against the change; the Radicale CI failure predates it.
 - Commit, release and version bump are the user's.
+
+## Landed
+
+The pass ran on 2026-11-04 and is logged in 2026-11-04-the-multistatus-speed-pass, with its tables and checks. The ranked levers, as they turned out:
+
+1. `&#13;` fast path: landed with the other predefined references, in the decoder rather than in `resolve_reference`.
+2. Reserve before decoding: landed.
+3. Block-wise decode: tried as 64-byte then 16-byte block copies into a byte buffer, slower than probing for the next `&` or CR and pushing whole runs, which landed.
+4. Scanner fast paths: landed as 16-byte probes (src/rfc4918/xml/lanes.rs), plus `/>` and `>` read straight after a name and the colon found by the same probe.
+5. Typed path allocations: the seen list stays inline up to eight names; attribute keys still allocate (rare in DAV bodies, not measured).
+6. Envelope string matching: landed as byte-string matches and `same_name`, the `bcmp` calls coming from fat LTO.
+7. The success-path body copy: not touched, it changes `WebdavSendOk`; carried to the second pass for the user.
+
+Beyond the list: the scanner inlined into a non-generic `Envelope`, node slots reused across responses, and the measurements taken at `opt-level = "s"` as well, which reversed two early designs. perf sampling works here now (`perf record -e cycles:u`), contrary to the trap above. The next levers are handed off in change the-multistatus-second-pass.

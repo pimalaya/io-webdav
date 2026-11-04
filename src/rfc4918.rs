@@ -51,7 +51,7 @@ use serde::Deserialize;
 use thiserror::Error;
 use url::Url;
 
-use crate::rfc4918::xml::{XmlEvent, XmlScanner, attr, decode_attr, decode_text};
+use crate::rfc4918::xml::{XmlEvent, XmlScanner, attr, decode_attr, decode_text, same_name};
 
 /// Authentication scheme used by the WebDAV client.
 ///
@@ -573,9 +573,6 @@ pub fn report_query_body(
 /// [`WebdavPropChild`] off the end of the stack.
 pub const MULTISTATUS_MAX_DEPTH: usize = 64;
 
-/// Elements whose descendant text is never read.
-const STRUCTURAL: [&str; 4] = ["multistatus", "response", "propstat", "prop"];
-
 /// Failure causes while parsing a multistatus body.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum WebdavMultistatusParseError {
@@ -662,10 +659,53 @@ pub(crate) fn non_empty(text: Option<String>) -> Option<String> {
     text.filter(|text| !text.is_empty())
 }
 
+/// The multistatus elements [`parse_multistatus`] acts on, by local name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Tag {
+    Multistatus,
+    Response,
+    Propstat,
+    Prop,
+    Href,
+    Status,
+    SyncToken,
+    Other,
+}
+
+impl Tag {
+    fn of(local: &str) -> Self {
+        match local.as_bytes() {
+            b"multistatus" => Self::Multistatus,
+            b"response" => Self::Response,
+            b"propstat" => Self::Propstat,
+            b"prop" => Self::Prop,
+            b"href" => Self::Href,
+            b"status" => Self::Status,
+            b"sync-token" => Self::SyncToken,
+            _ => Self::Other,
+        }
+    }
+
+    /// Whether the element's descendant text is never read.
+    fn is_structural(self) -> bool {
+        matches!(
+            self,
+            Self::Multistatus | Self::Response | Self::Propstat | Self::Prop
+        )
+    }
+
+    /// Whether the element's own text is read.
+    fn is_read(self) -> bool {
+        matches!(self, Self::Href | Self::Status | Self::SyncToken)
+    }
+}
+
 /// An element open while parsing a multistatus body.
 struct OpenElement<'a> {
     /// The local name.
     local: &'a str,
+    /// The local name, as far as the parser tells them apart.
+    tag: Tag,
     /// The accumulated text, borrowed until a second piece joins it.
     text: Cow<'a, str>,
     /// The direct children.
@@ -707,7 +747,7 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
 
                 if empty {
                     match parent {
-                        Some(open) if open.local == "prop" => {
+                        Some(open) if open.tag == Tag::Prop => {
                             propstat_props.push(WebdavPropItem {
                                 local: local.to_string(),
                                 ..Default::default()
@@ -727,23 +767,24 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                 // NOTE: an element's children only surface inside a property,
                 // and its text only when read or rising into a property, so
                 // the envelope gathers neither.
-                let read = matches!(local, "href" | "status" | "sync-token");
+                let tag = Tag::of(local);
+                let read = tag.is_read();
                 let (keeps, wants) = match parent {
                     Some(open) => {
                         if open.keeps {
                             open.children.push(child(local));
                         }
 
-                        let in_prop = open.local == "prop";
-                        let rises = !in_prop && !STRUCTURAL.contains(&open.local) && open.wants;
+                        let in_prop = open.tag == Tag::Prop;
+                        let rises = !in_prop && !open.tag.is_structural() && open.wants;
                         (in_prop || open.keeps, in_prop || read || rises)
                     }
                     None => (false, read),
                 };
 
-                match local {
-                    "response" => response = Some(WebdavResponseEntry::default()),
-                    "propstat" => {
+                match tag {
+                    Tag::Response => response = Some(WebdavResponseEntry::default()),
+                    Tag::Propstat => {
                         propstat_props.clear();
                         propstat_status = None;
                     }
@@ -752,6 +793,7 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
 
                 stack.push(OpenElement {
                     local,
+                    tag,
                     text: Cow::Borrowed(""),
                     children: Vec::new(),
                     keeps,
@@ -762,10 +804,10 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                 if let Some(open) = stack.last_mut()
                     && open.wants
                 {
-                    if clean {
+                    if clean == raw.len() {
                         push_text(&mut open.text, Cow::Borrowed(raw));
                     } else {
-                        decode_text(raw, open.text.to_mut());
+                        decode_text(raw, clean, open.text.to_mut());
                     }
                 }
             }
@@ -779,26 +821,27 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
             XmlEvent::End(close) => {
                 let Some(OpenElement {
                     local: name,
+                    tag,
                     mut text,
                     mut children,
                     ..
-                }) = stack.pop_if(|open| open.local == close)
+                }) = stack.pop_if(|open| same_name(open.local, close))
                 else {
                     break;
                 };
 
-                let parent = stack.last().map(|parent| parent.local);
+                let parent = stack.last().map(|parent| parent.tag);
 
                 // NOTE: the popped element is its parent's last child, and
                 // takes its children along. A property keeps them instead,
                 // below.
                 if let Some(open) = stack.last_mut()
-                    && parent != Some("prop")
+                    && parent != Some(Tag::Prop)
                 {
-                    if !STRUCTURAL.contains(&open.local) && open.wants {
-                        let piece = match name {
-                            "href" | "status" | "sync-token" => text.clone(),
-                            _ => mem::take(&mut text),
+                    if !open.tag.is_structural() && open.wants {
+                        let piece = match tag.is_read() {
+                            true => text.clone(),
+                            false => mem::take(&mut text),
                         };
                         push_text(&mut open.text, piece);
                     }
@@ -810,13 +853,13 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                     }
                 }
 
-                match name {
-                    "response" => {
+                match tag {
+                    Tag::Response => {
                         if let Some(entry) = response.take() {
                             responses.push(entry);
                         }
                     }
-                    "propstat" => {
+                    Tag::Propstat => {
                         if let Some(entry) = response.as_mut() {
                             match propstat_status {
                                 Some(status) if status / 100 == 2 => {
@@ -836,28 +879,28 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                         propstat_props.clear();
                         propstat_status = None;
                     }
-                    "status" if parent == Some("propstat") => {
+                    Tag::Status if parent == Some(Tag::Propstat) => {
                         propstat_status = status_code(&text);
                     }
-                    "status" if parent == Some("response") => {
+                    Tag::Status if parent == Some(Tag::Response) => {
                         if let Some(entry) = response.as_mut() {
                             entry.status = status_code(&text);
                         }
                     }
-                    "sync-token" if parent == Some("multistatus") => {
+                    Tag::SyncToken if parent == Some(Tag::Multistatus) => {
                         let text = text.trim();
                         if !text.is_empty() {
                             sync_token = Some(text.to_string());
                         }
                     }
-                    "href" if parent == Some("response") => {
+                    Tag::Href if parent == Some(Tag::Response) => {
                         if let Some(entry) = response.as_mut()
                             && entry.href.is_empty()
                         {
                             entry.href = text.trim().to_string();
                         }
                     }
-                    _ if parent == Some("prop") => {
+                    _ if parent == Some(Tag::Prop) => {
                         propstat_props.push(WebdavPropItem {
                             local: name.to_string(),
                             text: text.into_owned(),
@@ -953,6 +996,19 @@ pub fn trace_unrecognized(entry: &WebdavResponseEntry, known: &[WebdavProperty])
 /// Extracts the numeric code out of an HTTP status line (e.g. `HTTP/1.1 404 Not
 /// Found`).
 pub(crate) fn status_code(text: &str) -> Option<u16> {
+    let line = text.trim_ascii().as_bytes();
+
+    // NOTE: the status line servers write, read without splitting.
+    if let Some((b"HTTP/1.1 ", rest)) = line.split_first_chunk::<9>()
+        && let Some((code, [] | [b' ', ..])) = rest.split_first_chunk::<3>()
+        && code.iter().all(u8::is_ascii_digit)
+    {
+        return Some(
+            code.iter()
+                .fold(0, |code, digit| code * 10 + u16::from(digit - b'0')),
+        );
+    }
+
     text.split_whitespace().nth(1)?.parse().ok()
 }
 

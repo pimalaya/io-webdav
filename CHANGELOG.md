@@ -20,7 +20,7 @@ All notable changes to this project are documented in this file. The format is b
 
 - Changed the multistatus parser to a scanner built for WebDAV bodies, replacing xmlparser.
 
-  The output is unchanged and the parse runs 2.7 to 6.2 times faster; the CalDAV and CardDAV mappers read typed properties, 3 to 6 times faster end to end.
+  The output is unchanged and the parse runs 3.4 to 9 times faster, probing short spans with SSE2 or NEON compares; the CalDAV and CardDAV mappers read typed properties, 4 to 8.7 times faster end to end.
 
 ## [0.6.0] - 2026-11-04
 

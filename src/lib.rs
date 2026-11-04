@@ -24,7 +24,8 @@
 //! [`rfc4918::WebdavAuth`] modes and the low-level send coroutine every
 //! higher request builds on. A multistatus reads either vocabulary-agnostic
 //! or into a serde type of the caller ([`rfc4918::typed`]), over a scanner
-//! built for the XML WebDAV servers send.
+//! built for the XML WebDAV servers send, which probes short spans 16 bytes
+//! at a time with the SSE2 or NEON compares of the build.
 //!
 //! [`rfc4791`] covers CalDAV (calendar collections and items) and
 //! [`rfc6352`] CardDAV (address book collections and cards). The two are
