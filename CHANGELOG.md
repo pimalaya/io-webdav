@@ -4,25 +4,45 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-04
+
 ### Added
 
-- Added `rfc4791::item::r#move::CaldavItemMove` and `WebdavClientStd::move_item`, moving a calendar item into another calendar of the same server with `MOVE`, `Overwrite: F` and an optional `If-Match`, keeping its id. A refused `UID` surfaces as `WebdavSendError::DuplicateUid`. Fastmail, which keeps one `UID` per account, takes it where a create then a delete is refused; Google answers 404.
-- Added `WebdavClientStd::set_reconnect`: a client given a way to open a fresh connection resends a request, once, when the server closed the connection before answering it. `connect` sets it to the URL and options it connected with; `set_stream` drops it.
+- Added `rfc4791::item::r#move::CaldavItemMove` and `WebdavClientStd::move_item`.
+
+  They move an item into another calendar of the same server with `MOVE`, keeping its id. A refused `UID` surfaces as `WebdavSendError::DuplicateUid`.
+
+- Added `WebdavClientStd::set_reconnect`.
+
+  A client given a way to reconnect resends a request, once, when the server closed the connection before answering it. `connect` sets it, `set_stream` drops it.
+
 - Added `rfc4918::collection_id` and `rfc4918::collection_path`.
 
 ### Changed
 
-- **BREAKING** Changed the id of a listed calendar or address book outside the home set: it is now the href's path, starting with a slash, rather than its last segment, and an id starting with a slash addresses that path. A collection directly under the home set keeps its id. Google lists every calendar as `/caldav/v2/<calendar>/events/`, so every calendar was named `events` and every verb reached the primary calendar.
+- **BREAKING** Changed the id of a listed calendar or address book outside the home set to its href's path.
 
-- **BREAKING** Bumped io-http to 0.6. The coroutines take and yield its types, so a consumer bumps in step for a single version to resolve.
+  An id starting with a slash addresses that path, and a collection directly under the home set keeps its last segment. Google calendars, all listed as `/caldav/v2/<calendar>/events/`, no longer collapse into one named `events`.
+
+- **BREAKING** Changed `rfc4918::parse_multistatus` to return `Result<WebdavMultistatus, WebdavMultistatusParseError>`.
+
+  It fails on elements nested deeper than `MULTISTATUS_MAX_DEPTH` (64). `WebdavSendError` and `WebdavFollowRedirectsError` gained the matching `Multistatus` variant.
+
+- **BREAKING** Bumped io-http to 0.6.
+
+  The coroutines take and yield its types, so a consumer bumps in step for a single version to resolve.
+
 - Changed the minimum Rust version to 1.89.
-
-- **BREAKING** Changed `rfc4918::parse_multistatus` to return `Result<WebdavMultistatus, WebdavMultistatusParseError>`, failing on elements nested deeper than `MULTISTATUS_MAX_DEPTH` (64). `WebdavSendError` and `WebdavFollowRedirectsError` gained the matching `Multistatus` variant.
 
 ### Fixed
 
-- Fixed the client failing the request after one the server answered with `Connection: close` (Radicale does after a PUT, its built-in server after every response), or after an idle keep-alive timed out: a client from `connect` now reconnects and resends it.
-- Fixed `rfc4918::parse_multistatus` cloning every closed subtree into its parent and copying its text into every ancestor: a body was parsed in quadratic time, and about 35 KB of nested elements overflowed a 1 MiB stack. Children are now moved, and nesting is capped.
+- Fixed the request following a closed connection failing.
+
+  A client from `connect` now reconnects and resends it, after a `Connection: close` (Radicale after a PUT) or an idle keep-alive timeout.
+
+- Fixed `rfc4918::parse_multistatus` running in quadratic time.
+
+  Closed subtrees are moved instead of cloned into their parent, and about 35 KB of nested elements no longer overflows a 1 MiB stack.
 
 ## [0.5.1] - 2026-10-02
 
@@ -262,7 +282,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.5.1..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.6.0..HEAD
+[0.6.0]: https://github.com/pimalaya/io-webdav/compare/v0.5.1..v0.6.0
 [0.5.1]: https://github.com/pimalaya/io-webdav/compare/v0.5.0..v0.5.1
 [0.5.0]: https://github.com/pimalaya/io-webdav/compare/v0.4.1..v0.5.0
 [0.4.1]: https://github.com/pimalaya/io-webdav/compare/v0.4.0..v0.4.1
