@@ -20,9 +20,11 @@
 //! PROPPATCH, MKCOL, COPY, MOVE, DELETE, GET, PUT, OPTIONS and REPORT
 //! requests.
 //!
-//! Next to them it carries the multistatus response parser, the
+//! Next to them it carries the multistatus response parsers, the
 //! [`rfc4918::WebdavAuth`] modes and the low-level send coroutine every
-//! higher request builds on.
+//! higher request builds on. A multistatus reads either vocabulary-agnostic
+//! or into a serde type of the caller ([`rfc4918::typed`]), over a scanner
+//! built for the XML WebDAV servers send.
 //!
 //! [`rfc4791`] covers CalDAV (calendar collections and items) and
 //! [`rfc6352`] CardDAV (address book collections and cards). The two are

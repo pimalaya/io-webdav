@@ -5,7 +5,10 @@
 //! Sends a `REPORT` against `path` with a caller-built query body (e.g. a
 //! CalDAV `calendar-query` from
 //! [`calendar_query_body`](crate::rfc4791::calendar::calendar_query_body)) and
-//! parses the response into a [`WebdavMultistatus`].
+//! parses the response into `M`: a [`WebdavMultistatus`], or a
+//! [`WebdavMultistatusOf`] reading the properties into a serde type.
+//!
+//! [`WebdavMultistatusOf`]: crate::rfc4918::typed::WebdavMultistatusOf
 //!
 //! # Example
 //!
@@ -18,7 +21,7 @@
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
 //!     rfc4791::calendar::calendar_query_body,
-//!     rfc4918::{GETETAG, WebdavAuth, report::WebdavReport},
+//!     rfc4918::{GETETAG, WebdavAuth, WebdavMultistatus, report::WebdavReport},
 //! };
 //! use url::Url;
 //!
@@ -29,8 +32,9 @@
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
 //! let body = calendar_query_body(&[GETETAG], "");
+//! let path = "/dav/calendars/personal/";
 //! let mut coroutine =
-//!     WebdavReport::new(&base_url, &auth, "io-webdav", "/dav/calendars/personal/", 1, body);
+//!     WebdavReport::<WebdavMultistatus>::new(&base_url, &auth, "io-webdav", path, 1, body);
 //! let mut arg = None;
 //!
 //! let multistatus = loop {
@@ -50,6 +54,8 @@
 //! println!("{} entries", multistatus.responses.len());
 //! ```
 
+use core::marker::PhantomData;
+
 use alloc::{string::String, vec::Vec};
 
 use log::{debug, trace};
@@ -58,19 +64,20 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, WebdavMultistatus, parse_multistatus,
+        WebdavAuth, WebdavMultistatus, WebdavMultistatusParse,
         request::WebdavRequest,
         send::{WebdavSendError, WebdavSendRaw},
     },
 };
 
-/// Coroutine that runs a `REPORT` and parses the multistatus body.
+/// Coroutine that runs a `REPORT` and parses the multistatus body into `M`.
 #[derive(Debug)]
-pub struct WebdavReport {
+pub struct WebdavReport<M = WebdavMultistatus> {
     state: State,
+    multistatus: PhantomData<fn() -> M>,
 }
 
-impl WebdavReport {
+impl<M: WebdavMultistatusParse> WebdavReport<M> {
     /// Builds a new `REPORT` coroutine against `path` with the given `Depth`
     /// and query `body`.
     pub fn new(
@@ -87,13 +94,14 @@ impl WebdavReport {
             .body(body);
         Self {
             state: State::Send(WebdavSendRaw::new(request)),
+            multistatus: PhantomData,
         }
     }
 }
 
-impl WebdavCoroutine for WebdavReport {
+impl<M: WebdavMultistatusParse> WebdavCoroutine for WebdavReport<M> {
     type Yield = WebdavYield;
-    type Return = Result<WebdavMultistatus, WebdavSendError>;
+    type Return = Result<M, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -111,7 +119,7 @@ impl WebdavCoroutine for WebdavReport {
 
                 let xml = String::from_utf8_lossy(&ok.body);
                 trace!("received multistatus body {xml}");
-                WebdavCoroutineState::Complete(parse_multistatus(&xml).map_err(Into::into))
+                WebdavCoroutineState::Complete(M::parse(&xml).map_err(Into::into))
             }
         }
     }

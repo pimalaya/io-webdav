@@ -89,9 +89,9 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty, XML_DECL, escape_text,
-        prop_block, propfind::WebdavPropfind, report::WebdavReport, send::WebdavSendError,
-        xmlns_decls,
+        DAV, WebdavAuth, WebdavEtagProps, WebdavProperty, XML_DECL, escape_text, prop_block,
+        propfind::WebdavPropfind, report::WebdavReport, send::WebdavSendError,
+        typed::WebdavMultistatusOf, unquoted_etag, xmlns_decls,
     },
     webdav_try,
 };
@@ -275,7 +275,10 @@ pub fn sync_collection_body(sync_token: Option<&str>, props: &[WebdavProperty]) 
 ///
 /// `collection` is the request-target path, against which the collection's own
 /// self-entry is recognised and dropped rather than taken for a member.
-fn from_multistatus(multistatus: WebdavMultistatus, collection: &str) -> WebdavSyncDelta {
+fn from_multistatus(
+    multistatus: WebdavMultistatusOf<WebdavEtagProps>,
+    collection: &str,
+) -> WebdavSyncDelta {
     let mut delta = WebdavSyncDelta {
         sync_token: multistatus.sync_token,
         ..Default::default()
@@ -301,9 +304,7 @@ fn from_multistatus(multistatus: WebdavMultistatus, collection: &str) -> WebdavS
                 trace!("skip enumeration self-entry {}", entry.href);
             }
             _ => {
-                let etag = entry
-                    .text(GETETAG)
-                    .map(|raw| raw.trim_matches('"').to_string());
+                let etag = unquoted_etag(entry.props.getetag);
                 delta.changed.push(WebdavSyncChange {
                     href: entry.href,
                     etag,
@@ -333,13 +334,16 @@ fn href_path(href: &str) -> &str {
 
 #[derive(Debug)]
 enum State {
-    WebdavReport(WebdavReport),
-    WebdavPropfind(WebdavPropfind),
+    WebdavReport(WebdavReport<WebdavMultistatusOf<WebdavEtagProps>>),
+    WebdavPropfind(WebdavPropfind<WebdavMultistatusOf<WebdavEtagProps>>),
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{rfc4918::parse_multistatus, rfc6578::sync_collection::*};
+    use crate::{
+        rfc4918::{GETETAG, typed::parse_multistatus_as},
+        rfc6578::sync_collection::*,
+    };
 
     #[test]
     fn body_carries_empty_token_on_initial_sync() {
@@ -381,7 +385,7 @@ mod tests {
         </d:multistatus>"#;
 
         let delta = from_multistatus(
-            parse_multistatus(xml).unwrap(),
+            parse_multistatus_as(xml).unwrap(),
             "/dav/addressbooks/contacts",
         );
 
@@ -422,7 +426,7 @@ mod tests {
         </d:multistatus>"#;
 
         let delta = from_multistatus(
-            parse_multistatus(xml).unwrap(),
+            parse_multistatus_as(xml).unwrap(),
             "/17170244959/carddavhome/card/",
         );
 

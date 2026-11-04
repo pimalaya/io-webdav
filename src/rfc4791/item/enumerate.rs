@@ -66,8 +66,11 @@ use crate::{
     coroutine::*,
     rfc4791::{calendar::calendar_query_body, item::CaldavItemRef},
     rfc4918::{
-        GETETAG, WebdavAuth, WebdavProperty, WebdavResponseEntry, report::WebdavReport,
+        GETETAG, WebdavAuth, WebdavEtagProps, WebdavProperty,
+        report::WebdavReport,
         send::WebdavSendError,
+        typed::{WebdavMultistatusOf, WebdavResponseOf},
+        unquoted_etag,
     },
     webdav_try,
 };
@@ -133,8 +136,8 @@ impl WebdavCoroutine for CaldavItemEnum {
                     .any(|entry| entry.status == Some(507));
                 let refs = multistatus
                     .responses
-                    .iter()
-                    .filter_map(from_entry)
+                    .into_iter()
+                    .filter_map(from_response)
                     .collect();
 
                 WebdavCoroutineState::Complete(Ok(CaldavItemEnumOk { refs, truncated }))
@@ -143,28 +146,26 @@ impl WebdavCoroutine for CaldavItemEnum {
     }
 }
 
-fn from_entry(entry: &WebdavResponseEntry) -> Option<CaldavItemRef> {
+fn from_response(response: WebdavResponseOf<WebdavEtagProps>) -> Option<CaldavItemRef> {
     // NOTE: an item href never ends in a slash, but some servers (iCloud) echo
     // the calendar itself, which would otherwise enter the spine as a bogus
     // item named after the collection.
-    if entry.href.ends_with('/') {
+    if response.href.ends_with('/') {
         return None;
     }
 
-    let id = entry.id();
+    let id = response.id();
     if id.is_empty() {
         return None;
     }
 
     Some(CaldavItemRef {
         id: id.to_string(),
-        etag: entry
-            .text(GETETAG)
-            .map(|raw| raw.trim_matches('"').to_string()),
+        etag: unquoted_etag(response.props.getetag),
     })
 }
 
 #[derive(Debug)]
 enum State {
-    WebdavReport(WebdavReport),
+    WebdavReport(WebdavReport<WebdavMultistatusOf<WebdavEtagProps>>),
 }

@@ -52,17 +52,18 @@ use alloc::{
 };
 
 use log::trace;
+use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4918::{
-        DISPLAYNAME, GETCTAG, RESOURCETYPE, SYNC_TOKEN, WebdavAuth, WebdavResponseEntry,
-        propfind::WebdavPropfind, send::WebdavSendError, trace_unrecognized,
+        WebdavAuth, WebdavChildNames, WebdavReportSet, collection_id, non_empty,
+        propfind::WebdavPropfind,
+        send::WebdavSendError,
+        typed::{WebdavMultistatusOf, WebdavResponseOf},
     },
-    rfc6352::addressbook::{
-        ADDRESSBOOK, ADDRESSBOOK_COLOR, ADDRESSBOOK_DESCRIPTION, CarddavAddressbook, LIST_PROPS,
-    },
+    rfc6352::addressbook::{ADDRESSBOOK, CarddavAddressbook, LIST_PROPS},
     webdav_try,
 };
 
@@ -96,8 +97,8 @@ impl WebdavCoroutine for CarddavAddressbookList {
                 let multistatus = webdav_try!(propfind, arg);
                 let addressbooks = multistatus
                     .responses
-                    .iter()
-                    .filter_map(|entry| from_entry(entry, &self.home_set_path))
+                    .into_iter()
+                    .filter_map(|response| from_response(response, &self.home_set_path))
                     .collect();
                 WebdavCoroutineState::Complete(Ok(addressbooks))
             }
@@ -105,31 +106,53 @@ impl WebdavCoroutine for CarddavAddressbookList {
     }
 }
 
-fn from_entry(entry: &WebdavResponseEntry, home_set_path: &str) -> Option<CarddavAddressbook> {
-    if !entry.has_resource_type(RESOURCETYPE, ADDRESSBOOK) {
-        trace!("skip non-addressbook response {}", entry.href);
+/// The properties of [`LIST_PROPS`], as a typed multistatus reads them.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct AddressbookProps {
+    resourcetype: Option<WebdavChildNames>,
+    displayname: Option<String>,
+    addressbook_description: Option<String>,
+    addressbook_color: Option<String>,
+    getctag: Option<String>,
+    sync_token: Option<String>,
+    supported_report_set: Option<WebdavReportSet>,
+}
+
+fn from_response(
+    response: WebdavResponseOf<AddressbookProps>,
+    home_set_path: &str,
+) -> Option<CarddavAddressbook> {
+    let props = response.props;
+
+    if !props
+        .resourcetype
+        .is_some_and(|types| types.0.contains_key(ADDRESSBOOK.local))
+    {
+        trace!("skip non-addressbook response {}", response.href);
         return None;
     }
 
-    let id = entry.collection_id(home_set_path);
+    let id = collection_id(home_set_path, &response.href);
     if id.is_empty() {
         return None;
     }
 
-    trace_unrecognized(entry, LIST_PROPS);
-
     Some(CarddavAddressbook {
         id,
-        display_name: entry.text(DISPLAYNAME).map(ToString::to_string),
-        description: entry.text(ADDRESSBOOK_DESCRIPTION).map(ToString::to_string),
-        color: entry.text(ADDRESSBOOK_COLOR).map(ToString::to_string),
-        ctag: entry.text(GETCTAG).map(ToString::to_string),
-        sync_token: entry.text(SYNC_TOKEN).map(ToString::to_string),
-        supported_reports: entry.supported_reports(),
+        display_name: non_empty(props.displayname),
+        description: non_empty(props.addressbook_description),
+        color: non_empty(props.addressbook_color),
+        ctag: non_empty(props.getctag),
+        sync_token: non_empty(props.sync_token),
+        supported_reports: props
+            .supported_report_set
+            .map(WebdavReportSet::reports)
+            .unwrap_or_default(),
     })
 }
 
 #[derive(Debug)]
 enum State {
-    WebdavPropfind(WebdavPropfind),
+    WebdavPropfind(WebdavPropfind<WebdavMultistatusOf<AddressbookProps>>),
 }

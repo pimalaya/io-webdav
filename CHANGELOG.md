@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Added `rfc4918::typed::parse_multistatus_as` and `WebdavMultistatusOf`.
+
+  The 2xx properties of each response deserialize into a serde type of the caller, matched by local name; a response whose properties do not fit fails the parse.
+
+### Changed
+
+- **BREAKING** Changed `WebdavPropfind` and `WebdavReport` to parse into `M`, `WebdavMultistatus` by default or `WebdavMultistatusOf<P>`.
+
+  A call site that never names the result type annotates the coroutine: `let report: WebdavReport = WebdavReport::new(..)`.
+
+- **BREAKING** Changed `WebdavMultistatusParseError` to carry `InvalidProps`.
+
+- Changed the multistatus parser to a scanner built for WebDAV bodies, replacing xmlparser.
+
+  The output is unchanged and the parse runs 2.7 to 6.2 times faster; the CalDAV and CardDAV mappers read typed properties, 3 to 6 times faster end to end.
+
 ## [0.6.0] - 2026-11-04
 
 ### Added

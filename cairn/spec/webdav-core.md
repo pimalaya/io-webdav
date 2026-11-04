@@ -9,7 +9,7 @@ status: current
 The RFC 4918 layer: the HTTP methods WebDAV adds, the property model every higher layer speaks, the multistatus parser, and the authentication modes. CalDAV and CardDAV are built entirely on top of it.
 
 ### Requirement: Methods
-The crate SHALL provide one coroutine per WebDAV method: PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, DELETE, GET, PUT, OPTIONS and REPORT, plus the low-level send coroutine they all build on.
+The crate SHALL provide one coroutine per WebDAV method: PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, DELETE, GET, PUT, OPTIONS and REPORT, plus the low-level send coroutine they all build on. PROPFIND and REPORT SHALL parse their multistatus into the representation the caller picks, vocabulary-agnostic (Multistatus parsing) or typed (Typed multistatus).
 
 ### Requirement: Property model
 A property SHALL be identified by a namespace (URI plus preferred prefix) and a local name. Each RFC layer SHALL own the namespaces and property constants it speaks. The body generators SHALL emit XML from those values rather than from hard-coded templates, so no central namespace table exists.
@@ -21,7 +21,15 @@ The DAV namespace SHALL be emitted with the D prefix, never as the default names
 A property set pair SHALL carry a WebdavPropValue, either text that is XML-escaped on the way out, or a raw markup fragment emitted verbatim. Raw exists for properties whose value is child elements rather than text, which escaping would destroy.
 
 ### Requirement: Multistatus parsing
-The parser SHALL be vocabulary-agnostic, matching by local name and ignoring namespace prefixes. It SHALL keep properties from 2xx propstats only, recording the properties of non-2xx propstats as failures carrying their status, while still surfacing responses carrying no 2xx propstat as entries with empty props and their response-level status. It SHALL read the top-level sync-token. Predefined and numeric character references SHALL be resolved, unknown entity references kept verbatim, and malformed input SHALL yield whatever parsed before the error. Element nesting deeper than 64 levels SHALL fail with a typed error, keeping the parse linear and its tree shallow enough for a 1 MiB stack.
+The parser SHALL be vocabulary-agnostic, matching by local name and ignoring namespace prefixes. It SHALL keep properties from 2xx propstats only, recording the properties of non-2xx propstats as failures carrying their status, while still surfacing responses carrying no 2xx propstat as entries with empty props and their response-level status. It SHALL read the top-level sync-token. Predefined and numeric character references SHALL be resolved, unknown entity references kept verbatim, a DOCTYPE skipped with its internal subset (its entities left unexpanded), and malformed input SHALL yield whatever parsed before the error. Element nesting deeper than 64 levels SHALL fail with a typed error, keeping the parse linear and its tree shallow enough for a 1 MiB stack.
+
+### Requirement: Typed multistatus
+The crate SHALL parse a multistatus into responses whose 2xx properties deserialize, merged across propstats, into a serde type the caller supplies. Children SHALL match by local name, prefixes ignored, the first of same-named properties winning. Text SHALL read trimmed, borrowed from the body where it needs no decoding; attributes SHALL read as `@name` keys; consecutive same-named children SHALL fill a sequence; an empty element SHALL read as unit. The envelope (href, response status, refused properties, sync token, depth cap, prefix of malformed input) SHALL keep the semantics of Multistatus parsing. A response whose properties do not fit the type SHALL fail the parse, naming its href, rather than drop out: a listing missing a member reads as its removal.
+
+#### Scenario: A property the type cannot hold
+- GIVEN a typed multistatus expecting a number in `getcontentlength`
+- WHEN a response carries text there
+- THEN the parse fails naming that response's href
 
 ### Requirement: A property update is verified, not assumed
 A `PROPPATCH` SHALL return its parsed multistatus together with the properties the request asked to change, and the client SHALL fail unless every one of them came back accepted. A property the server refused fails the call, and so does one it never mentioned: RFC 4918 §9.2.1 wants a propstat per requested property, and a server that names none of them (iCloud, for a collection that does not exist) changed nothing while answering 207.

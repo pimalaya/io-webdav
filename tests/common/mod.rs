@@ -395,7 +395,8 @@ fn assert_precondition_failed<T: Debug>(result: Result<T, WebdavClientStdError>,
 /// listing, and refuses the empty-token initial sync with a 400.
 fn collection_sync_token(base: &Url, auth: &WebdavAuth, path: &str) -> String {
     let mut stream = connect(base);
-    let mut coroutine = WebdavPropfind::new(base, auth, "io-webdav", path, 0, &[SYNC_TOKEN]);
+    let mut coroutine: WebdavPropfind =
+        WebdavPropfind::new(base, auth, "io-webdav", path, 0, &[SYNC_TOKEN]);
     let mut buf = [0u8; 16 * 1024];
     let mut arg: Option<&[u8]> = None;
 

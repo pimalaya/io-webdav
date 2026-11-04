@@ -23,8 +23,10 @@ use alloc::{
     vec::Vec,
 };
 
+use serde::Deserialize;
+
 use crate::{
-    rfc4918::{GETETAG, WebdavProperty, WebdavResponseEntry, trace_unrecognized},
+    rfc4918::{GETETAG, WebdavProperty, typed::WebdavResponseOf, unquoted_etag},
     rfc6352::addressbook::ADDRESS_DATA,
 };
 
@@ -63,28 +65,39 @@ pub fn join_path(addressbook: &str, id: &str) -> String {
     format!("{addressbook}/{id}")
 }
 
-/// Maps a multistatus response entry carrying [`CARD_PROPS`] to a
+/// The properties of [`CARD_PROPS`], as a typed multistatus reads them.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) struct CarddavCardProps {
+    pub getetag: Option<String>,
+    pub address_data: Option<String>,
+}
+
+/// Maps a multistatus response carrying [`CARD_PROPS`] to a
 /// [`CarddavCardEntry`] (id, etag, raw vCard bytes).
-pub(crate) fn card_from_entry(entry: &WebdavResponseEntry) -> Option<CarddavCardEntry> {
+pub(crate) fn card_from_response(
+    response: WebdavResponseOf<CarddavCardProps>,
+) -> Option<CarddavCardEntry> {
     // NOTE: a self-entry (its href ends in a slash) is never a card; iCloud
     // echoes the addressbook itself in the multistatus.
-    if entry.href.ends_with('/') {
+    if response.href.ends_with('/') {
         return None;
     }
 
-    let id = entry.id();
+    let id = response.id();
     if id.is_empty() {
         return None;
     }
 
-    let data = entry.text(ADDRESS_DATA)?;
-    trace_unrecognized(entry, CARD_PROPS);
+    let id = id.to_string();
+    let data = response
+        .props
+        .address_data
+        .filter(|data| !data.is_empty())?;
 
     Some(CarddavCardEntry {
-        id: id.to_string(),
-        etag: entry
-            .text(GETETAG)
-            .map(|raw| raw.trim_matches('"').to_string()),
-        data: data.as_bytes().to_vec(),
+        id,
+        etag: unquoted_etag(response.props.getetag),
+        data: data.into_bytes(),
     })
 }

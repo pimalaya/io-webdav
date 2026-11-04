@@ -48,20 +48,21 @@
 use alloc::{
     collections::BTreeSet,
     string::{String, ToString},
+    vec::Vec,
 };
 
 use log::trace;
+use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::calendar::{
-        CALENDAR, CALENDAR_COLOR, CALENDAR_DESCRIPTION, CALENDAR_TIMEZONE, CaldavCalendar,
-        LIST_PROPS, SUPPORTED_CALENDAR_COMPONENT_SET,
-    },
+    rfc4791::calendar::{CALENDAR, CaldavCalendar, LIST_PROPS},
     rfc4918::{
-        DISPLAYNAME, GETCTAG, RESOURCETYPE, SYNC_TOKEN, WebdavAuth, WebdavResponseEntry,
-        propfind::WebdavPropfind, send::WebdavSendError, trace_unrecognized,
+        WebdavAuth, WebdavChildNames, WebdavReportSet, collection_id, non_empty,
+        propfind::WebdavPropfind,
+        send::WebdavSendError,
+        typed::{WebdavMultistatusOf, WebdavResponseOf},
     },
     webdav_try,
 };
@@ -96,8 +97,8 @@ impl WebdavCoroutine for CaldavCalendarList {
                 let multistatus = webdav_try!(propfind, arg);
                 let calendars = multistatus
                     .responses
-                    .iter()
-                    .filter_map(|entry| from_entry(entry, &self.home_set_path))
+                    .into_iter()
+                    .filter_map(|response| from_response(response, &self.home_set_path))
                     .collect();
                 WebdavCoroutineState::Complete(Ok(calendars))
             }
@@ -105,45 +106,76 @@ impl WebdavCoroutine for CaldavCalendarList {
     }
 }
 
-fn from_entry(entry: &WebdavResponseEntry, home_set_path: &str) -> Option<CaldavCalendar> {
-    if !entry.has_resource_type(RESOURCETYPE, CALENDAR) {
-        trace!("skip non-calendar response {}", entry.href);
+/// The properties of [`LIST_PROPS`], as a typed multistatus reads them.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct CalendarProps {
+    resourcetype: Option<WebdavChildNames>,
+    displayname: Option<String>,
+    calendar_description: Option<String>,
+    calendar_color: Option<String>,
+    supported_calendar_component_set: Option<ComponentSet>,
+    getctag: Option<String>,
+    sync_token: Option<String>,
+    supported_report_set: Option<WebdavReportSet>,
+    calendar_timezone: Option<String>,
+}
+
+/// A `supported-calendar-component-set` (RFC 4791 §5.2.3), each type the
+/// `name` attribute of a `comp` child.
+#[derive(Debug, Default, Deserialize)]
+struct ComponentSet {
+    #[serde(default)]
+    comp: Vec<Component>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Component {
+    #[serde(rename = "@name")]
+    name: Option<String>,
+}
+
+fn from_response(
+    response: WebdavResponseOf<CalendarProps>,
+    home_set_path: &str,
+) -> Option<CaldavCalendar> {
+    let props = response.props;
+
+    if !props
+        .resourcetype
+        .is_some_and(|types| types.0.contains_key(CALENDAR.local))
+    {
+        trace!("skip non-calendar response {}", response.href);
         return None;
     }
 
-    let id = entry.collection_id(home_set_path);
+    let id = collection_id(home_set_path, &response.href);
     if id.is_empty() {
         return None;
     }
 
-    trace_unrecognized(entry, LIST_PROPS);
-
-    // NOTE: the component set is markup, not text: each type is the `name`
-    // attribute of a `<C:comp/>` child (RFC 4791 §5.2.3).
-    let components = entry
-        .prop(SUPPORTED_CALENDAR_COMPONENT_SET)
-        .map(|item| {
-            item.children
-                .iter()
-                .filter_map(|child| child.name.clone())
-                .collect()
-        })
+    let components = props
+        .supported_calendar_component_set
+        .map(|set| set.comp.into_iter().filter_map(|comp| comp.name).collect())
         .unwrap_or_default();
 
     Some(CaldavCalendar {
         id,
-        display_name: entry.text(DISPLAYNAME).map(ToString::to_string),
-        description: entry.text(CALENDAR_DESCRIPTION).map(ToString::to_string),
-        color: entry.text(CALENDAR_COLOR).map(ToString::to_string),
+        display_name: non_empty(props.displayname),
+        description: non_empty(props.calendar_description),
+        color: non_empty(props.calendar_color),
         components,
-        ctag: entry.text(GETCTAG).map(ToString::to_string),
-        sync_token: entry.text(SYNC_TOKEN).map(ToString::to_string),
-        tz: entry.text(CALENDAR_TIMEZONE).map(ToString::to_string),
-        supported_reports: entry.supported_reports(),
+        ctag: non_empty(props.getctag),
+        sync_token: non_empty(props.sync_token),
+        tz: non_empty(props.calendar_timezone),
+        supported_reports: props
+            .supported_report_set
+            .map(WebdavReportSet::reports)
+            .unwrap_or_default(),
     })
 }
 
 #[derive(Debug)]
 enum State {
-    WebdavPropfind(WebdavPropfind),
+    WebdavPropfind(WebdavPropfind<WebdavMultistatusOf<CalendarProps>>),
 }

@@ -1,0 +1,27 @@
+[package]
+name = "wdxml"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+io-webdav = { path = "../../../..", default-features = false }
+# NOTE: io-webdav before the change, extracted by old.sh.
+io-webdav-old = { path = "target/io-webdav-old", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+xmlparser = { version = "0.13", default-features = false }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+
+[profile.fuzz]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+
+[profile.prof]
+inherits = "release"
+debug = true

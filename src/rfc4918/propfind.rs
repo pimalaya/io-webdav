@@ -3,8 +3,11 @@
 //! Generic `PROPFIND` coroutine (RFC 4918 §9.1).
 //!
 //! Requests `props` against `path` at the given `Depth`; the request body is
-//! generated from the selector and the response is parsed into a
-//! [`WebdavMultistatus`].
+//! generated from the selector and the response is parsed into `M`: a
+//! [`WebdavMultistatus`], or a [`WebdavMultistatusOf`] reading the properties
+//! into a serde type.
+//!
+//! [`WebdavMultistatusOf`]: crate::rfc4918::typed::WebdavMultistatusOf
 //!
 //! # Example
 //!
@@ -16,9 +19,18 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4918::{DISPLAYNAME, RESOURCETYPE, WebdavAuth, propfind::WebdavPropfind},
+//!     rfc4918::{
+//!         DISPLAYNAME, RESOURCETYPE, WebdavAuth, propfind::WebdavPropfind,
+//!         typed::WebdavMultistatusOf,
+//!     },
 //! };
+//! use serde::Deserialize;
 //! use url::Url;
+//!
+//! #[derive(Debug, Deserialize)]
+//! struct Props {
+//!     displayname: Option<String>,
+//! }
 //!
 //! // Ready stream, already connected and TLS-negotiated
 //! let mut stream = TcpStream::connect("dav.example.org:443").unwrap();
@@ -26,8 +38,9 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
+//! let props = [RESOURCETYPE, DISPLAYNAME];
 //! let mut coroutine =
-//!     WebdavPropfind::new(&base_url, &auth, "io-webdav", "/dav/", 1, &[RESOURCETYPE, DISPLAYNAME]);
+//!     WebdavPropfind::<WebdavMultistatusOf<Props>>::new(&base_url, &auth, "io-webdav", "/dav/", 1, &props);
 //! let mut arg = None;
 //!
 //! let multistatus = loop {
@@ -44,10 +57,12 @@
 //!     }
 //! };
 //!
-//! for entry in &multistatus.responses {
-//!     println!("{}: {:?}", entry.href, entry.text(DISPLAYNAME));
+//! for response in &multistatus.responses {
+//!     println!("{}: {:?}", response.href, response.props.displayname);
 //! }
 //! ```
+
+use core::marker::PhantomData;
 
 use alloc::string::String;
 
@@ -57,20 +72,21 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, WebdavMultistatus, WebdavProperty, parse_multistatus, propfind_body,
+        WebdavAuth, WebdavMultistatus, WebdavMultistatusParse, WebdavProperty, propfind_body,
         request::WebdavRequest,
         send::{WebdavSendError, WebdavSendRaw},
     },
     webdav_try,
 };
 
-/// Coroutine that runs a `PROPFIND` and parses the multistatus body.
+/// Coroutine that runs a `PROPFIND` and parses the multistatus body into `M`.
 #[derive(Debug)]
-pub struct WebdavPropfind {
+pub struct WebdavPropfind<M = WebdavMultistatus> {
     state: State,
+    multistatus: PhantomData<fn() -> M>,
 }
 
-impl WebdavPropfind {
+impl<M: WebdavMultistatusParse> WebdavPropfind<M> {
     /// Builds a new `PROPFIND` coroutine requesting `props` against `path`
     /// (relative to `base_url`) with the given `depth`.
     pub fn new(
@@ -87,13 +103,14 @@ impl WebdavPropfind {
             .body(propfind_body(props));
         Self {
             state: State::Send(WebdavSendRaw::new(request)),
+            multistatus: PhantomData,
         }
     }
 }
 
-impl WebdavCoroutine for WebdavPropfind {
+impl<M: WebdavMultistatusParse> WebdavCoroutine for WebdavPropfind<M> {
     type Yield = WebdavYield;
-    type Return = Result<WebdavMultistatus, WebdavSendError>;
+    type Return = Result<M, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
@@ -102,7 +119,7 @@ impl WebdavCoroutine for WebdavPropfind {
                 let ok = webdav_try!(send, arg);
                 let xml = String::from_utf8_lossy(&ok.body);
                 trace!("received multistatus body {xml}");
-                WebdavCoroutineState::Complete(parse_multistatus(&xml).map_err(Into::into))
+                WebdavCoroutineState::Complete(M::parse(&xml).map_err(Into::into))
             }
         }
     }

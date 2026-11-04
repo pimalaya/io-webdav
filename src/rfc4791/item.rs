@@ -22,9 +22,11 @@ use alloc::{
     vec::Vec,
 };
 
+use serde::Deserialize;
+
 use crate::{
     rfc4791::calendar::CALENDAR_DATA,
-    rfc4918::{GETETAG, WebdavProperty, WebdavResponseEntry, trace_unrecognized},
+    rfc4918::{GETETAG, WebdavProperty, typed::WebdavResponseOf, unquoted_etag},
 };
 
 /// Item reference (id plus ETag, no body) returned by
@@ -62,28 +64,39 @@ pub fn join_path(calendar: &str, id: &str) -> String {
     format!("{calendar}/{id}")
 }
 
-/// Maps a multistatus response entry carrying [`ITEM_PROPS`] to an
+/// The properties of [`ITEM_PROPS`], as a typed multistatus reads them.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) struct CaldavItemProps {
+    pub getetag: Option<String>,
+    pub calendar_data: Option<String>,
+}
+
+/// Maps a multistatus response carrying [`ITEM_PROPS`] to an
 /// [`CaldavItemEntry`] (id, etag, raw iCalendar bytes).
-pub(crate) fn item_from_entry(entry: &WebdavResponseEntry) -> Option<CaldavItemEntry> {
+pub(crate) fn item_from_response(
+    response: WebdavResponseOf<CaldavItemProps>,
+) -> Option<CaldavItemEntry> {
     // NOTE: a self-entry (its href ends in a slash) is never an item; iCloud
     // echoes the calendar itself in the multistatus.
-    if entry.href.ends_with('/') {
+    if response.href.ends_with('/') {
         return None;
     }
 
-    let id = entry.id();
+    let id = response.id();
     if id.is_empty() {
         return None;
     }
 
-    let data = entry.text(CALENDAR_DATA)?;
-    trace_unrecognized(entry, ITEM_PROPS);
+    let id = id.to_string();
+    let data = response
+        .props
+        .calendar_data
+        .filter(|data| !data.is_empty())?;
 
     Some(CaldavItemEntry {
-        id: id.to_string(),
-        etag: entry
-            .text(GETETAG)
-            .map(|raw| raw.trim_matches('"').to_string()),
-        data: data.as_bytes().to_vec(),
+        id,
+        etag: unquoted_etag(response.props.getetag),
+        data: data.into_bytes(),
     })
 }

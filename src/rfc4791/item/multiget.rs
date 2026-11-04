@@ -63,9 +63,11 @@ use crate::{
     coroutine::*,
     rfc4791::{
         calendar::calendar_multiget_body,
-        item::{CaldavItemEntry, ITEM_PROPS, item_from_entry, join_path},
+        item::{CaldavItemEntry, CaldavItemProps, ITEM_PROPS, item_from_response, join_path},
     },
-    rfc4918::{WebdavAuth, report::WebdavReport, send::WebdavSendError},
+    rfc4918::{
+        WebdavAuth, report::WebdavReport, send::WebdavSendError, typed::WebdavMultistatusOf,
+    },
     webdav_try,
 };
 
@@ -108,8 +110,8 @@ impl WebdavCoroutine for CaldavItemMultiget {
                 let multistatus = webdav_try!(report, arg);
                 let items = multistatus
                     .responses
-                    .iter()
-                    .filter_map(item_from_entry)
+                    .into_iter()
+                    .filter_map(item_from_response)
                     .collect();
                 WebdavCoroutineState::Complete(Ok(items))
             }
@@ -119,5 +121,5 @@ impl WebdavCoroutine for CaldavItemMultiget {
 
 #[derive(Debug)]
 enum State {
-    WebdavReport(WebdavReport),
+    WebdavReport(WebdavReport<WebdavMultistatusOf<CaldavItemProps>>),
 }

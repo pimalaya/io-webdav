@@ -61,10 +61,12 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{WebdavAuth, report::WebdavReport, send::WebdavSendError},
+    rfc4918::{
+        WebdavAuth, report::WebdavReport, send::WebdavSendError, typed::WebdavMultistatusOf,
+    },
     rfc6352::{
         addressbook::addressbook_multiget_body,
-        card::{CARD_PROPS, CarddavCardEntry, card_from_entry, join_path},
+        card::{CARD_PROPS, CarddavCardEntry, CarddavCardProps, card_from_response, join_path},
     },
     webdav_try,
 };
@@ -111,8 +113,8 @@ impl WebdavCoroutine for CarddavCardMultiget {
                 let multistatus = webdav_try!(report, arg);
                 let cards = multistatus
                     .responses
-                    .iter()
-                    .filter_map(card_from_entry)
+                    .into_iter()
+                    .filter_map(card_from_response)
                     .collect();
                 WebdavCoroutineState::Complete(Ok(cards))
             }
@@ -122,5 +124,5 @@ impl WebdavCoroutine for CarddavCardMultiget {
 
 #[derive(Debug)]
 enum State {
-    WebdavReport(WebdavReport),
+    WebdavReport(WebdavReport<WebdavMultistatusOf<CarddavCardProps>>),
 }

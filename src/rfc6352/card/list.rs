@@ -58,10 +58,13 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{WebdavAuth, has_element, report::WebdavReport, send::WebdavSendError},
+    rfc4918::{
+        WebdavAuth, has_element, report::WebdavReport, send::WebdavSendError,
+        typed::WebdavMultistatusOf,
+    },
     rfc6352::{
         addressbook::addressbook_query_body,
-        card::{CARD_PROPS, CarddavCardEntry, card_from_entry},
+        card::{CARD_PROPS, CarddavCardEntry, CarddavCardProps, card_from_response},
         filter::CarddavFilter,
     },
 };
@@ -136,8 +139,8 @@ impl WebdavCoroutine for CarddavCardList {
                     .any(|entry| entry.status == Some(507));
                 let cards = multistatus
                     .responses
-                    .iter()
-                    .filter_map(card_from_entry)
+                    .into_iter()
+                    .filter_map(card_from_response)
                     .collect();
 
                 WebdavCoroutineState::Complete(Ok(CarddavCardListOk { cards, truncated }))
@@ -173,5 +176,5 @@ const SUPPORTED_COLLATION: &str = "supported-collation";
 
 #[derive(Debug)]
 enum State {
-    WebdavReport(WebdavReport),
+    WebdavReport(WebdavReport<WebdavMultistatusOf<CarddavCardProps>>),
 }

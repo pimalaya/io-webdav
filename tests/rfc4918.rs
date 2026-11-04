@@ -680,7 +680,8 @@ fn mkcol_sends_the_extended_body() {
 
 #[test]
 fn propfind_parses_the_multistatus() {
-    let mut propfind = WebdavPropfind::new(&base(), &WebdavAuth::None, UA, "", 1, &[DISPLAYNAME]);
+    let mut propfind: WebdavPropfind =
+        WebdavPropfind::new(&base(), &WebdavAuth::None, UA, "", 1, &[DISPLAYNAME]);
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
         <d:href>/dav/personal/</d:href>
@@ -724,7 +725,8 @@ fn proppatch_sends_the_propertyupdate_body() {
 #[test]
 fn report_sends_the_query_body_and_parses_the_multistatus() {
     let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
-    let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
+    let mut report: WebdavReport =
+        WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
     let (request, ret) = expect_exchange(
         &mut report,
         &multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>"),
@@ -738,7 +740,8 @@ fn report_sends_the_query_body_and_parses_the_multistatus() {
 #[test]
 fn report_names_an_unimplemented_report_and_leaves_the_rest_alone() {
     let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
-    let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
+    let mut report: WebdavReport =
+        WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
     let refusal = r#"<d:error xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns">
       <s:exception>Sabre\DAV\Exception\ReportNotSupported</s:exception>
       <d:supported-report/>
@@ -755,7 +758,8 @@ fn report_names_an_unimplemented_report_and_leaves_the_rest_alone() {
     assert!(message.contains("ReportNotSupported"));
 
     let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
-    let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
+    let mut report: WebdavReport =
+        WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
     let (_, ret) = expect_exchange(
         &mut report,
         &http_response("405 Method Not Allowed", &[], ""),
@@ -763,7 +767,8 @@ fn report_names_an_unimplemented_report_and_leaves_the_rest_alone() {
     assert!(ret.unwrap_err().to_string().ends_with("(HTTP 405)"));
 
     let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
-    let mut report = WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
+    let mut report: WebdavReport =
+        WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
     let redirect = http_response(
         "302 Found",
         &[("Location", "https://elsewhere.example.org/")],
