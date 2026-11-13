@@ -34,6 +34,10 @@ All notable changes to this project are documented in this file. The format is b
 
   It was the caller's string as given, which differs from the id a listing returns as soon as the name needs an escape.
 
+- **BREAKING** Changed the io-http dependency to 0.7.
+
+  The coroutines take and yield its types, so a consumer bumps in step for a single version to resolve. `WebdavSendError::Send` and `WebdavFollowRedirectsError::Send` carry its new `InvalidRequest`, `UnsupportedTransferCoding` and `TooManyInterimResponses` failures.
+
 - Changed `WebdavClientStd` to keep the trailing slash on calendar and address book request paths.
 
 - Changed the multistatus parsers to keep a character reference to NUL or with a sign verbatim.
