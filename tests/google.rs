@@ -3,9 +3,9 @@
 //! Google speaks CalDAV/CardDAV over HTTPS but only behind an OAuth2 Bearer
 //! token (no app passwords), and it rejects collection creation
 //! (`MKCALENDAR`/`MKCOL`), so these tests exercise item / card CRUD inside an
-//! existing collection: the subject's primary calendar (whose collection is
-//! named `events`) and its `default` address book. Override them with
-//! `GOOGLE_CALENDAR_ID` and `GOOGLE_ADDRESSBOOK_ID`.
+//! existing collection: the primary calendar of the CalDAV principal (whose
+//! collection is named `events`) and the `default` address book of the CardDAV
+//! one. Override them with `GOOGLE_CALENDAR_ID` and `GOOGLE_ADDRESSBOOK_ID`.
 //!
 //! There are two ways to hand a token to these tests. A token minted by hand,
 //! with the `calendar` and `carddav` scopes, acts as you and dies within the
@@ -16,8 +16,8 @@
 //! cargo test --test google -- --ignored
 //! ```
 //!
-//! A Workspace service account with domain-wide delegation instead signs its
-//! own assertion on behalf of a user of the domain, so the run needs no human:
+//! A Workspace service account instead signs its own assertions, so the run
+//! needs no human:
 //!
 //! ```sh
 //! GOOGLE_SERVICE_ACCOUNT_KEY_FILE=key.json \
@@ -26,10 +26,27 @@
 //! ```
 //!
 //! CI passes the key itself rather than a path, as
-//! `GOOGLE_SERVICE_ACCOUNT_KEY`, since it comes straight out of a secret. The
-//! subject defaults to `google@pimalaya.org`, the Pimalaya test user. The
-//! delegation must grant the `https://www.googleapis.com/auth/calendar` and
-//! `https://www.googleapis.com/auth/carddav` scopes.
+//! `GOOGLE_SERVICE_ACCOUNT_KEY`, since it comes straight out of a secret.
+//!
+//! The key mints one token per protocol, each asking only the scopes it needs:
+//! a single scope the token endpoint does not grant fails the whole request
+//! with `unauthorized_client`.
+//!
+//! - CardDAV acts as the subject, a user of the domain, through domain-wide
+//!   delegation, which must grant the
+//!   `https://www.googleapis.com/auth/contacts` and
+//!   `https://www.googleapis.com/auth/carddav` scopes. The subject defaults to
+//!   `google@pimalaya.org`, the Pimalaya test user.
+//! - CalDAV acts as the service account itself, inside its own primary
+//!   calendar, with the full `https://www.googleapis.com/auth/calendar` scope,
+//!   which a service account gets for itself without any delegation.
+//!
+//! Not covered: CalDAV as a delegated user. The Pimalaya delegation grants the
+//! narrowed `calendar.events`, `calendar.calendarlist.readonly` and
+//! `calendar.calendars` scopes only, and Google's CalDAV server answers a
+//! token of these with a 403 `insufficientPermissions` from the principal
+//! discovery on. Granting the full `calendar` scope to the delegation would
+//! bring that case back.
 //!
 //! Google deviates from the RFCs in a few places the tests work around:
 //!
@@ -68,11 +85,19 @@ use secrecy::ExposeSecret;
 use serde::Deserialize;
 use url::Url;
 
-const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
-const CARDDAV_SCOPE: &str = "https://www.googleapis.com/auth/carddav";
+/// The scope CalDAV needs whole: its narrowed forms are refused with a 403.
+const CALDAV_SCOPES: [&str; 1] = ["https://www.googleapis.com/auth/calendar"];
+
+/// The scopes of CardDAV, both granted by the delegation.
+const CARDDAV_SCOPES: [&str; 2] = [
+    "https://www.googleapis.com/auth/contacts",
+    "https://www.googleapis.com/auth/carddav",
+];
+
 const DEFAULT_SUBJECT: &str = "google@pimalaya.org";
 
-/// CalDAV event CRUD inside the subject's primary calendar.
+/// CalDAV event CRUD inside the primary calendar of the service account
+/// itself, the one principal a key gets the full `calendar` scope for.
 #[test]
 #[ignore = "requires GOOGLE_ACCESS_TOKEN or a service account key, and --ignored"]
 fn caldav() {
@@ -80,7 +105,7 @@ fn caldav() {
 
     common::caldav_items(
         "https://apidata.googleusercontent.com/caldav/v2/",
-        common::bearer_auth(&token()),
+        common::bearer_auth(&token(None, &CALDAV_SCOPES)),
         &calendar_id,
     );
 }
@@ -91,7 +116,8 @@ fn caldav() {
 ///
 /// `GOOGLE_SCRATCH_CALENDARS` names two calendars the caller created for the
 /// run (Calendar API ids, comma-separated) and deletes afterwards: Google
-/// refuses `MKCALENDAR`. The test writes into those two only.
+/// refuses `MKCALENDAR`. Under a key they are the service account's own. The
+/// test writes into those two only.
 #[test]
 #[ignore = "requires a token or key and --ignored; skips without GOOGLE_SCRATCH_CALENDARS"]
 fn caldav_secondary_calendars() {
@@ -107,7 +133,7 @@ fn caldav_secondary_calendars() {
     };
 
     let base = Url::parse("https://apidata.googleusercontent.com/caldav/v2/").unwrap();
-    let auth = common::bearer_auth(&token());
+    let auth = common::bearer_auth(&token(None, &CALDAV_SCOPES));
     let mut client = WebdavClientStd::connect(&base, auth, Default::default()).expect("connect");
     client.current_user_principal().expect("principal");
     client.calendar_home_set().expect("home set");
@@ -168,7 +194,7 @@ fn caldav_secondary_calendars() {
 #[test]
 #[ignore = "requires GOOGLE_ACCESS_TOKEN or a service account key, and --ignored"]
 fn carddav() {
-    let token = token();
+    let token = token(Some(&subject()), &CARDDAV_SCOPES);
     let addressbook_id = env::var("GOOGLE_ADDRESSBOOK_ID").unwrap_or("default".into());
 
     let base = common::google_carddav_base(&token);
@@ -186,7 +212,7 @@ fn carddav() {
     );
 }
 
-/// The delegated user whose calendar and contacts the tests borrow.
+/// The delegated user whose contacts the CardDAV test borrows.
 fn subject() -> String {
     env::var("GOOGLE_SERVICE_ACCOUNT_SUBJECT").unwrap_or_else(|_| String::from(DEFAULT_SUBJECT))
 }
@@ -195,9 +221,9 @@ fn subject() -> String {
 ///
 /// `GOOGLE_ACCESS_TOKEN` short-circuits everything. Otherwise a service account
 /// key, held inline in `GOOGLE_SERVICE_ACCOUNT_KEY` or at the path
-/// `GOOGLE_SERVICE_ACCOUNT_KEY_FILE`, is traded for a fresh token acting as
-/// the subject.
-fn token() -> String {
+/// `GOOGLE_SERVICE_ACCOUNT_KEY_FILE`, is traded for a fresh token of `scopes`
+/// acting as `subject`, or as the service account itself without one.
+fn token(subject: Option<&str>, scopes: &[&str]) -> String {
     if let Ok(token) = env::var("GOOGLE_ACCESS_TOKEN") {
         return token;
     }
@@ -206,14 +232,14 @@ fn token() -> String {
         .ok()
         .filter(|key| !key.is_empty())
     {
-        return mint_token(&key);
+        return mint_token(&key, subject, scopes);
     }
 
     if let Ok(path) = env::var("GOOGLE_SERVICE_ACCOUNT_KEY_FILE") {
         let key = fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("cannot read the service account key at {path}: {err}"));
 
-        return mint_token(&key);
+        return mint_token(&key, subject, scopes);
     }
 
     panic!(
@@ -237,12 +263,12 @@ fn default_token_uri() -> String {
 }
 
 /// Signs a JWT bearer assertion with the service account key, on behalf of the
-/// subject, and trades it for an access token (RFC 7523 section 2.1).
+/// subject if any, and trades it for an access token (RFC 7523 section 2.1).
 ///
 /// The scopes ride in the claims, which is Google's deviation from the RFC, and
 /// io-oauth models it: the token endpoint reads them from there rather than
 /// from the request body.
-fn mint_token(key: &str) -> String {
+fn mint_token(key: &str, subject: Option<&str>, scopes: &[&str]) -> String {
     let key: ServiceAccountKey =
         serde_json::from_str(key).expect("the service account key is valid JSON");
 
@@ -257,10 +283,8 @@ fn mint_token(key: &str) -> String {
 
     let claims = Oauth20JwtBearerClaims {
         iss: key.client_email.as_str().into(),
-        sub: Some(subject().into()),
-        scope: [Cow::from(CALENDAR_SCOPE), Cow::from(CARDDAV_SCOPE)]
-            .into_iter()
-            .collect(),
+        sub: subject.map(Cow::from),
+        scope: scopes.iter().copied().map(Cow::from).collect(),
         ..Default::default()
     };
 
