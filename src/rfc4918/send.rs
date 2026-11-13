@@ -51,7 +51,10 @@
 
 use core::mem;
 
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use io_http::{
     coroutine::*,
@@ -64,10 +67,13 @@ use io_http::{
 };
 use log::trace;
 use thiserror::Error;
+use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4918::{WebdavMultistatusParseError, summarized},
+    rfc4918::{
+        WebdavMemberFailure, WebdavMultistatusParseError, body_text, parse_multistatus, summarized,
+    },
 };
 
 /// Successful terminal output of a WebDAV send coroutine.
@@ -142,8 +148,23 @@ pub enum WebdavSendError {
         body: String,
     },
     /// The server returned a redirect where none was expected.
-    #[error("WebDAV server returned unexpected redirect")]
-    UnexpectedRedirect,
+    #[error("WebDAV server returned unexpected redirect to {url}")]
+    UnexpectedRedirect {
+        /// Resolved redirect target, from the `Location` header.
+        url: Url,
+        /// Whether the server will keep the connection open.
+        keep_alive: bool,
+        /// Whether the redirect stays on the same scheme, host and port.
+        same_origin: bool,
+    },
+    /// The server answered a `DELETE`, `COPY` or `MOVE` with a 207 naming the
+    /// members it failed on (RFC 4918 §9.6.1, §9.8.5, §9.9.4).
+    #[error("WebDAV server failed on {}", joined(.0))]
+    MemberFailures(Vec<WebdavMemberFailure>),
+    /// The value of the named request header carries a control character,
+    /// which could end its line; nothing was sent.
+    #[error("WebDAV request header {0} carries a control character")]
+    InvalidHeader(String),
     /// The multistatus body could not be parsed.
     #[error(transparent)]
     Multistatus(#[from] WebdavMultistatusParseError),
@@ -162,10 +183,16 @@ pub struct WebdavSendRaw {
 impl WebdavSendRaw {
     /// Builds a new coroutine from a request already carrying its body bytes
     /// (see [`request`](crate::rfc4918::request)).
+    ///
+    /// A request whose header value carries a control character is never
+    /// sent: the coroutine completes with [`WebdavSendError::InvalidHeader`].
     pub fn new(request: HttpRequest) -> Self {
-        Self {
-            state: State::Send(Http11Send::new(request)),
-        }
+        let state = match invalid_header(&request) {
+            Some(name) => State::Reject(name.to_string()),
+            None => State::Send(Http11Send::new(request)),
+        };
+
+        Self { state }
     }
 }
 
@@ -184,10 +211,18 @@ impl WebdavCoroutine for WebdavSendRaw {
                     HttpCoroutineState::Yielded(HttpSendYield::WantsWrite(bytes)) => {
                         return WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes));
                     }
-                    HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect { .. }) => {
-                        return WebdavCoroutineState::Complete(Err(
-                            WebdavSendError::UnexpectedRedirect,
-                        ));
+                    HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect {
+                        url,
+                        keep_alive,
+                        same_origin,
+                        ..
+                    }) => {
+                        let err = WebdavSendError::UnexpectedRedirect {
+                            url,
+                            keep_alive,
+                            same_origin,
+                        };
+                        return WebdavCoroutineState::Complete(Err(err));
                     }
                     HttpCoroutineState::Complete(Err(err)) => {
                         return WebdavCoroutineState::Complete(Err(err.into()));
@@ -217,11 +252,61 @@ impl WebdavCoroutine for WebdavSendRaw {
                     body,
                 }))
             }
+            State::Reject(name) => {
+                let err = WebdavSendError::InvalidHeader(mem::take(name));
+                WebdavCoroutineState::Complete(Err(err))
+            }
         }
     }
 }
 
+/// Returns the name of the first header of `request` whose value carries a
+/// control character (a byte below 0x20, or 0x7F).
+pub(crate) fn invalid_header(request: &HttpRequest) -> Option<&str> {
+    let control = |byte: u8| byte < 0x20 || byte == 0x7f;
+
+    request
+        .headers
+        .iter()
+        .find(|(_, value)| value.bytes().any(control))
+        .map(|(name, _)| name.as_str())
+}
+
+/// Fails a `DELETE`, `COPY` or `MOVE` answered 207, unless every row of it
+/// carries a 2xx status.
+pub(crate) fn check_members(
+    ok: WebdavSendOk<Vec<u8>>,
+) -> Result<WebdavSendOk<Vec<u8>>, WebdavSendError> {
+    if *ok.response.status != 207 {
+        return Ok(ok);
+    }
+
+    let failures: Vec<WebdavMemberFailure> = parse_multistatus(&body_text(&ok.body))?
+        .responses
+        .into_iter()
+        .filter(|entry| entry.status.is_none_or(|status| status / 100 != 2))
+        .map(|entry| WebdavMemberFailure {
+            href: entry.href,
+            status: entry.status,
+        })
+        .collect();
+
+    if failures.is_empty() {
+        return Ok(ok);
+    }
+
+    Err(WebdavSendError::MemberFailures(failures))
+}
+
+/// Renders failed members as `href (status), href (status)`.
+fn joined(failures: &[WebdavMemberFailure]) -> String {
+    let failures: Vec<String> = failures.iter().map(ToString::to_string).collect();
+    failures.join(", ")
+}
+
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum State {
     Send(Http11Send),
+    Reject(String),
 }

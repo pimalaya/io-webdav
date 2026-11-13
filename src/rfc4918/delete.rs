@@ -54,11 +54,13 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         request::WebdavRequest,
-        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
+        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw, check_members},
     },
+    webdav_try,
 };
 
-/// Coroutine that runs a `DELETE`.
+/// Coroutine that runs a `DELETE`, failing on a 207 that names the members
+/// the server could not delete (RFC 4918 §9.6.1).
 #[derive(Debug)]
 pub struct WebdavDelete {
     state: State,
@@ -92,7 +94,10 @@ impl WebdavCoroutine for WebdavDelete {
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Send(send) => send.resume(arg),
+            State::Send(send) => {
+                let ok = webdav_try!(send, arg);
+                WebdavCoroutineState::Complete(check_members(ok))
+            }
         }
     }
 }

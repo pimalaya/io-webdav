@@ -181,10 +181,13 @@ impl WebdavRequest {
 }
 
 /// Formats an ETag as a conditional-header entity-tag (RFC 9110 §8.8.3):
-/// a bare strong tag gets double quotes, while `*`, weak (`W/...`) and
-/// already-quoted values pass through unchanged.
+/// a bare strong tag gets double quotes, while `*`, a weak tag (`W/"..."`)
+/// and an already-quoted value pass through unchanged.
 fn entity_tag(etag: &str) -> String {
-    if etag == "*" || etag.starts_with('"') || etag.starts_with("W/") {
+    let tag = etag.strip_prefix("W/").unwrap_or(etag);
+    let quoted = tag.len() > 1 && tag.starts_with('"') && tag.ends_with('"');
+
+    if etag == "*" || quoted {
         etag.to_string()
     } else {
         format!("\"{etag}\"")

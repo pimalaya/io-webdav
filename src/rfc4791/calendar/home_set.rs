@@ -111,7 +111,7 @@ impl WebdavCoroutine for CaldavCalendarHomeSet {
                     .responses
                     .into_iter()
                     .filter_map(|response| response.props.calendar_home_set)
-                    .flat_map(|home_set| home_set.href)
+                    .flat_map(|home_set| home_set.0)
                     .find(|href| !href.is_empty())
                     .and_then(|href| resolve_href(&self.base_url, &href));
                 WebdavCoroutineState::Complete(Ok(url))

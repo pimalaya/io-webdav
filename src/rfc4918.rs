@@ -47,7 +47,10 @@ use io_http::{
     rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic, rfc9110::response::HttpResponse,
 };
 use log::trace;
-use serde::Deserialize;
+use serde::{
+    Deserialize, Deserializer,
+    de::{IgnoredAny, MapAccess, Visitor},
+};
 use thiserror::Error;
 use url::Url;
 
@@ -147,6 +150,25 @@ pub struct WebdavPropFailure {
 impl fmt::Display for WebdavPropFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ({})", self.property, self.status)
+    }
+}
+
+/// A member a `DELETE`, `COPY` or `MOVE` failed on, named by a row of the
+/// 207 answering it (RFC 4918 §9.6.1, §9.8.5, §9.9.4).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WebdavMemberFailure {
+    /// The `<href>` of the member, as returned by the server.
+    pub href: String,
+    /// The response-level `<status>` code, when the row carries one.
+    pub status: Option<u16>,
+}
+
+impl fmt::Display for WebdavMemberFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.status {
+            Some(status) => write!(f, "{} ({status})", self.href),
+            None => f.write_str(&self.href),
+        }
     }
 }
 
@@ -515,6 +537,35 @@ pub fn id_from_location(location: &str) -> Option<String> {
     (!segment.is_empty()).then(|| segment.to_string())
 }
 
+/// Returns the id a request to `path` addresses: the last segment of the URL
+/// sent, percent-encoded as [`resolve`] made it and as a listing returns it.
+pub(crate) fn sent_id(base_url: &Url, path: &str) -> String {
+    let url = resolve(base_url, path);
+    id_from_location(url.path()).unwrap_or_default()
+}
+
+/// Percent-encodes a resource name into one path segment (RFC 3986 §2.1),
+/// every byte but the unreserved ones escaped.
+///
+/// A name the caller mints goes through here: the result is sent as it
+/// stands, and is the id a create returns.
+pub fn encode_id(name: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut id = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            id.push(char::from(byte));
+            continue;
+        }
+
+        id.push('%');
+        id.push(char::from(HEX[usize::from(byte >> 4)]));
+        id.push(char::from(HEX[usize::from(byte & 15)]));
+    }
+    id
+}
+
 /// Builds an extended `MKCOL` request body (RFC 5689 §3): a
 /// `<resourcetype>` of `<collection/>` plus `resource_types`, and each
 /// `set` property value.
@@ -625,7 +676,16 @@ pub(crate) struct WebdavEtagProps {
 /// Returns an entity tag without its surrounding quotes, when non-empty.
 pub(crate) fn unquoted_etag(etag: Option<String>) -> Option<String> {
     etag.filter(|etag| !etag.is_empty())
-        .map(|etag| etag.trim_matches('"').to_string())
+        .map(|etag| unquoted(&etag).to_string())
+}
+
+/// Returns the opaque value of a strong entity tag (RFC 9110 §8.8.3), its
+/// quotes dropped; a weak tag (`W/"..."`) is kept whole.
+fn unquoted(etag: &str) -> &str {
+    let value = etag.strip_prefix('"');
+    value
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(etag)
 }
 
 /// The local names of a property's children, e.g. the types a
@@ -633,11 +693,47 @@ pub(crate) fn unquoted_etag(etag: Option<String>) -> Option<String> {
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct WebdavChildNames(pub BTreeMap<String, ()>);
 
-/// The `href` children of a property, e.g. the home sets of a principal.
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct WebdavHrefs {
-    #[serde(default)]
-    pub href: Vec<String>,
+/// The hrefs a property names, e.g. the home sets of a principal: its `href`
+/// children, or its own text when it has none.
+#[derive(Debug, Default)]
+pub(crate) struct WebdavHrefs(pub Vec<String>);
+
+impl<'de> Deserialize<'de> for WebdavHrefs {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(WebdavHrefsVisitor)
+    }
+}
+
+struct WebdavHrefsVisitor;
+
+impl<'de> Visitor<'de> for WebdavHrefsVisitor {
+    type Value = WebdavHrefs;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("href elements or text")
+    }
+
+    fn visit_unit<E>(self) -> Result<WebdavHrefs, E> {
+        Ok(WebdavHrefs::default())
+    }
+
+    fn visit_str<E>(self, text: &str) -> Result<WebdavHrefs, E> {
+        Ok(WebdavHrefs(Vec::from([text.to_string()])))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<WebdavHrefs, A::Error> {
+        let mut hrefs = Vec::new();
+
+        while let Some(key) = map.next_key::<String>()? {
+            if key == "href" {
+                hrefs = map.next_value()?;
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+
+        Ok(WebdavHrefs(hrefs))
+    }
 }
 
 /// A `supported-report-set` (RFC 3253 §3.1.5): one `supported-report` per
@@ -1014,12 +1110,10 @@ pub fn resolve(base_url: &Url, path: &str) -> Url {
     base.join(path).unwrap_or_else(|_| base_url.clone())
 }
 
-/// Reads the `ETag` header (RFC 9110 §8.8.3) out of an HTTP response,
-/// stripping the surrounding double quotes when present.
+/// Reads the `ETag` header (RFC 9110 §8.8.3) out of an HTTP response: the
+/// opaque value of a strong tag, its quotes dropped, a weak tag kept whole.
 pub fn read_etag(response: &HttpResponse) -> Option<String> {
-    response
-        .header("etag")
-        .map(|raw| raw.trim_matches('"').into())
+    response.header("etag").map(|raw| unquoted(raw).into())
 }
 
 /// Resolves an `<href>` value against `base_url`, joining when the href is

@@ -268,6 +268,30 @@ fn calendar_home_set_takes_the_first_of_several_hrefs() {
 }
 
 #[test]
+fn calendar_home_set_reads_bare_text_when_no_href_is_given() {
+    let mut discovery =
+        CaldavCalendarHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <d:response>
+        <d:href>/principals/alice/</d:href>
+        <d:propstat>
+          <d:prop>
+            <c:calendar-home-set>
+              /dav/calendars/
+            </c:calendar-home-set>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_, ret) = expect_redirect_exchange(&mut discovery, &multistatus_response(xml));
+
+    let home = ret.unwrap().expect("home-set discovered");
+    assert_eq!(home.as_str(), "https://dav.example.org/dav/calendars/");
+}
+
+#[test]
 fn calendar_home_set_yields_none_on_an_empty_multistatus() {
     let mut discovery =
         CaldavCalendarHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
@@ -490,6 +514,51 @@ fn create_item_uses_the_id_verbatim() {
 }
 
 #[test]
+fn create_and_update_item_return_the_segment_sent() {
+    let mut create = CaldavItemCreate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "réunion 1.ics",
+        b"BEGIN:VCALENDAR".to_vec(),
+    );
+    let (request, ret) = expect_exchange(&mut create, &http_response("201 Created", &[], ""));
+    assert!(request.starts_with("put /dav/calendars/personal/r%c3%a9union%201.ics http/1.1\r\n"));
+    assert_eq!(ret.unwrap().id, "r%C3%A9union%201.ics");
+
+    let mut update = CaldavItemUpdate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "réunion 1.ics",
+        b"BEGIN:VCALENDAR".to_vec(),
+        None,
+    );
+    let (_, ret) = expect_exchange(&mut update, &http_response("204 No Content", &[], ""));
+    assert_eq!(ret.unwrap().id, "r%C3%A9union%201.ics");
+}
+
+#[test]
+fn move_item_returns_the_segment_sent() {
+    let mut moving = CaldavItemMove::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "réunion 1.ics",
+        "/dav/calendars/work/",
+        None,
+    );
+    let (request, ret) = expect_exchange(&mut moving, &http_response("201 Created", &[], ""));
+    assert!(request.contains(
+        "\r\ndestination: https://dav.example.org/dav/calendars/work/r%c3%a9union%201.ics\r\n"
+    ));
+    assert_eq!(ret.unwrap().id, "r%C3%A9union%201.ics");
+}
+
+#[test]
 fn create_item_prefers_the_location_id_when_the_server_relocates() {
     // NOTE: a server may store the item under a name of its own and report it
     // in `Location`: the returned id is then that name, not the caller's, while
@@ -671,8 +740,34 @@ fn create_and_update_name_a_refused_duplicate_uid() {
     let (_, ret) = expect_exchange(&mut create, &redirect);
     assert!(matches!(
         ret.unwrap_err(),
-        WebdavSendError::UnexpectedRedirect
+        WebdavSendError::UnexpectedRedirect { .. }
     ));
+}
+
+#[test]
+fn move_item_fails_on_a_multistatus_naming_a_failed_member() {
+    let mut moving = CaldavItemMove::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "event-1.ics",
+        "/dav/calendars/work/",
+        None,
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/calendars/work/event-1.ics</d:href>
+        <d:status>HTTP/1.1 423 Locked</d:status>
+      </d:response>
+    </d:multistatus>"#;
+    let (_, ret) = expect_exchange(&mut moving, &multistatus_response(xml));
+
+    let err = ret.expect_err("MOVE answered 207 passed for a success");
+    assert!(
+        matches!(err, WebdavSendError::MemberFailures(_)),
+        "unexpected error {err:?}",
+    );
 }
 
 #[test]

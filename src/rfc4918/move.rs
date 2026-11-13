@@ -57,11 +57,13 @@ use crate::{
     rfc4918::{
         WebdavAuth,
         request::WebdavRequest,
-        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
+        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw, check_members},
     },
+    webdav_try,
 };
 
-/// Coroutine that runs a `MOVE` of `path` to `destination`.
+/// Coroutine that runs a `MOVE` of `path` to `destination`, failing on a 207
+/// that names the members the server could not move (RFC 4918 §9.9.4).
 #[derive(Debug)]
 pub struct WebdavMove {
     state: State,
@@ -94,7 +96,10 @@ impl WebdavCoroutine for WebdavMove {
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
-            State::Send(send) => send.resume(arg),
+            State::Send(send) => {
+                let ok = webdav_try!(send, arg);
+                WebdavCoroutineState::Complete(check_members(ok))
+            }
         }
     }
 }

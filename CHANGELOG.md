@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Added `rfc4918::encode_id`.
+
+  It percent-encodes a name the caller mints into a path segment, the form an id has.
+
+- Added `rfc4918::WebdavMemberFailure`.
+
 ### Changed
 
 - **BREAKING** Changed `rfc4918::parse_multistatus` and `rfc4918::typed::parse_multistatus_as` to fail on a body that is not one whole `multistatus` document.
@@ -12,7 +20,31 @@ All notable changes to this project are documented in this file. The format is b
 
 - **BREAKING** Changed `WebdavMultistatusParseError` to carry `UnexpectedRoot` and `Incomplete`.
 
+- **BREAKING** Changed `WebdavDelete`, `WebdavCopy`, `WebdavMove` and `CaldavItemMove` to fail on a 207 naming failed members.
+
+  The members come back in `WebdavSendError::MemberFailures`.
+
+- **BREAKING** Changed `WebdavSendError::UnexpectedRedirect` to carry `url`, `keep_alive` and `same_origin`.
+
+- **BREAKING** Changed `WebdavSendRaw` and `WebdavFollowRedirects` to refuse a request whose header value carries a control character.
+
+  Nothing is sent, and `InvalidHeader`, new on `WebdavSendError` and `WebdavFollowRedirectsError`, names the header.
+
+- **BREAKING** Changed the id a create, update or move returns to the last segment of the URL sent, percent-encoded.
+
+  It was the caller's string as given, which differs from the id a listing returns as soon as the name needs an escape.
+
+- Changed `WebdavClientStd` to keep the trailing slash on calendar and address book request paths.
+
+- Changed the multistatus parsers to keep a character reference to NUL or with a sign verbatim.
+
 ### Fixed
+
+- Fixed a weak entity tag losing its closing quote in `rfc4918::read_etag` and in listed ETags.
+
+  A weak tag is kept whole and sent back whole in `If-Match` and `If-None-Match`.
+
+- Fixed `WebdavRequest::if_match` and `if_none_match` sending a bare value starting with `W/` unquoted.
 
 - Fixed `rfc4918::parse_multistatus` reading `response`, `propstat` and `prop` elements nested in a property value as part of the envelope.
 

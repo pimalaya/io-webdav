@@ -65,7 +65,10 @@
 
 use core::mem;
 
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use io_http::{
     coroutine::*,
@@ -78,7 +81,10 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavMultistatusParseError, coroutine::WebdavRedirectYield, send::WebdavSendOk, summarized,
+        WebdavMultistatusParseError,
+        coroutine::WebdavRedirectYield,
+        send::{WebdavSendOk, invalid_header},
+        summarized,
     },
 };
 
@@ -94,6 +100,10 @@ pub enum WebdavFollowRedirectsError {
         /// The response body, verbatim.
         body: String,
     },
+    /// The value of the named request header carries a control character,
+    /// which could end its line; nothing was sent.
+    #[error("WebDAV request header {0} carries a control character")]
+    InvalidHeader(String),
     /// The multistatus body could not be parsed.
     #[error(transparent)]
     Multistatus(#[from] WebdavMultistatusParseError),
@@ -113,10 +123,17 @@ pub struct WebdavFollowRedirects {
 impl WebdavFollowRedirects {
     /// Builds a new redirect-aware send coroutine. `request` must already carry
     /// its body bytes.
+    ///
+    /// A request whose header value carries a control character is never
+    /// sent: the coroutine completes with
+    /// [`WebdavFollowRedirectsError::InvalidHeader`].
     pub fn new(request: HttpRequest) -> Self {
-        Self {
-            state: State::Send(Http11Send::new(request)),
-        }
+        let state = match invalid_header(&request) {
+            Some(name) => State::Reject(name.to_string()),
+            None => State::Send(Http11Send::new(request)),
+        };
+
+        Self { state }
     }
 }
 
@@ -160,11 +177,17 @@ impl WebdavCoroutine for WebdavFollowRedirects {
                     body,
                 }))
             }
+            State::Reject(name) => {
+                let err = WebdavFollowRedirectsError::InvalidHeader(mem::take(name));
+                WebdavCoroutineState::Complete(Err(err))
+            }
         }
     }
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum State {
     Send(Http11Send),
+    Reject(String),
 }

@@ -68,10 +68,7 @@
 
 use core::mem;
 
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{string::String, vec::Vec};
 
 use log::trace;
 use url::Url;
@@ -83,6 +80,7 @@ use crate::{
         put::{WebdavPut, WebdavPutArgs, duplicate_uid},
         read_etag,
         send::{WebdavSendError, WebdavSendOk},
+        sent_id,
     },
     rfc6352::card::join_path,
 };
@@ -116,7 +114,7 @@ impl CarddavCardCreate {
             if_none_match: Some("*"),
         });
         Self {
-            id: id.to_string(),
+            id: sent_id(base_url, &path),
             state: State::WebdavPut(put),
         }
     }
@@ -161,8 +159,8 @@ enum State {
 #[derive(Clone, Debug)]
 pub struct CarddavCardCreateOk {
     /// Card resource id: the `Location` header's last path segment when the
-    /// server returns one (its own name for the resource), otherwise the
-    /// caller-supplied name, verbatim.
+    /// server returns one (its own name for the resource), otherwise the last
+    /// segment of the request URL, percent-encoded as it was sent.
     pub id: String,
     /// Entity tag returned by the server, when present.
     pub etag: Option<String>,

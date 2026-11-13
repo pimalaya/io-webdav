@@ -79,7 +79,8 @@ use crate::{
         put::duplicate_uid,
         read_etag,
         request::WebdavRequest,
-        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw},
+        send::{WebdavSendError, WebdavSendOk, WebdavSendRaw, check_members},
+        sent_id,
     },
 };
 
@@ -115,7 +116,7 @@ impl CaldavItemMove {
             request = request.if_match(etag);
         }
         Self {
-            id: id.to_string(),
+            id: sent_id(base_url, &path),
             state: State::Send(WebdavSendRaw::new(request.body(Vec::new()))),
         }
     }
@@ -139,7 +140,10 @@ impl WebdavCoroutine for CaldavItemMove {
                     WebdavCoroutineState::Complete(Ok(ok)) => ok,
                 };
 
-                let WebdavSendOk { response, .. } = ok;
+                let WebdavSendOk { response, .. } = match check_members(ok) {
+                    Ok(ok) => ok,
+                    Err(err) => return WebdavCoroutineState::Complete(Err(err)),
+                };
                 let etag = read_etag(&response);
                 let id = mem::take(&mut self.id);
                 WebdavCoroutineState::Complete(Ok(CaldavItemMoveOk { id, etag }))
@@ -156,7 +160,8 @@ enum State {
 /// Outcome of a successful [`CaldavItemMove`] resume.
 #[derive(Clone, Debug)]
 pub struct CaldavItemMoveOk {
-    /// Item resource id in the target calendar, the source's own.
+    /// Item resource id in the target calendar, the source's own: the last
+    /// segment of the request URL, percent-encoded as it was sent.
     pub id: String,
     /// Entity tag of the moved item, when the server returns one: most do not,
     /// and a reader of the target learns it from its next listing.

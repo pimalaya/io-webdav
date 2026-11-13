@@ -428,6 +428,8 @@ fn push_spaces(raw: &str, out: &mut String) {
 }
 
 /// Resolves a reference name (the text between `&` and `;`) to its character.
+/// A signed number and NUL, which XML 1.0 §4.1 has no reference for, resolve
+/// to nothing.
 fn resolve_reference(name: &str) -> Option<char> {
     let code = match name.as_bytes() {
         b"amp" => return Some('&'),
@@ -435,12 +437,14 @@ fn resolve_reference(name: &str) -> Option<char> {
         b"gt" => return Some('>'),
         b"quot" => return Some('"'),
         b"apos" => return Some('\''),
-        [b'#', b'x', ..] => u32::from_str_radix(&name[2..], 16).ok()?,
-        [b'#', ..] => name[1..].parse().ok()?,
+        [b'#', b'x', digits @ ..] if digits.iter().all(u8::is_ascii_hexdigit) => {
+            u32::from_str_radix(&name[2..], 16).ok()?
+        }
+        [b'#', digits @ ..] if digits.iter().all(u8::is_ascii_digit) => name[1..].parse().ok()?,
         _ => return None,
     };
 
-    char::from_u32(code)
+    char::from_u32(code).filter(|&ch| ch != '\0')
 }
 
 /// The local part of a qualified name, cut at the first colon.
@@ -607,6 +611,13 @@ mod tests {
             decoded("a&#xD800;b&#99999999999;c&#;d&#x;e&X;"),
             "a&#xD800;b&#99999999999;c&#;d&#x;e&X;"
         );
+    }
+
+    #[test]
+    fn references_to_nul_and_signed_references_stay_verbatim() {
+        assert_eq!(decoded("a&#0;b&#x0;c"), "a&#0;b&#x0;c");
+        assert_eq!(decoded("&#x+41;&#+65;&#-0;"), "&#x+41;&#+65;&#-0;");
+        assert_eq!(decode_attr("&#0;&#x+41;"), "&#0;&#x+41;");
     }
 
     #[test]

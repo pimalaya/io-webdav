@@ -1204,8 +1204,7 @@ fn is_closed(err: &io::Error) -> bool {
 
 fn calendar_path(home: Option<&Url>, calendar_id: &str) -> Result<String, WebdavClientStdError> {
     let home = home.ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
-    let path = collection_path(home.path(), calendar_id);
-    Ok(path.trim_end_matches('/').to_string())
+    Ok(collection_path(home.path(), calendar_id))
 }
 
 fn addressbook_path(
@@ -1213,8 +1212,7 @@ fn addressbook_path(
     addressbook_id: &str,
 ) -> Result<String, WebdavClientStdError> {
     let home = home.ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
-    let path = collection_path(home.path(), addressbook_id);
-    Ok(path.trim_end_matches('/').to_string())
+    Ok(collection_path(home.path(), addressbook_id))
 }
 
 /// Marker for everything the client can run against; auto-implemented for any

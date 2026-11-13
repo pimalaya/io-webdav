@@ -360,6 +360,30 @@ fn addressbook_home_set_takes_the_first_of_several_hrefs() {
 }
 
 #[test]
+fn addressbook_home_set_reads_bare_text_when_no_href_is_given() {
+    let mut discovery =
+        CarddavAddressbookHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/principals/alice/</d:href>
+        <d:propstat>
+          <d:prop>
+            <c:addressbook-home-set>
+              /dav/books/
+            </c:addressbook-home-set>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_, ret) = expect_redirect_exchange(&mut discovery, &multistatus_response(xml));
+
+    let home = ret.unwrap().expect("home-set discovered");
+    assert_eq!(home.as_str(), "https://dav.example.org/dav/books/");
+}
+
+#[test]
 fn addressbook_home_set_yields_none_on_an_empty_multistatus() {
     let mut discovery =
         CarddavAddressbookHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
@@ -573,6 +597,33 @@ fn create_card_uses_the_id_verbatim() {
     let ok = ret.unwrap();
     assert_eq!(ok.id, "alice");
     assert_eq!(ok.etag.as_deref(), Some("etag-1"));
+}
+
+#[test]
+fn create_and_update_card_return_the_segment_sent() {
+    let mut create = CarddavCardCreate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        "zoé 1.vcf",
+        b"BEGIN:VCARD".to_vec(),
+    );
+    let (request, ret) = expect_exchange(&mut create, &http_response("201 Created", &[], ""));
+    assert!(request.starts_with("put /dav/books/contacts/zo%c3%a9%201.vcf http/1.1\r\n"));
+    assert_eq!(ret.unwrap().id, "zo%C3%A9%201.vcf");
+
+    let mut update = CarddavCardUpdate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        "zoé 1.vcf",
+        b"BEGIN:VCARD".to_vec(),
+        None,
+    );
+    let (_, ret) = expect_exchange(&mut update, &http_response("204 No Content", &[], ""));
+    assert_eq!(ret.unwrap().id, "zo%C3%A9%201.vcf");
 }
 
 #[test]

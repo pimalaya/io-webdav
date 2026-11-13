@@ -5,28 +5,33 @@
 mod common;
 
 use common::*;
-use io_webdav::rfc4918::{
-    DAV, DISPLAYNAME, GETETAG, MULTISTATUS_MAX_DEPTH, RESOURCETYPE, WebdavAuth,
-    WebdavMultistatusParseError, WebdavNamespace, WebdavPropFailure, WebdavPropItem,
-    WebdavPropValue, WebdavProperty, WebdavResponseEntry, collection_id, collection_path,
-    copy::WebdavCopy as CopyResource,
-    delete::WebdavDelete,
-    follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
-    get::WebdavGet,
-    mkcol::WebdavMkcol,
-    r#move::WebdavMove,
-    options::WebdavOptions,
-    parse_multistatus,
-    propfind::WebdavPropfind,
-    proppatch::WebdavProppatch,
-    put::{WebdavPut, WebdavPutArgs},
-    read_etag,
-    report::WebdavReport,
-    report_query_body,
-    request::WebdavRequest,
-    resolve, resolve_href,
-    send::{WebdavSendError, WebdavSendRaw},
-    summarize_body, trace_unrecognized, xmlns_decls,
+use io_webdav::{
+    coroutine::{WebdavCoroutine, WebdavCoroutineState},
+    rfc4918::{
+        DAV, DISPLAYNAME, GETETAG, MULTISTATUS_MAX_DEPTH, RESOURCETYPE, WebdavAuth,
+        WebdavMemberFailure, WebdavMultistatusParseError, WebdavNamespace, WebdavPropFailure,
+        WebdavPropItem, WebdavPropValue, WebdavProperty, WebdavResponseEntry, collection_id,
+        collection_path,
+        copy::WebdavCopy as CopyResource,
+        delete::WebdavDelete,
+        encode_id,
+        follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
+        get::WebdavGet,
+        mkcol::WebdavMkcol,
+        r#move::WebdavMove,
+        options::WebdavOptions,
+        parse_multistatus,
+        propfind::WebdavPropfind,
+        proppatch::WebdavProppatch,
+        put::{WebdavPut, WebdavPutArgs},
+        read_etag,
+        report::WebdavReport,
+        report_query_body,
+        request::WebdavRequest,
+        resolve, resolve_href,
+        send::{WebdavSendError, WebdavSendRaw},
+        summarize_body, trace_unrecognized, xmlns_decls,
+    },
 };
 use url::Url;
 
@@ -608,10 +613,17 @@ fn send_raw_rejects_redirects() {
 
     let reply = http_response("301 Moved Permanently", &[("Location", "/new")], "");
     let (_, ret) = expect_exchange(&mut send, &reply);
-    assert!(matches!(
-        ret.unwrap_err(),
-        WebdavSendError::UnexpectedRedirect
-    ));
+    let WebdavSendError::UnexpectedRedirect {
+        url,
+        keep_alive,
+        same_origin,
+    } = ret.unwrap_err()
+    else {
+        panic!("expected an unexpected redirect");
+    };
+    assert_eq!(url.as_str(), "https://dav.example.org/new");
+    assert!(keep_alive);
+    assert!(same_origin);
 }
 
 #[test]
@@ -717,6 +729,155 @@ fn delete_carries_the_optional_if_match() {
     let (request, ret) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
     assert!(!request.contains("if-match"));
     ret.unwrap();
+}
+
+#[test]
+fn a_weak_etag_is_read_whole_and_sent_back_whole() {
+    let request = WebdavRequest::get(&base(), &WebdavAuth::None, UA, "x.ics").body(Vec::new());
+    let mut get = WebdavSendRaw::new(request);
+    let reply = http_response("200 OK", &[("ETag", "W/\"etag-2\"")], "");
+    let (_, ret) = expect_exchange(&mut get, &reply);
+
+    let etag = read_etag(&ret.unwrap().response).unwrap();
+    assert_eq!(etag, "W/\"etag-2\"");
+
+    let mut delete = WebdavDelete::new(&base(), &WebdavAuth::None, UA, "x.ics", Some(&etag));
+    let (request, _) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
+    assert!(request.contains("if-match: w/\"etag-2\"\r\n"));
+}
+
+#[test]
+fn a_strong_etag_starting_like_a_weak_one_is_quoted() {
+    let mut delete = WebdavDelete::new(&base(), &WebdavAuth::None, UA, "x.ics", Some("W/abc"));
+    let (request, _) = expect_exchange(&mut delete, &http_response("204 No Content", &[], ""));
+    assert!(request.contains("if-match: \"w/abc\"\r\n"));
+}
+
+/// The answer to a request that failed on a member (RFC 4918 §9.6.1).
+const LOCKED_MEMBER: &str = r#"<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/dav/personal/locked.ics</d:href>
+    <d:status>HTTP/1.1 423 Locked</d:status>
+  </d:response>
+</d:multistatus>"#;
+
+#[test]
+fn delete_copy_and_move_fail_on_a_multistatus_naming_a_failed_member() {
+    let reply = multistatus_response(LOCKED_MEMBER);
+    let locked = [WebdavMemberFailure {
+        href: "/dav/personal/locked.ics".into(),
+        status: Some(423),
+    }];
+
+    let mut delete = WebdavDelete::new(&base(), &WebdavAuth::None, UA, "personal/", None);
+    let (_, ret) = expect_exchange(&mut delete, &reply);
+    let err = ret.expect_err("DELETE answered 207 passed for a success");
+    assert!(matches!(&err, WebdavSendError::MemberFailures(failures) if *failures == locked));
+    assert_eq!(
+        err.to_string(),
+        "WebDAV server failed on /dav/personal/locked.ics (423)"
+    );
+
+    let mut copy = CopyResource::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "personal/",
+        "/dav/copy/",
+        true,
+        0,
+    );
+    let (_, ret) = expect_exchange(&mut copy, &reply);
+    let err = ret.expect_err("COPY answered 207 passed for a success");
+    assert!(matches!(err, WebdavSendError::MemberFailures(failures) if failures == locked));
+
+    let mut mv = WebdavMove::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "personal/",
+        "/dav/moved/",
+        false,
+    );
+    let (_, ret) = expect_exchange(&mut mv, &reply);
+    let err = ret.expect_err("MOVE answered 207 passed for a success");
+    assert!(matches!(err, WebdavSendError::MemberFailures(failures) if failures == locked));
+}
+
+#[test]
+fn delete_tells_a_multistatus_it_cannot_read_from_a_success() {
+    let mut delete = WebdavDelete::new(&base(), &WebdavAuth::None, UA, "personal/", None);
+    let (_, ret) = expect_exchange(&mut delete, &multistatus_response(""));
+    assert!(matches!(
+        ret.unwrap_err(),
+        WebdavSendError::Multistatus(WebdavMultistatusParseError::Incomplete(0))
+    ));
+
+    let done = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/personal/</d:href>
+        <d:status>HTTP/1.1 204 No Content</d:status>
+      </d:response>
+    </d:multistatus>"#;
+    let mut delete = WebdavDelete::new(&base(), &WebdavAuth::None, UA, "personal/", None);
+    let (_, ret) = expect_exchange(&mut delete, &multistatus_response(done));
+    ret.unwrap();
+}
+
+#[test]
+fn a_header_value_carrying_a_control_byte_is_never_sent() {
+    let injected = "x\r\nDepth: infinity";
+
+    let delete = WebdavRequest::delete(&base(), &WebdavAuth::None, UA, "x")
+        .if_match(injected)
+        .body(Vec::new());
+    let put = WebdavRequest::put(&base(), &WebdavAuth::None, UA, "x")
+        .if_none_match(injected)
+        .body(Vec::new());
+    let mv = WebdavRequest::r#move(&base(), &WebdavAuth::None, UA, "x")
+        .destination("/dav/y\n")
+        .body(Vec::new());
+    let typed = WebdavRequest::put(&base(), &WebdavAuth::None, UA, "x")
+        .content_type("text/calendar\u{7f}")
+        .body(Vec::new());
+    let agent = WebdavRequest::get(&base(), &WebdavAuth::None, "ua\0", "x").body(Vec::new());
+
+    for (request, header) in [
+        (delete, "If-Match"),
+        (put, "If-None-Match"),
+        (mv, "Destination"),
+        (typed, "Content-Type"),
+        (agent, "User-Agent"),
+    ] {
+        match WebdavSendRaw::new(request).resume(None) {
+            WebdavCoroutineState::Complete(Err(WebdavSendError::InvalidHeader(name))) => {
+                assert_eq!(name, header);
+            }
+            state => panic!("expected a refusal, got {state:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_discovery_request_carrying_a_control_byte_is_never_sent() {
+    let request =
+        WebdavRequest::propfind(&base(), &WebdavAuth::None, "ua\r\nX: y", "").body(Vec::new());
+
+    match WebdavFollowRedirects::new(request).resume(None) {
+        WebdavCoroutineState::Complete(Err(WebdavFollowRedirectsError::InvalidHeader(name))) => {
+            assert_eq!(name, "User-Agent");
+        }
+        state => panic!("expected a refusal, got {state:?}"),
+    }
+}
+
+#[test]
+fn an_encoded_id_is_sent_and_returned_as_it_stands() {
+    let id = encode_id("50% off/été?.ics");
+    assert_eq!(id, "50%25%20off%2F%C3%A9t%C3%A9%3F.ics");
+
+    let request = WebdavRequest::put(&base(), &WebdavAuth::None, UA, &format!("/dav/{id}"));
+    assert_eq!(request.body(Vec::new()).url.path(), format!("/dav/{id}"));
 }
 
 #[test]
@@ -846,7 +1007,7 @@ fn report_names_an_unimplemented_report_and_leaves_the_rest_alone() {
 
     assert!(matches!(
         ret.unwrap_err(),
-        WebdavSendError::UnexpectedRedirect
+        WebdavSendError::UnexpectedRedirect { .. }
     ));
 }
 

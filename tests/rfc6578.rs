@@ -375,6 +375,27 @@ fn the_self_entry_is_skipped_however_the_server_encodes_it() {
 }
 
 #[test]
+fn a_weak_getetag_is_kept_whole() {
+    let mut sync = enumerate(None, true);
+
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/books/contacts/alice.vcf</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>W/"etag-1"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_, ret) = expect_exchange(&mut sync, &multistatus_response(xml));
+    assert_eq!(
+        ret.unwrap().changed[0].etag.as_deref(),
+        Some("W/\"etag-1\"")
+    );
+}
+
+#[test]
 fn a_cut_listing_fails_rather_than_list_fewer_members() {
     let mut sync = enumerate(None, true);
 

@@ -1165,6 +1165,33 @@ fn a_discovery_request_is_resent_too() {
 }
 
 #[test]
+fn collection_requests_keep_the_trailing_slash() {
+    let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let empty = || multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
+    let mut client = WebdavClientStd::from_parts(
+        RecordingStream {
+            written: written.clone(),
+            script: ScriptedStream::new([empty(), empty()]),
+        },
+        WebdavAuth::None,
+        base(),
+        None,
+        Some(Url::parse("https://dav.example.org/dav/calendars/").unwrap()),
+        Some(Url::parse("https://dav.example.org/dav/books/").unwrap()),
+    );
+
+    client.enum_items("personal", "").expect("enum items");
+    client.enum_cards("contacts").expect("enum cards");
+
+    let written = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+    assert!(
+        written.starts_with("REPORT /dav/calendars/personal/ HTTP/1.1\r\n"),
+        "{written}",
+    );
+    assert!(written.contains("REPORT /dav/books/contacts/ HTTP/1.1\r\n"));
+}
+
+#[test]
 fn move_item_addresses_both_calendars() {
     let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut client = client_over(RecordingStream {
