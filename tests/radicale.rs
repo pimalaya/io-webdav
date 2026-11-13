@@ -12,6 +12,8 @@
 //! The bootstrap script runs Radicale in a container with a single htpasswd
 //! user (`test` / `test`) over plain HTTP on host port 5232.
 
+use std::sync::{Mutex, MutexGuard};
+
 mod common;
 
 const BASE_URL: &str = "http://localhost:5232/";
@@ -21,10 +23,18 @@ fn base_url() -> String {
     std::env::var("RADICALE_URL").unwrap_or_else(|_| BASE_URL.to_owned())
 }
 
+/// Runs one test at a time: Radicale answers 500 to a listing of the home
+/// while another request deletes one of its collections.
+fn alone() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Full CalDAV calendar/event CRUD against Radicale.
 #[test]
 #[ignore = "requires a running Radicale instance on localhost:5232 and --ignored"]
 fn caldav() {
+    let _alone = alone();
     common::caldav(&base_url(), common::basic_auth("test", "test"));
 }
 
@@ -32,6 +42,7 @@ fn caldav() {
 #[test]
 #[ignore = "requires a running Radicale instance on localhost:5232 and --ignored"]
 fn caldav_move() {
+    let _alone = alone();
     common::caldav_move(&base_url(), common::basic_auth("test", "test"));
 }
 
@@ -39,5 +50,6 @@ fn caldav_move() {
 #[test]
 #[ignore = "requires a running Radicale instance on localhost:5232 and --ignored"]
 fn carddav() {
+    let _alone = alone();
     common::carddav(&base_url(), common::basic_auth("test", "test"));
 }
