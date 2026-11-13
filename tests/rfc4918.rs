@@ -216,18 +216,75 @@ fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 }
 
 #[test]
-fn parse_multistatus_stops_at_a_mismatched_close() {
+fn parse_multistatus_fails_at_a_mismatched_close() {
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response><d:href>/a/</d:href></d:response>
       <d:response><d:href>/b/</d:wrong></d:response>
     </d:multistatus>"#;
 
-    let hrefs: Vec<String> = parse_multistatus(xml)
-        .unwrap()
-        .into_iter()
-        .map(|entry| entry.href)
-        .collect();
-    assert_eq!(hrefs, ["/a/"]);
+    assert_eq!(
+        parse_multistatus(xml).unwrap_err(),
+        WebdavMultistatusParseError::Incomplete(1)
+    );
+}
+
+const ROW: &str = "<d:response><d:href>/a.ics</d:href></d:response>";
+
+#[test]
+fn parse_multistatus_fails_on_a_body_that_is_not_a_whole_multistatus() {
+    let html = "<html><head><title>Sign in</title></head><body>Please log in</body></html>";
+    let cut = format!("<d:multistatus xmlns:d=\"DAV:\">{ROW}<d:response><d:href>/b.ics</d:hr");
+    let open = format!("<d:multistatus xmlns:d=\"DAV:\">{ROW}");
+    let twice = format!("<d:multistatus xmlns:d=\"DAV:\">{ROW}</d:multistatus>{ROW}");
+
+    for (body, err) in [
+        (
+            html,
+            WebdavMultistatusParseError::UnexpectedRoot("html".into()),
+        ),
+        (&cut, WebdavMultistatusParseError::Incomplete(1)),
+        (&open, WebdavMultistatusParseError::Incomplete(1)),
+        (&twice, WebdavMultistatusParseError::Incomplete(1)),
+        ("", WebdavMultistatusParseError::Incomplete(0)),
+    ] {
+        assert_eq!(parse_multistatus(body).unwrap_err(), err, "{body}");
+    }
+}
+
+#[test]
+fn parse_multistatus_reads_the_envelope_by_position() {
+    // NOTE: the shape of an expand-property answer (RFC 3253 §3.8).
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/principals/alice/</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:group-membership>
+              <d:response>
+                <d:href>/principals/staff/</d:href>
+                <d:propstat>
+                  <d:prop><d:displayname>Staff</d:displayname></d:prop>
+                  <d:status>HTTP/1.1 200 OK</d:status>
+                </d:propstat>
+              </d:response>
+            </d:group-membership>
+            <d:displayname>Alice</d:displayname>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let ms = parse_multistatus(xml).unwrap();
+    assert_eq!(ms.responses.len(), 1);
+
+    let entry = &ms.responses[0];
+    assert_eq!(entry.href, "/principals/alice/");
+
+    let locals: Vec<&str> = entry.props.iter().map(|item| &*item.local).collect();
+    assert_eq!(locals, ["group-membership", "displayname"]);
+    assert_eq!(entry.text(DISPLAYNAME), Some("Alice"));
+    assert_eq!(entry.props[0].children[0].local, "response");
 }
 
 #[test]
@@ -347,7 +404,7 @@ fn parse_multistatus_reads_the_supported_report_set() {
 }
 
 #[test]
-fn parse_multistatus_survives_malformed_xml() {
+fn parse_multistatus_fails_on_malformed_xml() {
     let xml = r#"<d:multistatus xmlns:d="DAV:">
       <d:response>
         <d:href>/dav/a/</d:href>
@@ -358,12 +415,20 @@ fn parse_multistatus_survives_malformed_xml() {
       </d:response>
       <d:response><d:href>/dav/b/</d:href><broken"#;
 
-    let ms = parse_multistatus(xml).unwrap();
-    assert_eq!(ms.responses.len(), 1);
-    assert_eq!(ms.responses[0].text(DISPLAYNAME), Some("A"));
+    assert_eq!(
+        parse_multistatus(xml).unwrap_err(),
+        WebdavMultistatusParseError::Incomplete(1)
+    );
+}
 
+#[test]
+fn parse_multistatus_ignores_text_outside_the_root() {
     let ms = parse_multistatus("&amp;<d:multistatus xmlns:d=\"DAV:\"/>").unwrap();
     assert!(ms.responses.is_empty());
+
+    let xml = format!("\u{feff}<d:multistatus xmlns:d=\"DAV:\">{ROW}</d:multistatus>\nnotice\n");
+    let ms = parse_multistatus(&xml).unwrap();
+    assert_eq!(ms.responses.len(), 1);
 }
 
 #[test]
@@ -783,6 +848,24 @@ fn report_names_an_unimplemented_report_and_leaves_the_rest_alone() {
         ret.unwrap_err(),
         WebdavSendError::UnexpectedRedirect
     ));
+}
+
+#[test]
+fn report_leaves_a_refusal_quoting_the_precondition_alone() {
+    let body = report_query_body(CALENDAR, &[], &[GETETAG], "");
+    let mut report: WebdavReport =
+        WebdavReport::new(&base(), &WebdavAuth::None, UA, "personal/", 1, body);
+    let refusal = r#"<d:error xmlns:d="DAV:">
+      <d:need-privileges/>
+      <d:responsedescription>supported-report-set is protected</d:responsedescription>
+    </d:error>"#;
+    let (_, ret) = expect_exchange(&mut report, &http_response("403 Forbidden", &[], refusal));
+
+    let err = ret.unwrap_err();
+    assert!(
+        matches!(err, WebdavSendError::HttpStatus { status: 403, .. }),
+        "unexpected error {err:?}",
+    );
 }
 
 #[test]

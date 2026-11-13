@@ -33,7 +33,7 @@ pub mod send;
 pub mod typed;
 pub(crate) mod xml;
 
-use core::{fmt, mem, str};
+use core::{fmt, iter, mem, str};
 
 use alloc::{
     borrow::Cow,
@@ -221,7 +221,7 @@ pub fn collection_id(home: &str, href: &str) -> String {
 
     // NOTE: a relative href names no parent to compare; it keeps the last
     // segment, as every id did before.
-    if !path.starts_with('/') || decoded(parent) == decoded(home.trim_end_matches('/')) {
+    if !path.starts_with('/') || same_path(parent, home.trim_end_matches('/')) {
         return last.to_string();
     }
 
@@ -243,7 +243,7 @@ pub fn collection_path(home: &str, id: &str) -> String {
 
 /// Returns the path of `href`, an absolute URL or a reference, without its
 /// query or fragment.
-fn href_path(href: &str) -> &str {
+pub(crate) fn href_path(href: &str) -> &str {
     let href = href.split(['?', '#']).next().unwrap_or(href);
     match href.split_once("://") {
         Some((_, rest)) => rest.find('/').map_or("/", |start| &rest[start..]),
@@ -251,29 +251,27 @@ fn href_path(href: &str) -> &str {
     }
 }
 
+/// Whether two paths are equal once percent-decoded.
+pub(crate) fn same_path(a: &str, b: &str) -> bool {
+    decoded(a).eq(decoded(b))
+}
+
 /// Percent-decodes `path` (RFC 3986 §2.1), leaving a malformed escape as it
 /// stands.
-fn decoded(path: &str) -> Vec<u8> {
+fn decoded(path: &str) -> impl Iterator<Item = u8> {
     let bytes = path.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
-    while i < bytes.len() {
+
+    iter::from_fn(move || {
+        let byte = *bytes.get(i)?;
         let hex = bytes
             .get(i + 1..i + 3)
-            .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+            .filter(|hex| byte == b'%' && hex.iter().all(u8::is_ascii_hexdigit))
             .and_then(|hex| u8::from_str_radix(str::from_utf8(hex).ok()?, 16).ok());
-        match (bytes[i], hex) {
-            (b'%', Some(byte)) => {
-                out.push(byte);
-                i += 3;
-            }
-            (byte, _) => {
-                out.push(byte);
-                i += 1;
-            }
-        }
-    }
-    out
+
+        i += if hex.is_some() { 3 } else { 1 };
+        Some(hex.unwrap_or(byte))
+    })
 }
 
 /// A single property returned inside a `<prop>` element.
@@ -579,6 +577,13 @@ pub enum WebdavMultistatusParseError {
     /// The body nests elements deeper than the given depth.
     #[error("WebDAV multistatus nests elements deeper than {0}")]
     TooDeep(usize),
+    /// The body is rooted at the given element, not at `multistatus`.
+    #[error("WebDAV multistatus body is rooted at {0}")]
+    UnexpectedRoot(String),
+    /// The body is not one whole `multistatus` document: cut, malformed or
+    /// carrying on past its root, after the given count of responses.
+    #[error("WebDAV multistatus body is incomplete after {0} responses")]
+    Incomplete(usize),
     /// The properties of a response do not fit the requested type.
     #[error("WebDAV multistatus response {href} has unreadable properties: {reason}")]
     InvalidProps {
@@ -628,6 +633,13 @@ pub(crate) fn unquoted_etag(etag: Option<String>) -> Option<String> {
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct WebdavChildNames(pub BTreeMap<String, ()>);
 
+/// The `href` children of a property, e.g. the home sets of a principal.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct WebdavHrefs {
+    #[serde(default)]
+    pub href: Vec<String>,
+}
+
 /// A `supported-report-set` (RFC 3253 §3.1.5): one `supported-report` per
 /// report, each holding a `report` holding the report element itself.
 #[derive(Debug, Default, Deserialize)]
@@ -659,7 +671,8 @@ pub(crate) fn non_empty(text: Option<String>) -> Option<String> {
     text.filter(|text| !text.is_empty())
 }
 
-/// The multistatus elements [`parse_multistatus`] acts on, by local name.
+/// The multistatus elements [`parse_multistatus`] acts on, by local name and
+/// position.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Tag {
     Multistatus,
@@ -673,15 +686,29 @@ enum Tag {
 }
 
 impl Tag {
-    fn of(local: &str) -> Self {
-        match local.as_bytes() {
-            b"multistatus" => Self::Multistatus,
-            b"response" => Self::Response,
-            b"propstat" => Self::Propstat,
-            b"prop" => Self::Prop,
-            b"href" => Self::Href,
-            b"status" => Self::Status,
-            b"sync-token" => Self::SyncToken,
+    /// The tag of the element `local` under `parent`, a property value being
+    /// free to reuse the names of the envelope.
+    fn of(parent: Option<Self>, local: &str) -> Self {
+        let local = local.as_bytes();
+
+        match parent {
+            None if local == b"multistatus" => Self::Multistatus,
+            Some(Self::Multistatus) => match local {
+                b"response" => Self::Response,
+                b"sync-token" => Self::SyncToken,
+                _ => Self::Other,
+            },
+            Some(Self::Response) => match local {
+                b"href" => Self::Href,
+                b"status" => Self::Status,
+                b"propstat" => Self::Propstat,
+                _ => Self::Other,
+            },
+            Some(Self::Propstat) => match local {
+                b"status" => Self::Status,
+                b"prop" => Self::Prop,
+                _ => Self::Other,
+            },
             _ => Self::Other,
         }
     }
@@ -718,19 +745,24 @@ struct OpenElement<'a> {
 
 /// Parses a `multistatus` body into vocabulary-agnostic entries.
 ///
-/// Matching is by local name, prefixes ignored, and only properties under a
-/// 2xx `propstat` land in `props`. A response carrying none survives as an
-/// entry (removal and truncation rows); malformed input yields its prefix.
-/// Nesting past [`MULTISTATUS_MAX_DEPTH`] fails.
+/// Matching is by local name, prefixes ignored, the envelope by position,
+/// and only properties under a 2xx `propstat` land in `props`. A response
+/// carrying none survives as an entry (removal and truncation rows).
+///
+/// A body that is not one whole `multistatus` document fails, as does nesting
+/// past [`MULTISTATUS_MAX_DEPTH`]: a listing missing a member would read as
+/// its removal. Text outside the root is ignored.
 pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistatusParseError> {
+    let mut events = XmlScanner::new(xml);
     let mut responses: Vec<WebdavResponseEntry> = Vec::new();
     let mut sync_token: Option<String> = None;
     let mut stack: Vec<OpenElement> = Vec::with_capacity(16);
+    let mut closed = false;
     let mut response: Option<WebdavResponseEntry> = None;
     let mut propstat_props: Vec<WebdavPropItem> = Vec::new();
     let mut propstat_status: Option<u16> = None;
 
-    for event in XmlScanner::new(xml) {
+    for event in events.by_ref() {
         match event {
             XmlEvent::Start {
                 local,
@@ -739,11 +771,26 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
             } => {
                 let depth = stack.len();
                 let parent = stack.last_mut();
+                let tag = Tag::of(parent.as_ref().map(|open| open.tag), local);
                 let child = |local: &str| WebdavPropChild {
                     local: local.to_string(),
                     name: attr(attrs, "name").map(decode_attr),
                     ..Default::default()
                 };
+
+                if parent.is_none() {
+                    if closed {
+                        let err = WebdavMultistatusParseError::Incomplete(responses.len());
+                        return Err(err);
+                    }
+
+                    if tag != Tag::Multistatus {
+                        let root = local.to_string();
+                        return Err(WebdavMultistatusParseError::UnexpectedRoot(root));
+                    }
+
+                    closed = empty;
+                }
 
                 if empty {
                     match parent {
@@ -767,7 +814,6 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                 // NOTE: an element's children only surface inside a property,
                 // and its text only when read or rising into a property, so
                 // the envelope gathers neither.
-                let tag = Tag::of(local);
                 let read = tag.is_read();
                 let (keeps, wants) = match parent {
                     Some(open) => {
@@ -827,10 +873,12 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                     ..
                 }) = stack.pop_if(|open| same_name(open.local, close))
                 else {
-                    break;
+                    let err = WebdavMultistatusParseError::Incomplete(responses.len());
+                    return Err(err);
                 };
 
                 let parent = stack.last().map(|parent| parent.tag);
+                closed = parent.is_none();
 
                 // NOTE: the popped element is its parent's last child, and
                 // takes its children along. A property keeps them instead,
@@ -839,11 +887,7 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                     && parent != Some(Tag::Prop)
                 {
                     if !open.tag.is_structural() && open.wants {
-                        let piece = match tag.is_read() {
-                            true => text.clone(),
-                            false => mem::take(&mut text),
-                        };
-                        push_text(&mut open.text, piece);
+                        push_text(&mut open.text, mem::take(&mut text));
                     }
 
                     if open.keeps
@@ -882,18 +926,18 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                     Tag::Status if parent == Some(Tag::Propstat) => {
                         propstat_status = status_code(&text);
                     }
-                    Tag::Status if parent == Some(Tag::Response) => {
+                    Tag::Status => {
                         if let Some(entry) = response.as_mut() {
                             entry.status = status_code(&text);
                         }
                     }
-                    Tag::SyncToken if parent == Some(Tag::Multistatus) => {
+                    Tag::SyncToken => {
                         let text = text.trim();
                         if !text.is_empty() {
                             sync_token = Some(text.to_string());
                         }
                     }
-                    Tag::Href if parent == Some(Tag::Response) => {
+                    Tag::Href => {
                         if let Some(entry) = response.as_mut()
                             && entry.href.is_empty()
                         {
@@ -911,6 +955,11 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                 }
             }
         }
+    }
+
+    if !closed || !events.is_done() {
+        let err = WebdavMultistatusParseError::Incomplete(responses.len());
+        return Err(err);
     }
 
     Ok(WebdavMultistatus {

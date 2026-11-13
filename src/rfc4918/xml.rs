@@ -4,7 +4,8 @@
 //! XML subset WebDAV servers send: elements, attributes, text, CDATA,
 //! comments and processing instructions. A DOCTYPE is skipped, internal
 //! subset included, its entities left unexpanded like any unknown reference.
-//! Malformed markup ends the scan, so a parser keeps whatever came before.
+//! Malformed markup ends the scan short of the body's end, which a parser
+//! reads as an incomplete document.
 //!
 //! Names, indentation and short values are searched 16 bytes at a time with
 //! the vector compares of [`lanes`], longer text with memchr's kernels. A
@@ -47,6 +48,11 @@ pub(crate) struct XmlScanner<'a> {
 impl<'a> XmlScanner<'a> {
     pub(crate) fn new(xml: &'a str) -> Self {
         Self { xml, pos: 0 }
+    }
+
+    /// Whether the scan reached the end of the body.
+    pub(crate) fn is_done(&self) -> bool {
+        self.pos == self.xml.len()
     }
 }
 

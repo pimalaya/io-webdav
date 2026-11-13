@@ -64,7 +64,7 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, WebdavMultistatus, WebdavMultistatusParse, body_text,
+        WebdavAuth, WebdavMultistatus, WebdavMultistatusParse, body_text, has_element,
         request::WebdavRequest,
         send::{WebdavSendError, WebdavSendRaw},
     },
@@ -139,13 +139,16 @@ fn unsupported_report(err: WebdavSendError) -> WebdavSendError {
         return err;
     };
 
-    if matches!(status, 405 | 501) || body.contains("supported-report") {
+    if matches!(status, 405 | 501) || has_element(&body, &[SUPPORTED_REPORT]) {
         debug!("WebDAV server does not implement the report");
         return WebdavSendError::UnsupportedReport { status, body };
     }
 
     WebdavSendError::HttpStatus { status, body }
 }
+
+/// Local name of the precondition refusing a report (RFC 3253 §3.6).
+const SUPPORTED_REPORT: &str = "supported-report";
 
 #[derive(Debug)]
 enum State {

@@ -21,10 +21,27 @@ The DAV namespace SHALL be emitted with the D prefix, never as the default names
 A property set pair SHALL carry a WebdavPropValue, either text that is XML-escaped on the way out, or a raw markup fragment emitted verbatim. Raw exists for properties whose value is child elements rather than text, which escaping would destroy.
 
 ### Requirement: Multistatus parsing
-The parser SHALL be vocabulary-agnostic, matching by local name and ignoring namespace prefixes. It SHALL keep properties from 2xx propstats only, recording the properties of non-2xx propstats as failures carrying their status, while still surfacing responses carrying no 2xx propstat as entries with empty props and their response-level status. It SHALL read the top-level sync-token. Predefined and numeric character references SHALL be resolved, unknown entity references kept verbatim, a DOCTYPE skipped with its internal subset (its entities left unexpanded), and malformed input SHALL yield whatever parsed before the error. Element nesting deeper than 64 levels SHALL fail with a typed error, keeping the parse linear and its tree shallow enough for a 1 MiB stack.
+The parser SHALL be vocabulary-agnostic, matching by local name and ignoring namespace prefixes. It SHALL read the envelope by position: a response under the root, an href, a status and a propstat under a response, a prop and a status under a propstat, the sync-token under the root, so a property value reusing one of those names stays a value. It SHALL keep properties from 2xx propstats only, recording the properties of non-2xx propstats as failures carrying their status, while still surfacing responses carrying no 2xx propstat as entries with empty props and their response-level status. It SHALL read the top-level sync-token. Predefined and numeric character references SHALL be resolved, unknown entity references kept verbatim, a DOCTYPE skipped with its internal subset (its entities left unexpanded). Element nesting deeper than 64 levels SHALL fail with a typed error, keeping the parse linear and its tree shallow enough for a 1 MiB stack.
+
+A body SHALL parse only as one whole multistatus document: its first element is multistatus, that element closes, every end tag matches its start tag, no element follows the root and the scan reaches the end of the body. Anything else SHALL fail with a typed error, one naming a foreign root, the other carrying the count of responses read before the document stopped being whole: a listing missing a member reads as its removal. A closed multistatus holding no response SHALL parse as an empty listing. Text outside the root SHALL be ignored, hiding no response. The status carrying the body SHALL NOT be checked beyond success.
+
+#### Scenario: A page instead of a listing
+- GIVEN a PROPFIND or REPORT answered 200 with an HTML page
+- WHEN the body is parsed
+- THEN the parse fails naming the root it found, rather than return an empty listing
+
+#### Scenario: A cut listing
+- GIVEN a multistatus whose document stops after some of its responses
+- WHEN the body is parsed
+- THEN the parse fails carrying the count of responses read, rather than return them as the listing
+
+#### Scenario: Responses nested in a property value
+- GIVEN a response whose property value holds response, propstat and prop elements of its own
+- WHEN the body is parsed
+- THEN the outer response keeps its href and properties, and the nested elements stay children of the property
 
 ### Requirement: Typed multistatus
-The crate SHALL parse a multistatus into responses whose 2xx properties deserialize, merged across propstats, into a serde type the caller supplies. Children SHALL match by local name, prefixes ignored, the first of same-named properties winning. Text SHALL read trimmed, borrowed from the body where it needs no decoding; attributes SHALL read as `@name` keys; consecutive same-named children SHALL fill a sequence; an empty element SHALL read as unit. The envelope (href, response status, refused properties, sync token, depth cap, prefix of malformed input) SHALL keep the semantics of Multistatus parsing. A response whose properties do not fit the type SHALL fail the parse, naming its href, rather than drop out: a listing missing a member reads as its removal.
+The crate SHALL parse a multistatus into responses whose 2xx properties deserialize, merged across propstats, into a serde type the caller supplies. Children SHALL match by local name, prefixes ignored, the first of same-named properties winning. Text SHALL read trimmed, borrowed from the body where it needs no decoding; attributes SHALL read as `@name` keys; consecutive same-named children SHALL fill a sequence; an empty element SHALL read as unit. The envelope (href, response status, refused properties, sync token, depth cap, whole-document rule) SHALL keep the semantics of Multistatus parsing. A response whose properties do not fit the type SHALL fail the parse, naming its href, rather than drop out: a listing missing a member reads as its removal.
 
 #### Scenario: A property the type cannot hold
 - GIVEN a typed multistatus expecting a number in `getcontentlength`

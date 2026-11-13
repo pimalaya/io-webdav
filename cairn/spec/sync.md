@@ -24,12 +24,25 @@ A member removed since the request token SHALL be reported as vanished. On the w
 A 507 row (RFC 6578 section 3.6) SHALL set the truncated flag, telling the consumer to run the report again from the returned token to drain the rest.
 
 ### Requirement: Invalid token
-A server rejecting the sync token with a 403 carrying the valid-sync-token precondition SHALL surface as a dedicated error, distinct from any other send failure, so the consumer can fall back to a full enumeration.
+A server rejecting the sync token with the valid-sync-token precondition (RFC 6578 section 3.2) SHALL surface as a dedicated error, distinct from any other send failure, so the consumer can fall back to a full enumeration. The precondition SHALL be what is matched, read as an element of the body, whatever status carries it: a refusal merely quoting its name SHALL NOT raise this error.
 
 #### Scenario: Token expired server-side
 - GIVEN a stored sync token the server no longer recognises
 - WHEN the consumer runs the incremental report
 - THEN it receives the invalid-sync-token error and re-enumerates instead of silently seeing an empty delta
+
+#### Scenario: The precondition under another status
+- GIVEN a server refusing an expired token with a 409 carrying the precondition
+- WHEN the consumer runs the incremental report
+- THEN it receives the invalid-sync-token error, as it would under a 403
+
+### Requirement: Self entry
+An enumeration SHALL drop the row naming the collection itself, which a PROPFIND always answers with and some servers echo in the sync report, rather than list it as a member. The row SHALL be recognised by its path against the request path: an absolute URL reduced to its path, query and fragment dropped, the trailing slash ignored, both sides percent-decoded, a server being free to encode either differently.
+
+#### Scenario: The collection spelled with an escape
+- GIVEN an enumeration of a collection whose path holds an at sign
+- WHEN the server spells its own row with that character percent-encoded
+- THEN the row is dropped and only the members are listed
 
 ### Requirement: Checkpoint properties
 Both collection types SHALL carry a sync token property in their listing, alongside the CalendarServer ctag, so an incremental sync has a checkpoint to start from without a prior full pass.
@@ -37,7 +50,7 @@ Both collection types SHALL carry a sync token property in their listing, alongs
 ### Requirement: Unsupported report
 A server answering a REPORT with the RFC 3253 section 3.6 supported-report precondition SHALL surface as a dedicated error, distinct from any other send failure and from the invalid sync token, so the consumer can enumerate another way. The 405 and 501 statuses SHALL raise it too, both meaning the request was never going to run.
 
-The precondition SHALL be what is matched, not the status carrying it: a server chooses which status wraps it, and one was found using 403, which is also the status of a genuine permission refusal. A refusal for lack of privileges SHALL NOT raise this error.
+The precondition SHALL be what is matched, not the status carrying it: a server chooses which status wraps it, and one was found using 403, which is also the status of a genuine permission refusal. It SHALL be read as an element of the body: a refusal for lack of privileges SHALL NOT raise this error, nor one merely quoting the name, such as a body mentioning supported-report-set.
 
 #### Scenario: A server without the extension
 - GIVEN a collection whose supported-report-set omits sync-collection

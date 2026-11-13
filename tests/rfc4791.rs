@@ -240,6 +240,34 @@ fn calendar_home_set_resolves_the_href() {
 }
 
 #[test]
+fn calendar_home_set_takes_the_first_of_several_hrefs() {
+    let mut discovery =
+        CaldavCalendarHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <d:response>
+        <d:href>/principals/alice/</d:href>
+        <d:propstat>
+          <d:prop>
+            <c:calendar-home-set>
+              <d:href>/dav/calendars/alice/</d:href>
+              <d:href>/dav/calendars/shared/</d:href>
+            </c:calendar-home-set>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_, ret) = expect_redirect_exchange(&mut discovery, &multistatus_response(xml));
+
+    let home = ret.unwrap().expect("home-set discovered");
+    assert_eq!(
+        home.as_str(),
+        "https://dav.example.org/dav/calendars/alice/"
+    );
+}
+
+#[test]
 fn calendar_home_set_yields_none_on_an_empty_multistatus() {
     let mut discovery =
         CaldavCalendarHomeSet::new(&base(), &WebdavAuth::None, UA, "/principals/alice/");

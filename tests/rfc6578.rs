@@ -114,6 +114,40 @@ fn rejected_token_maps_to_invalid_sync_token() {
 }
 
 #[test]
+fn a_rejected_token_is_matched_whatever_the_status() {
+    let mut sync = enumerate(Some("stale"), false);
+
+    let body = r#"<d:error xmlns:d="DAV:"><d:valid-sync-token/></d:error>"#;
+    let (_, ret) = expect_exchange(&mut sync, &http_response("409 Conflict", &[], body));
+
+    let err = ret.unwrap_err();
+    assert!(
+        matches!(err, WebdavSyncCollectionError::InvalidSyncToken),
+        "unexpected error {err:?}",
+    );
+}
+
+#[test]
+fn a_refusal_quoting_the_token_precondition_is_not_a_rejected_token() {
+    let mut sync = enumerate(Some("token"), false);
+
+    let body = r#"<d:error xmlns:d="DAV:">
+      <d:need-privileges/>
+      <d:responsedescription>no valid-sync-token for you</d:responsedescription>
+    </d:error>"#;
+    let (_, ret) = expect_exchange(&mut sync, &http_response("403 Forbidden", &[], body));
+
+    let err = ret.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            WebdavSyncCollectionError::Send(WebdavSendError::HttpStatus { status: 403, .. })
+        ),
+        "unexpected error {err:?}",
+    );
+}
+
+#[test]
 fn other_failures_pass_through_as_send_errors() {
     let mut sync = WebdavSyncCollection::new(
         &base(),
@@ -298,4 +332,70 @@ fn the_self_entry_is_skipped_however_the_server_spells_it() {
         delta.changed[0].href,
         "https://dav.example.org/dav/books/contacts/alice.vcf"
     );
+}
+
+#[test]
+fn the_self_entry_is_skipped_however_the_server_encodes_it() {
+    let mut sync = WebdavSyncCollection::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/user@example.org/work/",
+        None,
+        &[GETETAG],
+        WebdavSyncCollectionOptions { fallback: true },
+    );
+
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/user%40example.org/work/</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"coll-etag"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/user%40example.org/work/alice.vcf</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_, ret) = expect_exchange(&mut sync, &multistatus_response(xml));
+
+    let hrefs: Vec<String> = ret
+        .unwrap()
+        .changed
+        .into_iter()
+        .map(|change| change.href)
+        .collect();
+    assert_eq!(hrefs, ["/dav/user%40example.org/work/alice.vcf"]);
+}
+
+#[test]
+fn a_cut_listing_fails_rather_than_list_fewer_members() {
+    let mut sync = enumerate(None, true);
+
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/books/contacts/alice.vcf</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/bob.vcf</d:hr"#;
+
+    let (_, ret) = expect_exchange(&mut sync, &multistatus_response(xml));
+
+    match ret {
+        Ok(delta) => panic!("listed {} of 2 members", delta.changed.len()),
+        Err(err) => assert!(matches!(
+            err,
+            WebdavSyncCollectionError::Send(WebdavSendError::Multistatus(_))
+        )),
+    }
 }

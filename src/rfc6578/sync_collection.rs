@@ -89,9 +89,9 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        DAV, WebdavAuth, WebdavEtagProps, WebdavProperty, XML_DECL, escape_text, prop_block,
-        propfind::WebdavPropfind, report::WebdavReport, send::WebdavSendError,
-        typed::WebdavMultistatusOf, unquoted_etag, xmlns_decls,
+        DAV, WebdavAuth, WebdavEtagProps, WebdavProperty, XML_DECL, escape_text, has_element,
+        href_path, prop_block, propfind::WebdavPropfind, report::WebdavReport, same_path,
+        send::WebdavSendError, typed::WebdavMultistatusOf, unquoted_etag, xmlns_decls,
     },
     webdav_try,
 };
@@ -219,9 +219,9 @@ impl WebdavCoroutine for WebdavSyncCollection {
                         return WebdavCoroutineState::Yielded(yielded);
                     }
                     WebdavCoroutineState::Complete(Err(WebdavSendError::HttpStatus {
-                        status: 403,
                         body,
-                    })) if body.contains("valid-sync-token") => {
+                        ..
+                    })) if has_element(&body, &[VALID_SYNC_TOKEN]) => {
                         let err = WebdavSyncCollectionError::InvalidSyncToken;
                         return WebdavCoroutineState::Complete(Err(err));
                     }
@@ -284,6 +284,8 @@ fn from_multistatus(
         ..Default::default()
     };
 
+    let collection = collection.trim_end_matches('/');
+
     for entry in multistatus.responses {
         match entry.status {
             Some(404) => delta.vanished.push(entry.href),
@@ -298,9 +300,7 @@ fn from_multistatus(
             // sync report, and a PROPFIND always answers with it, neither being
             // a member resource; either would otherwise enter the spine as a
             // bogus member named after the collection.
-            _ if href_path(&entry.href).trim_end_matches('/')
-                == collection.trim_end_matches('/') =>
-            {
+            _ if same_path(href_path(&entry.href).trim_end_matches('/'), collection) => {
                 trace!("skip enumeration self-entry {}", entry.href);
             }
             _ => {
@@ -316,21 +316,8 @@ fn from_multistatus(
     delta
 }
 
-/// The path an `<href>` addresses, an absolute URL reduced to its path so a
-/// server answering with one is compared against the request path like any
-/// other.
-///
-/// RFC 4918 §14.7 allows either spelling, and a self-entry spelled absolutely
-/// would otherwise fail the comparison and enter the spine as a member named
-/// after the collection.
-fn href_path(href: &str) -> &str {
-    let Some(scheme) = href.find("://") else {
-        return href;
-    };
-
-    let authority = &href[scheme + 3..];
-    &authority[authority.find('/').unwrap_or(authority.len())..]
-}
+/// Local name of the precondition refusing a sync token (RFC 6578 §3.2).
+const VALID_SYNC_TOKEN: &str = "valid-sync-token";
 
 #[derive(Debug)]
 enum State {

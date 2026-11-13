@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING** Changed `rfc4918::parse_multistatus` and `rfc4918::typed::parse_multistatus_as` to fail on a body that is not one whole `multistatus` document.
+
+  An HTML page, a cut or malformed document and an empty body no longer parse as a shorter listing, so PROPFIND, REPORT, PROPPATCH and discovery fail on them. Text outside the root is ignored.
+
+- **BREAKING** Changed `WebdavMultistatusParseError` to carry `UnexpectedRoot` and `Incomplete`.
+
+### Fixed
+
+- Fixed `rfc4918::parse_multistatus` reading `response`, `propstat` and `prop` elements nested in a property value as part of the envelope.
+
+- Fixed `CaldavCalendarHomeSet` and `CarddavAddressbookHomeSet` joining several home set hrefs into one URL.
+
+  The first href is returned.
+
+- Fixed `WebdavSyncCollection` missing a `valid-sync-token` precondition carried by a status other than 403.
+
+- Fixed `WebdavReport` and `WebdavSyncCollection` taking a refusal that quotes a precondition name for the precondition.
+
+- Fixed `WebdavSyncCollection` listing the collection itself when the server percent-encodes its path differently.
+
 ## [0.7.0] - 2026-11-04
 
 ### Added

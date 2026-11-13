@@ -93,9 +93,9 @@ impl<P: DeserializeOwned> WebdavMultistatusParse for WebdavMultistatusOf<P> {
 /// Parses a `multistatus` body, deserializing the 2xx properties of each
 /// response into `P`.
 ///
-/// Malformed input yields its prefix, nesting past [`MULTISTATUS_MAX_DEPTH`]
-/// fails, and so does a response whose properties do not fit `P`: a listing
-/// missing a member would read as its removal.
+/// A body that is not one whole `multistatus` document fails, as does nesting
+/// past [`MULTISTATUS_MAX_DEPTH`] or a response whose properties do not fit
+/// `P`: a listing missing a member would read as its removal.
 pub fn parse_multistatus_as<'a, P: Deserialize<'a>>(
     xml: &'a str,
 ) -> Result<WebdavMultistatusOf<P>, WebdavMultistatusParseError> {
@@ -143,6 +143,10 @@ struct Envelope<'a> {
     propstat_status: Option<u16>,
     propstat_root: u32,
     sync_token: Option<String>,
+    /// Whether the root was closed.
+    closed: bool,
+    /// The count of responses read.
+    responses: usize,
 }
 
 impl<'a> Envelope<'a> {
@@ -158,11 +162,14 @@ impl<'a> Envelope<'a> {
             propstat_status: None,
             propstat_root: NONE,
             sync_token: None,
+            closed: false,
+            responses: 0,
         }
     }
 
     /// Reads up to the end of the next response, returning whether there was
     /// one: its href, status, failures and property nodes are then at hand.
+    /// Fails unless the body is one whole `multistatus` document.
     fn next_response(&mut self) -> Result<bool, WebdavMultistatusParseError> {
         let nodes = &mut self.nodes;
 
@@ -174,7 +181,15 @@ impl<'a> Envelope<'a> {
                     empty,
                 } => {
                     let frame = match self.frames.last().map(|(frame, _)| frame) {
+                        None if self.closed => {
+                            let err = WebdavMultistatusParseError::Incomplete(self.responses);
+                            return Err(err);
+                        }
                         None if matches!(local.as_bytes(), b"multistatus") => Frame::Multistatus,
+                        None => {
+                            let root = local.to_string();
+                            return Err(WebdavMultistatusParseError::UnexpectedRoot(root));
+                        }
                         Some(Frame::Multistatus) => match local.as_bytes() {
                             b"response" => Frame::Response,
                             b"sync-token" => Frame::Text(Field::SyncToken),
@@ -219,6 +234,8 @@ impl<'a> Envelope<'a> {
                             return Err(err);
                         }
                         self.frames.push((frame, local));
+                    } else if self.frames.is_empty() {
+                        self.closed = true;
                     }
                 }
                 XmlEvent::Text { raw, clean } => match self.frames.last().map(|(frame, _)| frame) {
@@ -238,7 +255,10 @@ impl<'a> Envelope<'a> {
                 XmlEvent::End(close) => {
                     let frame = match self.frames.last() {
                         Some(&(frame, local)) if same_name(local, close) => frame,
-                        _ => return Ok(false),
+                        _ => {
+                            let err = WebdavMultistatusParseError::Incomplete(self.responses);
+                            return Err(err);
+                        }
                     };
                     self.frames.pop();
 
@@ -271,11 +291,20 @@ impl<'a> Envelope<'a> {
                             }
                             None => {}
                         },
-                        Frame::Response => return Ok(true),
+                        Frame::Response => {
+                            self.responses += 1;
+                            return Ok(true);
+                        }
+                        Frame::Multistatus => self.closed = true,
                         _ => {}
                     }
                 }
             }
+        }
+
+        if !self.closed || !self.events.is_done() {
+            let err = WebdavMultistatusParseError::Incomplete(self.responses);
+            return Err(err);
         }
 
         Ok(false)
@@ -1159,7 +1188,7 @@ mod tests {
 
     #[test]
     fn parse_multistatus_as_caps_the_nesting_depth() {
-        let body = "<a>".repeat(MULTISTATUS_MAX_DEPTH + 1);
+        let body = ["<multistatus>", &"<a>".repeat(MULTISTATUS_MAX_DEPTH)].concat();
         let err = parse_multistatus_as::<Props>(&body).unwrap_err();
         assert_eq!(
             err,
@@ -1168,10 +1197,33 @@ mod tests {
     }
 
     #[test]
-    fn parse_multistatus_as_yields_the_prefix_of_a_truncated_body() {
+    fn parse_multistatus_as_fails_on_a_body_that_is_not_a_whole_multistatus() {
+        let html = "<html><head><title>Sign in</title></head><body>Please log in</body></html>";
         let cut = BODY.find("<d:response>\n  <d:href>/cal/gone.ics").unwrap() + 20;
-        let ms = parse_multistatus_as::<Props>(&BODY[..cut]).unwrap();
-        assert_eq!(ms.responses.len(), 2);
+        let open = BODY.strip_suffix("</d:multistatus>").unwrap();
+        let twice = [BODY, "<d:response><d:href>/late</d:href></d:response>"].concat();
+        let mismatched = "<d:multistatus><d:response><d:href>/b</d:x></d:multistatus>";
+
+        for (body, err) in [
+            (
+                html,
+                WebdavMultistatusParseError::UnexpectedRoot("html".into()),
+            ),
+            (&BODY[..cut], WebdavMultistatusParseError::Incomplete(2)),
+            (open, WebdavMultistatusParseError::Incomplete(3)),
+            (&twice, WebdavMultistatusParseError::Incomplete(3)),
+            (mismatched, WebdavMultistatusParseError::Incomplete(0)),
+            ("", WebdavMultistatusParseError::Incomplete(0)),
+        ] {
+            assert_eq!(parse_multistatus_as::<Props>(body).unwrap_err(), err);
+        }
+    }
+
+    #[test]
+    fn parse_multistatus_as_ignores_text_outside_the_root() {
+        let body = ["\u{feff}notice\n", BODY, "\n<!-- served -->\n"].concat();
+        let ms = parse_multistatus_as::<Props>(&body).unwrap();
+        assert_eq!(ms.responses.len(), 3);
     }
 
     #[derive(Debug, Deserialize, PartialEq)]
@@ -1282,7 +1334,6 @@ mod tests {
   <d:propstat><d:prop><d:orphan/></d:prop></d:propstat>
   <d:propstat><d:prop></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
  </d:response>
- <d:response><d:href>/b</d:x>
 </d:multistatus>";
 
         let ms = parse_multistatus_as::<Scalars>(body).unwrap();

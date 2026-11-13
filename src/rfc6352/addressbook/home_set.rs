@@ -51,24 +51,26 @@
 //! ```
 
 use log::trace;
+use serde::Deserialize;
 use url::Url;
 
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, body_text,
+        WebdavAuth, WebdavHrefs, body_text,
         coroutine::WebdavRedirectYield,
         follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
-        parse_multistatus, propfind_body,
+        propfind_body,
         request::WebdavRequest,
         resolve_href,
+        typed::parse_multistatus_as,
     },
     rfc6352::addressbook::ADDRESSBOOK_HOME_SET,
     webdav_try,
 };
 
-/// I/O-free coroutine that discovers the addressbook-home-set URL. Yields
-/// [`None`] when the server returned an empty multistatus.
+/// I/O-free coroutine that discovers the addressbook-home-set URL. Yields the
+/// first of several, and [`None`] when the server names none.
 #[derive(Debug)]
 pub struct CarddavAddressbookHomeSet {
     base_url: Url,
@@ -100,19 +102,29 @@ impl WebdavCoroutine for CarddavAddressbookHomeSet {
             State::Send(send) => {
                 let ok = webdav_try!(send, arg);
                 let xml = body_text(&ok.body);
-                let multistatus = match parse_multistatus(&xml) {
+                let multistatus = match parse_multistatus_as::<HomeSetProps>(&xml) {
                     Ok(multistatus) => multistatus,
                     Err(err) => return WebdavCoroutineState::Complete(Err(err.into())),
                 };
                 let url = multistatus
                     .responses
-                    .iter()
-                    .find_map(|entry| entry.text(ADDRESSBOOK_HOME_SET))
-                    .and_then(|href| resolve_href(&self.base_url, href));
+                    .into_iter()
+                    .filter_map(|response| response.props.addressbook_home_set)
+                    .flat_map(|home_set| home_set.href)
+                    .find(|href| !href.is_empty())
+                    .and_then(|href| resolve_href(&self.base_url, &href));
                 WebdavCoroutineState::Complete(Ok(url))
             }
         }
     }
+}
+
+/// The `addressbook-home-set` (RFC 6352 §7.1.1), as a typed multistatus reads
+/// it.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct HomeSetProps {
+    addressbook_home_set: Option<WebdavHrefs>,
 }
 
 #[derive(Debug)]
