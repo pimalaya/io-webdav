@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING**: Changed the pimalaya-stream dependency to 0.4.
+
+  Its `tls::Tls` moved the trusted certificate from `cert` to `server`, and gained `client`, the certificate presented when the server asks for one (mutual TLS).
+
+- **BREAKING**: Changed the io-http dependency to 0.8.
+
 ## [0.8.0] - 2026-11-13
 
 ### Added
