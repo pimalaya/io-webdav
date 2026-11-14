@@ -75,13 +75,12 @@ use crate::{
             update::CaldavCalendarUpdate,
         },
         item::{
-            CaldavItemEntry,
             create::{CaldavItemCreate, CaldavItemCreateOk},
             delete::CaldavItemDelete,
             enumerate::{CaldavItemEnum, CaldavItemEnumOk},
-            list::CaldavItemList,
+            list::{CaldavItemList, CaldavItemListOk},
             r#move::{CaldavItemMove, CaldavItemMoveOk},
-            multiget::CaldavItemMultiget,
+            multiget::{CaldavItemMultiget, CaldavItemMultigetOk},
             read::{CaldavItemBody, CaldavItemRead},
             update::{CaldavItemUpdate, CaldavItemUpdateOk},
         },
@@ -99,12 +98,11 @@ use crate::{
             list::CarddavAddressbookList, update::CarddavAddressbookUpdate,
         },
         card::{
-            CarddavCardEntry,
             create::{CarddavCardCreate, CarddavCardCreateOk},
             delete::CarddavCardDelete,
             enumerate::{CarddavCardEnum, CarddavCardEnumOk},
             list::{CarddavCardList, CarddavCardListOk, CarddavCardListOptions},
-            multiget::CarddavCardMultiget,
+            multiget::{CarddavCardMultiget, CarddavCardMultigetOk},
             read::{CarddavCardBody, CarddavCardRead},
             update::{CarddavCardUpdate, CarddavCardUpdateOk},
         },
@@ -757,7 +755,7 @@ impl WebdavClientStd {
         &mut self,
         calendar_id: &str,
         comp_filter: &str,
-    ) -> Result<BTreeSet<CaldavItemEntry>, WebdavClientStdError> {
+    ) -> Result<CaldavItemListOk, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
         let coroutine = CaldavItemList::new(
             &self.base_url,
@@ -794,7 +792,7 @@ impl WebdavClientStd {
         &mut self,
         calendar_id: &str,
         ids: &[&str],
-    ) -> Result<Vec<CaldavItemEntry>, WebdavClientStdError> {
+    ) -> Result<CaldavItemMultigetOk, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
         let coroutine =
             CaldavItemMultiget::new(&self.base_url, &self.auth, &self.user_agent, &path, ids);
@@ -1072,7 +1070,7 @@ impl WebdavClientStd {
         &mut self,
         addressbook_id: &str,
         ids: &[&str],
-    ) -> Result<Vec<CarddavCardEntry>, WebdavClientStdError> {
+    ) -> Result<CarddavCardMultigetOk, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
         let coroutine =
             CarddavCardMultiget::new(&self.base_url, &self.auth, &self.user_agent, &path, ids);

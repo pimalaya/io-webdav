@@ -29,7 +29,7 @@ A card SHALL be addressed by its resource id, the href's last path segment used 
 - THEN every verb targets the enumerated resource, with no extension added or stripped in between
 
 ### Requirement: Listing
-Listing SHALL use an addressbook-query REPORT at Depth 1, requesting the ETag and the address data, with the caller's filter and limit. The vCard payload SHALL be returned as raw bytes, parsed upstream. A listing SHALL report whether the server truncated it with a 507 row, which the self-entry skip would otherwise discard.
+Listing SHALL use an addressbook-query REPORT at Depth 1, requesting the ETag and the address data, with the caller's filter and limit. The vCard payload SHALL be returned as raw bytes, parsed upstream. A listing SHALL report whether the server truncated it with a 507 row, which the self-entry skip would otherwise discard, and SHALL return the rows it could not read.
 
 ### Requirement: Match-all filter
 The default filter SHALL be an empty allof. RFC 6352 section 8.6 requires the filter element, and strict servers reject a missing one with HTTP 400 while treating an empty anyof, the schema default, as matching nothing. Enumeration SHALL always use it.
@@ -42,6 +42,14 @@ Listing SHALL accept an optional result limit, sent as the RFC 6352 §8.6.1 limi
 
 ### Requirement: Unsupported filter refusal
 A query refused with the `supported-filter` or `supported-collation` precondition (RFC 6352 §8.6) SHALL surface as the dedicated unsupported-filter error, matched on the element whatever status wraps it.
+
+### Requirement: A listing returns the rows it could not read
+A card listing and a card multiget SHALL return beside their entries every response naming a resource that carried no data: a response-level status other than 2xx, a refused `address-data` property, or empty data. Each such row SHALL carry the resource's id and href, the response-level status and the refused properties with their status. A self-entry (an href ending in `/`), a response naming no id and a 507 truncation row SHALL be neither an entry nor a row.
+
+#### Scenario: A card the server refuses to show
+- GIVEN an address book whose `addressbook-query` answer holds two cards and a row for `c3.vcf` with `<status>HTTP/1.1 403 Forbidden</status>`
+- WHEN the cards are listed
+- THEN the two cards are entries and `c3.vcf` is a row carrying status 403
 
 ### Requirement: Enumeration
 Enumeration SHALL use the same addressbook-query REPORT requesting the ETag only, returning id and ETag rows with no body.

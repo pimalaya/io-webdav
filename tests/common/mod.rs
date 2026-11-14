@@ -551,7 +551,7 @@ fn caldav_body(
     // --- REPORT list items (verify present) ---
 
     client.set_stream(connect(base));
-    let items = client.list_items(cal_id, "").expect("list items");
+    let items = client.list_items(cal_id, "").expect("list items").items;
     // NOTE: an item is addressed by its id, i.e. the resource name the server
     // enumerates, used verbatim: we created `<item_id>.ics`, so that is its id
     // everywhere (io-webdav never adds nor strips an extension).
@@ -574,7 +574,8 @@ fn caldav_body(
     client.set_stream(connect(base));
     let fetched = client
         .multiget_items(cal_id, &[item_name])
-        .expect("multiget items");
+        .expect("multiget items")
+        .items;
     assert!(
         fetched
             .iter()
@@ -794,7 +795,10 @@ fn caldav_items_body(
     // --- REPORT list items (verify present) ---
 
     client.set_stream(connect(base));
-    let items = client.list_items(calendar_id, "").expect("list items");
+    let items = client
+        .list_items(calendar_id, "")
+        .expect("list items")
+        .items;
     // NOTE: an item is addressed by its id, i.e. the resource name the server
     // enumerates, used verbatim: the id the create answered with, whatever name
     // we asked for (io-webdav never adds nor strips an extension).
@@ -817,7 +821,8 @@ fn caldav_items_body(
     client.set_stream(connect(base));
     let fetched = client
         .multiget_items(calendar_id, &[item_name])
-        .expect("multiget items");
+        .expect("multiget items")
+        .items;
     assert!(
         fetched
             .iter()
@@ -1044,7 +1049,8 @@ fn carddav_body(
     client.set_stream(connect(base));
     let fetched = client
         .multiget_cards(book_id, &[card_name])
-        .expect("multiget cards");
+        .expect("multiget cards")
+        .cards;
     assert!(
         fetched
             .iter()
@@ -1297,7 +1303,8 @@ impl CarddavCardsBody<'_> {
         client.set_stream(connect(base));
         let fetched = client
             .multiget_cards(addressbook_id, &[card_name])
-            .expect("multiget cards");
+            .expect("multiget cards")
+            .cards;
         assert!(
             fetched
                 .iter()

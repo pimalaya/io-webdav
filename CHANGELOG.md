@@ -4,7 +4,25 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Added `rfc4918::typed::WebdavUnreadableEntry`, a listed resource that came without its data.
+
+- Added `CarddavCardListOk::unreadable`.
+
+  A card listing returns every card it could not read, a 403 or 404 row or a refused or empty `address-data`, instead of dropping it.
+
 ### Changed
+
+- **BREAKING**: Changed `CaldavItemList` to return `CaldavItemListOk`, carrying `items`, `truncated` and `unreadable`.
+
+  It returned the bare set of items, dropping the rows it could not read and the 507 row of a truncated result.
+
+- **BREAKING**: Changed `CarddavCardMultiget` and `CaldavItemMultiget` to return `CarddavCardMultigetOk` and `CaldavItemMultigetOk`, carrying the entries and `unreadable`.
+
+  A multiget naming a card or an item the server answers 404 says so.
+
+- **BREAKING**: Changed `WebdavClientStd::list_items`, `multiget_items` and `multiget_cards` to return the new outputs.
 
 - **BREAKING**: Changed the pimalaya-stream dependency to 0.4.
 

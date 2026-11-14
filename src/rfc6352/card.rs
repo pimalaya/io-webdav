@@ -26,7 +26,11 @@ use alloc::{
 use serde::Deserialize;
 
 use crate::{
-    rfc4918::{GETETAG, WebdavProperty, typed::WebdavResponseOf, unquoted_etag},
+    rfc4918::{
+        GETETAG, WebdavProperty,
+        typed::{WebdavResponseOf, WebdavUnreadableEntry},
+        unquoted_etag,
+    },
     rfc6352::addressbook::ADDRESS_DATA,
 };
 
@@ -74,10 +78,14 @@ pub(crate) struct CarddavCardProps {
 }
 
 /// Maps a multistatus response carrying [`CARD_PROPS`] to a
-/// [`CarddavCardEntry`] (id, etag, raw vCard bytes).
+/// [`CarddavCardEntry`] (id, etag, raw vCard bytes), or to the
+/// [`WebdavUnreadableEntry`] of a card that came without its data.
+///
+/// Answers [`None`] for a response naming no card: a self-entry, an href
+/// without a last segment, or a 507 truncation row.
 pub(crate) fn card_from_response(
     response: WebdavResponseOf<CarddavCardProps>,
-) -> Option<CarddavCardEntry> {
+) -> Option<Result<CarddavCardEntry, WebdavUnreadableEntry>> {
     // NOTE: a self-entry (its href ends in a slash) is never a card; iCloud
     // echoes the addressbook itself in the multistatus.
     if response.href.ends_with('/') {
@@ -90,14 +98,24 @@ pub(crate) fn card_from_response(
     }
 
     let id = id.to_string();
-    let data = response
-        .props
-        .address_data
-        .filter(|data| !data.is_empty())?;
+    let data = response.props.address_data.filter(|data| !data.is_empty());
 
-    Some(CarddavCardEntry {
+    let Some(data) = data else {
+        if response.status == Some(507) {
+            return None;
+        }
+
+        return Some(Err(WebdavUnreadableEntry {
+            id,
+            href: response.href,
+            status: response.status,
+            failures: response.failures,
+        }));
+    };
+
+    Some(Ok(CarddavCardEntry {
         id,
         etag: unquoted_etag(response.props.getetag),
         data: data.into_bytes(),
-    })
+    }))
 }

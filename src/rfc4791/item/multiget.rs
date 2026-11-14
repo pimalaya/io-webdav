@@ -37,7 +37,7 @@
 //! );
 //! let mut arg = None;
 //!
-//! let items = loop {
+//! let ok = loop {
 //!     match coroutine.resume(arg.take()) {
 //!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
 //!             stream.write_all(&bytes).unwrap();
@@ -46,12 +46,12 @@
 //!             let n = stream.read(&mut buf).unwrap();
 //!             arg = Some(&buf[..n]);
 //!         }
-//!         WebdavCoroutineState::Complete(Ok(items)) => break items,
+//!         WebdavCoroutineState::Complete(Ok(ok)) => break ok,
 //!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
 //!     }
 //! };
 //!
-//! println!("{} items", items.len());
+//! println!("{} items", ok.items.len());
 //! ```
 
 use alloc::{string::String, vec::Vec};
@@ -66,10 +66,23 @@ use crate::{
         item::{CaldavItemEntry, CaldavItemProps, ITEM_PROPS, item_from_response, join_path},
     },
     rfc4918::{
-        WebdavAuth, report::WebdavReport, send::WebdavSendError, typed::WebdavMultistatusOf,
+        WebdavAuth,
+        report::WebdavReport,
+        send::WebdavSendError,
+        typed::{WebdavMultistatusOf, WebdavUnreadableEntry},
     },
     webdav_try,
 };
+
+/// Successful terminal output of [`CaldavItemMultiget`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CaldavItemMultigetOk {
+    /// The fetched items, in the order met.
+    pub items: Vec<CaldavItemEntry>,
+    /// The items that came without their data (a 404 for a missing id), in
+    /// the order met.
+    pub unreadable: Vec<WebdavUnreadableEntry>,
+}
 
 /// Coroutine that batch-fetches calendar items by resource name via REPORT
 /// `calendar-multiget`.
@@ -101,19 +114,26 @@ impl CaldavItemMultiget {
 
 impl WebdavCoroutine for CaldavItemMultiget {
     type Yield = WebdavYield;
-    type Return = Result<Vec<CaldavItemEntry>, WebdavSendError>;
+    type Return = Result<CaldavItemMultigetOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
             State::WebdavReport(report) => {
                 let multistatus = webdav_try!(report, arg);
-                let items = multistatus
-                    .responses
-                    .into_iter()
-                    .filter_map(item_from_response)
-                    .collect();
-                WebdavCoroutineState::Complete(Ok(items))
+
+                let mut items = Vec::new();
+                let mut unreadable = Vec::new();
+
+                for response in multistatus.responses {
+                    match item_from_response(response) {
+                        Some(Ok(item)) => items.push(item),
+                        Some(Err(entry)) => unreadable.push(entry),
+                        None => {}
+                    }
+                }
+
+                WebdavCoroutineState::Complete(Ok(CaldavItemMultigetOk { items, unreadable }))
             }
         }
     }

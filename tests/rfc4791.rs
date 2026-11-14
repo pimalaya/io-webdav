@@ -19,7 +19,10 @@ use io_webdav::{
             read::CaldavItemRead, update::CaldavItemUpdate,
         },
     },
-    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue, send::WebdavSendError},
+    rfc4918::{
+        DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropFailure, WebdavPropValue,
+        send::WebdavSendError, typed::WebdavUnreadableEntry,
+    },
 };
 use url::Url;
 
@@ -362,17 +365,97 @@ fn list_items_maps_calendar_data_entries() {
     assert!(request.starts_with("report /dav/calendars/personal/ http/1.1\r\n"));
     assert!(request.contains("comp-filter name=\"vevent\""));
 
-    let items = ret.unwrap();
-    // NOTE: the data-less entry, the collection self-entry and the empty href
-    // are all skipped. Every surviving id is the href's last segment verbatim,
-    // no `.ics` stripped, so `event-1.ics` stays `event-1.ics` and the
-    // suffix-less `event-2` stays `event-2`.
+    let ok = ret.unwrap();
+    let items = ok.items;
+    // NOTE: the collection self-entry and the empty href are skipped, the
+    // data-less entry is unreadable. Every id is the href's last segment
+    // verbatim, so `event-1.ics` stays `event-1.ics` and `event-2` stays
+    // `event-2`.
     assert_eq!(items.len(), 2);
+    assert!(!ok.truncated);
+    assert_eq!(ok.unreadable.len(), 1);
+    assert_eq!(ok.unreadable[0].id, "no-data.ics");
     let first = items.iter().find(|item| item.id == "event-1.ics").unwrap();
     assert_eq!(first.etag.as_deref(), Some("etag-1"));
     assert!(first.data.starts_with(b"BEGIN:VCALENDAR"));
     let second = items.iter().find(|item| item.id == "event-2").unwrap();
     assert_eq!(second.etag.as_deref(), Some("etag-2"));
+}
+
+#[test]
+fn list_items_returns_the_rows_it_could_not_read() {
+    let mut list = CaldavItemList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "",
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <d:response>
+        <d:href>/dav/calendars/personal/event-1.ics</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:getetag>"etag-1"</d:getetag>
+            <c:calendar-data>BEGIN:VCALENDAR</c:calendar-data>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/personal/</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"coll-etag"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/personal/e3.ics</d:href>
+        <d:status>HTTP/1.1 403 Forbidden</d:status>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/personal/e4.ics</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-4"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+        <d:propstat>
+          <d:prop><c:calendar-data/></d:prop>
+          <d:status>HTTP/1.1 404 Not Found</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/personal/</d:href>
+        <d:status>HTTP/1.1 507 Insufficient Storage</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_request, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+
+    let ok = ret.unwrap();
+    assert_eq!(ok.items.len(), 1);
+    assert_eq!(ok.items.first().unwrap().id, "event-1.ics");
+    assert!(ok.truncated);
+    assert_eq!(
+        ok.unreadable,
+        vec![
+            WebdavUnreadableEntry {
+                id: "e3.ics".into(),
+                href: "/dav/calendars/personal/e3.ics".into(),
+                status: Some(403),
+                failures: vec![],
+            },
+            WebdavUnreadableEntry {
+                id: "e4.ics".into(),
+                href: "/dav/calendars/personal/e4.ics".into(),
+                status: None,
+                failures: vec![WebdavPropFailure {
+                    status: 404,
+                    property: "calendar-data".into(),
+                }],
+            },
+        ]
+    );
 }
 
 #[test]
@@ -465,8 +548,50 @@ fn multiget_items_requests_each_href() {
     assert!(request.contains("<d:href>/dav/calendars/personal/event-1.ics</d:href>"));
     assert!(request.contains("<d:href>/dav/calendars/personal/event-2</d:href>"));
 
-    let items = ret.unwrap();
-    assert_eq!(items.len(), 2);
+    let ok = ret.unwrap();
+    assert_eq!(ok.items.len(), 2);
+    assert_eq!(ok.unreadable.len(), 1);
+}
+
+#[test]
+fn multiget_items_returns_a_missing_item() {
+    let mut multiget = CaldavItemMultiget::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        &["event-1.ics", "gone.ics"],
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <d:response>
+        <d:href>/dav/calendars/personal/event-1.ics</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:getetag>"etag-1"</d:getetag>
+            <c:calendar-data>BEGIN:VCALENDAR</c:calendar-data>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/personal/gone.ics</d:href>
+        <d:status>HTTP/1.1 404 Not Found</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_request, ret) = expect_exchange(&mut multiget, &multistatus_response(xml));
+
+    let ok = ret.unwrap();
+    assert_eq!(ok.items.len(), 1);
+    assert_eq!(
+        ok.unreadable,
+        vec![WebdavUnreadableEntry {
+            id: "gone.ics".into(),
+            href: "/dav/calendars/personal/gone.ics".into(),
+            status: Some(404),
+            failures: vec![],
+        }]
+    );
 }
 
 #[test]
@@ -799,7 +924,7 @@ fn a_listed_item_id_round_trips_through_read() {
         "",
     );
     let (_request, ret) = expect_exchange(&mut list, &multistatus_response(ITEMS_XML));
-    let items = ret.unwrap();
+    let items = ret.unwrap().items;
     let second = items.iter().find(|item| item.id == "event-2").unwrap();
 
     let mut read = CaldavItemRead::new(

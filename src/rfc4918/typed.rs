@@ -82,6 +82,20 @@ impl<P> WebdavResponseOf<P> {
     }
 }
 
+/// A listed resource whose `<response>` carried no data, as the server
+/// answered it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WebdavUnreadableEntry {
+    /// Resource id: the last path segment of [`href`](Self::href), verbatim.
+    pub id: String,
+    /// The `<href>` text, trimmed.
+    pub href: String,
+    /// The response-level `<status>` code, when present (a 403 or a 404).
+    pub status: Option<u16>,
+    /// The properties the server refused, with their `<propstat>` status.
+    pub failures: Vec<WebdavPropFailure>,
+}
+
 impl<P> Sealed for WebdavMultistatusOf<P> {}
 
 impl<P: DeserializeOwned> WebdavMultistatusParse for WebdavMultistatusOf<P> {

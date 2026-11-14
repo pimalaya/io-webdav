@@ -8,7 +8,10 @@ use core::num::NonZeroU32;
 
 use common::*;
 use io_webdav::{
-    rfc4918::{DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropValue, send::WebdavSendError},
+    rfc4918::{
+        DISPLAYNAME, GETETAG, WebdavAuth, WebdavPropFailure, WebdavPropValue,
+        send::WebdavSendError, typed::WebdavUnreadableEntry,
+    },
     rfc6352::{
         addressbook::{
             CarddavAddressbook, CarddavAddressbookPatch, addressbook_multiget_body,
@@ -453,12 +456,14 @@ fn list_cards_maps_address_data_entries() {
     assert!(request.starts_with("report /dav/books/contacts/ http/1.1\r\n"));
     assert!(request.contains("<c:address-data/>"));
 
-    let cards = ret.unwrap().cards;
-    // NOTE: the data-less entry, the collection self-entry and the empty href
-    // are all skipped. Every surviving id is the href's last segment verbatim,
-    // no `.vcf` stripped, so `alice.vcf` stays `alice.vcf` and the suffix-less
-    // `bob` stays `bob`.
+    let ok = ret.unwrap();
+    let cards = ok.cards;
+    // NOTE: the collection self-entry and the empty href are skipped, the
+    // data-less entry is unreadable. Every id is the href's last segment
+    // verbatim, so `alice.vcf` stays `alice.vcf` and `bob` stays `bob`.
     assert_eq!(cards.len(), 2);
+    assert_eq!(ok.unreadable.len(), 1);
+    assert_eq!(ok.unreadable[0].id, "no-data.vcf");
     let alice = cards.iter().find(|card| card.id == "alice.vcf").unwrap();
     assert_eq!(alice.etag.as_deref(), Some("etag-1"));
     assert!(alice.data.starts_with(b"BEGIN:VCARD"));
@@ -551,8 +556,50 @@ fn multiget_cards_requests_each_href() {
     assert!(request.contains("<d:href>/dav/books/contacts/alice.vcf</d:href>"));
     assert!(request.contains("<d:href>/dav/books/contacts/bob</d:href>"));
 
-    let cards = ret.unwrap();
-    assert_eq!(cards.len(), 2);
+    let ok = ret.unwrap();
+    assert_eq!(ok.cards.len(), 2);
+    assert_eq!(ok.unreadable.len(), 1);
+}
+
+#[test]
+fn multiget_cards_returns_a_missing_card() {
+    let mut multiget = CarddavCardMultiget::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &["alice.vcf", "gone.vcf"],
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/contacts/alice.vcf</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:getetag>"etag-1"</d:getetag>
+            <c:address-data>BEGIN:VCARD</c:address-data>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/gone.vcf</d:href>
+        <d:status>HTTP/1.1 404 Not Found</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_request, ret) = expect_exchange(&mut multiget, &multistatus_response(xml));
+
+    let ok = ret.unwrap();
+    assert_eq!(ok.cards.len(), 1);
+    assert_eq!(
+        ok.unreadable,
+        vec![WebdavUnreadableEntry {
+            id: "gone.vcf".into(),
+            href: "/dav/books/contacts/gone.vcf".into(),
+            status: Some(404),
+            failures: vec![],
+        }]
+    );
 }
 
 #[test]
@@ -904,6 +951,107 @@ fn list_cards_flags_a_truncated_result() {
     let ok = ret.unwrap();
     assert_eq!(ok.cards.len(), 1);
     assert!(ok.truncated);
+}
+
+#[test]
+fn list_cards_returns_the_rows_it_could_not_read() {
+    let mut list = CarddavCardList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &CarddavCardListOptions::default(),
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/contacts/alice.vcf</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:getetag>"etag-1"</d:getetag>
+            <c:address-data>BEGIN:VCARD</c:address-data>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"coll-etag"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/c3.vcf</d:href>
+        <d:status>HTTP/1.1 403 Forbidden</d:status>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/c4.vcf</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-4"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+        <d:propstat>
+          <d:prop><c:address-data/></d:prop>
+          <d:status>HTTP/1.1 404 Not Found</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/</d:href>
+        <d:status>HTTP/1.1 507 Insufficient Storage</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_request, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+
+    let ok = ret.unwrap();
+    assert_eq!(ok.cards.len(), 1);
+    assert_eq!(ok.cards.first().unwrap().id, "alice.vcf");
+    assert!(ok.truncated);
+    assert_eq!(
+        ok.unreadable,
+        vec![
+            WebdavUnreadableEntry {
+                id: "c3.vcf".into(),
+                href: "/dav/books/contacts/c3.vcf".into(),
+                status: Some(403),
+                failures: vec![],
+            },
+            WebdavUnreadableEntry {
+                id: "c4.vcf".into(),
+                href: "/dav/books/contacts/c4.vcf".into(),
+                status: None,
+                failures: vec![WebdavPropFailure {
+                    status: 404,
+                    property: "address-data".into(),
+                }],
+            },
+        ]
+    );
+}
+
+#[test]
+fn list_cards_skips_a_truncation_row_naming_the_collection_bare() {
+    // NOTE: a 507 row whose href lacks the trailing slash names the
+    // collection, not an unreadable card.
+    let mut list = CarddavCardList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &CarddavCardListOptions::default(),
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/books/contacts</d:href>
+        <d:status>HTTP/1.1 507 Insufficient Storage</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (_request, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+
+    let ok = ret.unwrap();
+    assert!(ok.truncated);
+    assert!(ok.unreadable.is_empty());
 }
 
 #[test]

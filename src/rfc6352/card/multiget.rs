@@ -37,7 +37,7 @@
 //! );
 //! let mut arg = None;
 //!
-//! let cards = loop {
+//! let ok = loop {
 //!     match coroutine.resume(arg.take()) {
 //!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
 //!             stream.write_all(&bytes).unwrap();
@@ -46,12 +46,12 @@
 //!             let n = stream.read(&mut buf).unwrap();
 //!             arg = Some(&buf[..n]);
 //!         }
-//!         WebdavCoroutineState::Complete(Ok(cards)) => break cards,
+//!         WebdavCoroutineState::Complete(Ok(ok)) => break ok,
 //!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
 //!     }
 //! };
 //!
-//! println!("{} cards", cards.len());
+//! println!("{} cards", ok.cards.len());
 //! ```
 
 use alloc::{string::String, vec::Vec};
@@ -62,7 +62,10 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, report::WebdavReport, send::WebdavSendError, typed::WebdavMultistatusOf,
+        WebdavAuth,
+        report::WebdavReport,
+        send::WebdavSendError,
+        typed::{WebdavMultistatusOf, WebdavUnreadableEntry},
     },
     rfc6352::{
         addressbook::addressbook_multiget_body,
@@ -70,6 +73,16 @@ use crate::{
     },
     webdav_try,
 };
+
+/// Successful terminal output of [`CarddavCardMultiget`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CarddavCardMultigetOk {
+    /// The fetched cards, in the order met.
+    pub cards: Vec<CarddavCardEntry>,
+    /// The cards that came without their data (a 404 for a missing id), in
+    /// the order met.
+    pub unreadable: Vec<WebdavUnreadableEntry>,
+}
 
 /// Coroutine that batch-fetches cards by resource name via REPORT
 /// `addressbook-multiget`.
@@ -104,19 +117,26 @@ impl CarddavCardMultiget {
 
 impl WebdavCoroutine for CarddavCardMultiget {
     type Yield = WebdavYield;
-    type Return = Result<Vec<CarddavCardEntry>, WebdavSendError>;
+    type Return = Result<CarddavCardMultigetOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
             State::WebdavReport(report) => {
                 let multistatus = webdav_try!(report, arg);
-                let cards = multistatus
-                    .responses
-                    .into_iter()
-                    .filter_map(card_from_response)
-                    .collect();
-                WebdavCoroutineState::Complete(Ok(cards))
+
+                let mut cards = Vec::new();
+                let mut unreadable = Vec::new();
+
+                for response in multistatus.responses {
+                    match card_from_response(response) {
+                        Some(Ok(card)) => cards.push(card),
+                        Some(Err(entry)) => unreadable.push(entry),
+                        None => {}
+                    }
+                }
+
+                WebdavCoroutineState::Complete(Ok(CarddavCardMultigetOk { cards, unreadable }))
             }
         }
     }

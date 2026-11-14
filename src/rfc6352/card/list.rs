@@ -51,7 +51,7 @@
 
 use core::num::NonZeroU32;
 
-use alloc::collections::BTreeSet;
+use alloc::{collections::BTreeSet, vec::Vec};
 
 use log::{debug, trace};
 use url::Url;
@@ -59,8 +59,10 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth, has_element, report::WebdavReport, send::WebdavSendError,
-        typed::WebdavMultistatusOf,
+        WebdavAuth, has_element,
+        report::WebdavReport,
+        send::WebdavSendError,
+        typed::{WebdavMultistatusOf, WebdavUnreadableEntry},
     },
     rfc6352::{
         addressbook::addressbook_query_body,
@@ -89,6 +91,8 @@ pub struct CarddavCardListOk {
     /// The row names the collection itself, which the self-entry skip would
     /// otherwise discard, so a partial listing would read as complete.
     pub truncated: bool,
+    /// The cards that came without their data, in the order met.
+    pub unreadable: Vec<WebdavUnreadableEntry>,
 }
 
 /// Coroutine that lists cards inside an addressbook via REPORT
@@ -137,13 +141,25 @@ impl WebdavCoroutine for CarddavCardList {
                     .responses
                     .iter()
                     .any(|entry| entry.status == Some(507));
-                let cards = multistatus
-                    .responses
-                    .into_iter()
-                    .filter_map(card_from_response)
-                    .collect();
 
-                WebdavCoroutineState::Complete(Ok(CarddavCardListOk { cards, truncated }))
+                let mut cards = BTreeSet::new();
+                let mut unreadable = Vec::new();
+
+                for response in multistatus.responses {
+                    match card_from_response(response) {
+                        Some(Ok(card)) => {
+                            cards.insert(card);
+                        }
+                        Some(Err(entry)) => unreadable.push(entry),
+                        None => {}
+                    }
+                }
+
+                WebdavCoroutineState::Complete(Ok(CarddavCardListOk {
+                    cards,
+                    truncated,
+                    unreadable,
+                }))
             }
         }
     }

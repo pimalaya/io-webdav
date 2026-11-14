@@ -559,7 +559,7 @@ fn item_methods_run_their_coroutines() {
         http_response("204 No Content", &[], ""),
     ]);
 
-    let items = client.list_items("personal", "").expect("list items");
+    let items = client.list_items("personal", "").expect("list items").items;
     assert_eq!(items.first().unwrap().id, "event-1.ics");
 
     let refs = client.enum_items("personal", "").expect("enum items");
@@ -568,7 +568,7 @@ fn item_methods_run_their_coroutines() {
     let fetched = client
         .multiget_items("personal", &["event-1.ics"])
         .expect("multiget items");
-    assert_eq!(fetched.len(), 1);
+    assert_eq!(fetched.items.len(), 1);
 
     let delta = client
         .sync_items("personal", None, Default::default())
@@ -737,7 +737,7 @@ fn card_methods_run_their_coroutines() {
     let fetched = client
         .multiget_cards("contacts", &["alice.vcf"])
         .expect("multiget cards");
-    assert_eq!(fetched.len(), 1);
+    assert_eq!(fetched.cards.len(), 1);
 
     let delta = client
         .sync_cards("contacts", None, Default::default())

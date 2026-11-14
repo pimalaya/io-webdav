@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: a-listing-returns-what-it-could-not-read
-status: active
+status: landed
 created: 2026-11-14
 ---
 
@@ -15,18 +15,20 @@ Himalaya's "a result carries its errors" (2026-11-14) has a listing name every i
 
 ## What
 
-- A new public type, `WebdavUnreadRow { id: String, href: String, status: Option<u16>, failures: Vec<WebdavPropFailure> }`: a response naming a resource (not a self-entry, a non-empty id) that carried no data, with the response-level status and the refused properties as the server stated them.
-- The two projections answer three ways: an entry, an unread row, or nothing (a self-entry, or an id-less href).
-- `CarddavCardListOk` gains `unread: Vec<WebdavUnreadRow>`, in the order met.
-- `CaldavItemList` returns `CaldavItemListOk { items, truncated, unread }` where it returned a bare `BTreeSet<CaldavItemEntry>`, `truncated` read as `CarddavCardList` reads it (a 507 row). **Breaking.**
-- `CarddavCardMultiget` and `CaldavItemMultiget` return their entries beside `unread`, so a multiget naming a card or an item the server answers 404 says so. **Breaking** for each.
+- A new public type, `rfc4918::typed::WebdavUnreadableEntry { id: String, href: String, status: Option<u16>, failures: Vec<WebdavPropFailure> }`: a response naming a resource (not a self-entry, a non-empty id) that carried no data, with the response-level status and the refused properties as the server stated them.
+- The two projections answer three ways: an entry, an unreadable entry, or nothing (a self-entry, an id-less href, or a 507 truncation row).
+- `CarddavCardListOk` gains `unreadable: Vec<WebdavUnreadableEntry>`, in the order met.
+- `CaldavItemList` returns `CaldavItemListOk { items, truncated, unreadable }` where it returned a bare `BTreeSet<CaldavItemEntry>`, `truncated` read as `CarddavCardList` reads it (a 507 row). **Breaking.**
+- `CarddavCardMultiget` and `CaldavItemMultiget` return `CarddavCardMultigetOk { cards, unreadable }` and `CaldavItemMultigetOk { items, unreadable }`, so a multiget naming a card or an item the server answers 404 says so. **Breaking** for each.
 - The std client's methods returning these outputs follow (src/client.rs).
 - CHANGELOG Unreleased: the type, the two list outputs, the multigets, each breaking change marked as io-webdav marks them.
 
 ## Decisions
 
 - **Rows, not errors**: io-webdav reports what the server answered; the code a row takes (`permission-denied`, an unreadable item) is the app's.
-- **A refused data property counts as unread** even under a 2xx response status, since the resource exists and its data did not come.
+- **A refused data property counts as unreadable** even under a 2xx response status, since the resource exists and its data did not come.
+- **Named after io-maildir's**: the plan's `WebdavUnreadRow` and `unread` became `WebdavUnreadableEntry` and `unreadable`, the names io-maildir landed for the same change (`MaildirUnreadableEntry`, `unreadable`), and because `unread` reads as the unseen flag across a PIM family.
+- **A 507 row is never unreadable**: it is the truncation marker naming the collection, which a server may write without the trailing slash; it sets `truncated` and nothing else.
 - **Same id as io-maildir's change**, for the family's history.
 
 ## Scope / non-goals
@@ -36,4 +38,4 @@ Himalaya's "a result carries its errors" (2026-11-14) has a listing name every i
 
 ## Order
 
-Independent of the apps' Phases 1 to 3, which run first and in parallel. cardamum's and calendula's Phase 4 pin this change's commit.
+Independent of the apps' Phases 1 to 3, which run first and in parallel. cardamum's and calendula's Phase 4 pin this change's commit. neverest is a third consumer (neverest/src/dav/client.rs calls `multiget_items` and `multiget_cards`); it pins io-webdav 185ab63, so it is unaffected until it re-pins, and adapts to the multiget outputs then.

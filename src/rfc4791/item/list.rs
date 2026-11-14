@@ -36,7 +36,7 @@
 //! );
 //! let mut arg = None;
 //!
-//! let items = loop {
+//! let ok = loop {
 //!     match coroutine.resume(arg.take()) {
 //!         WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
 //!             stream.write_all(&bytes).unwrap();
@@ -45,15 +45,15 @@
 //!             let n = stream.read(&mut buf).unwrap();
 //!             arg = Some(&buf[..n]);
 //!         }
-//!         WebdavCoroutineState::Complete(Ok(items)) => break items,
+//!         WebdavCoroutineState::Complete(Ok(ok)) => break ok,
 //!         WebdavCoroutineState::Complete(Err(err)) => panic!("{err}"),
 //!     }
 //! };
 //!
-//! println!("{} items", items.len());
+//! println!("{} items", ok.items.len());
 //! ```
 
-use alloc::collections::BTreeSet;
+use alloc::{collections::BTreeSet, vec::Vec};
 
 use log::trace;
 use url::Url;
@@ -65,10 +65,28 @@ use crate::{
         item::{CaldavItemEntry, CaldavItemProps, ITEM_PROPS, item_from_response},
     },
     rfc4918::{
-        WebdavAuth, report::WebdavReport, send::WebdavSendError, typed::WebdavMultistatusOf,
+        WebdavAuth,
+        report::WebdavReport,
+        send::WebdavSendError,
+        typed::{WebdavMultistatusOf, WebdavUnreadableEntry},
     },
     webdav_try,
 };
+
+/// Successful terminal output of [`CaldavItemList`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CaldavItemListOk {
+    /// The matching items.
+    pub items: BTreeSet<CaldavItemEntry>,
+    /// Whether the server truncated the result with a 507 row (RFC 6578
+    /// §3.6), in which case [`items`](Self::items) is not every match.
+    ///
+    /// The row names the collection itself, which the self-entry skip would
+    /// otherwise discard, so a partial listing would read as complete.
+    pub truncated: bool,
+    /// The items that came without their data, in the order met.
+    pub unreadable: Vec<WebdavUnreadableEntry>,
+}
 
 /// Coroutine that lists items inside a calendar via REPORT `calendar-query`.
 #[derive(Debug)]
@@ -99,19 +117,37 @@ impl CaldavItemList {
 
 impl WebdavCoroutine for CaldavItemList {
     type Yield = WebdavYield;
-    type Return = Result<BTreeSet<CaldavItemEntry>, WebdavSendError>;
+    type Return = Result<CaldavItemListOk, WebdavSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> WebdavCoroutineState<Self::Yield, Self::Return> {
         trace!("sending request");
         match &mut self.state {
             State::WebdavReport(report) => {
                 let multistatus = webdav_try!(report, arg);
-                let items = multistatus
+
+                let truncated = multistatus
                     .responses
-                    .into_iter()
-                    .filter_map(item_from_response)
-                    .collect();
-                WebdavCoroutineState::Complete(Ok(items))
+                    .iter()
+                    .any(|entry| entry.status == Some(507));
+
+                let mut items = BTreeSet::new();
+                let mut unreadable = Vec::new();
+
+                for response in multistatus.responses {
+                    match item_from_response(response) {
+                        Some(Ok(item)) => {
+                            items.insert(item);
+                        }
+                        Some(Err(entry)) => unreadable.push(entry),
+                        None => {}
+                    }
+                }
+
+                WebdavCoroutineState::Complete(Ok(CaldavItemListOk {
+                    items,
+                    truncated,
+                    unreadable,
+                }))
             }
         }
     }

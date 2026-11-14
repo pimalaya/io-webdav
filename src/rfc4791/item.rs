@@ -26,7 +26,11 @@ use serde::Deserialize;
 
 use crate::{
     rfc4791::calendar::CALENDAR_DATA,
-    rfc4918::{GETETAG, WebdavProperty, typed::WebdavResponseOf, unquoted_etag},
+    rfc4918::{
+        GETETAG, WebdavProperty,
+        typed::{WebdavResponseOf, WebdavUnreadableEntry},
+        unquoted_etag,
+    },
 };
 
 /// Item reference (id plus ETag, no body) returned by
@@ -72,11 +76,15 @@ pub(crate) struct CaldavItemProps {
     pub calendar_data: Option<String>,
 }
 
-/// Maps a multistatus response carrying [`ITEM_PROPS`] to an
-/// [`CaldavItemEntry`] (id, etag, raw iCalendar bytes).
+/// Maps a multistatus response carrying [`ITEM_PROPS`] to a
+/// [`CaldavItemEntry`] (id, etag, raw iCalendar bytes), or to the
+/// [`WebdavUnreadableEntry`] of an item that came without its data.
+///
+/// Answers [`None`] for a response naming no item: a self-entry, an href
+/// without a last segment, or a 507 truncation row.
 pub(crate) fn item_from_response(
     response: WebdavResponseOf<CaldavItemProps>,
-) -> Option<CaldavItemEntry> {
+) -> Option<Result<CaldavItemEntry, WebdavUnreadableEntry>> {
     // NOTE: a self-entry (its href ends in a slash) is never an item; iCloud
     // echoes the calendar itself in the multistatus.
     if response.href.ends_with('/') {
@@ -89,14 +97,24 @@ pub(crate) fn item_from_response(
     }
 
     let id = id.to_string();
-    let data = response
-        .props
-        .calendar_data
-        .filter(|data| !data.is_empty())?;
+    let data = response.props.calendar_data.filter(|data| !data.is_empty());
 
-    Some(CaldavItemEntry {
+    let Some(data) = data else {
+        if response.status == Some(507) {
+            return None;
+        }
+
+        return Some(Err(WebdavUnreadableEntry {
+            id,
+            href: response.href,
+            status: response.status,
+            failures: response.failures,
+        }));
+    };
+
+    Some(Ok(CaldavItemEntry {
         id,
         etag: unquoted_etag(response.props.getetag),
         data: data.into_bytes(),
-    })
+    }))
 }
