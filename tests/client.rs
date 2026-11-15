@@ -16,7 +16,7 @@ use common::*;
 use io_webdav::{
     client::{WebdavClientStd, WebdavClientStdError},
     rfc4791::calendar::CaldavCalendar,
-    rfc4918::{WebdavAuth, send::WebdavSendError},
+    rfc4918::{WebdavAuth, WebdavIdError, send::WebdavSendError},
     rfc6352::{
         addressbook::{CarddavAddressbook, CarddavAddressbookPatch},
         card::list::CarddavCardListOptions,
@@ -1214,4 +1214,189 @@ fn move_item_addresses_both_calendars() {
     assert!(written.to_lowercase().contains(
         "\r\ndestination: https://dav.example.org/caldav/v2/team%40g/events/task-1.ics\r\n"
     ));
+}
+
+/// Collection ids addressing the server root, the home set or a parent.
+const CLIMBING_COLLECTION_IDS: &[&str] = &[
+    "", "/", "//", ".", "..", "./x", "a/../..", "a//b", "//x", "%2e%2E", "a\\..", "a%2F..",
+];
+
+/// Item and card ids addressing the collection itself or a parent.
+const CLIMBING_RESOURCE_IDS: &[&str] = &[
+    "",
+    "/",
+    ".",
+    "..",
+    "../x.ics",
+    "a/../../x.ics",
+    "x.ics/",
+    "%2E%2E",
+    "x\\..\\..",
+];
+
+/// Client over a stream recording what is written to `written` and answering
+/// with `responses`, both home sets cached.
+fn recording_client(
+    written: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    responses: Vec<Vec<u8>>,
+) -> WebdavClientStd {
+    WebdavClientStd::from_parts(
+        RecordingStream {
+            written: written.clone(),
+            script: ScriptedStream::new(responses),
+        },
+        WebdavAuth::None,
+        base(),
+        None,
+        Some(Url::parse("https://dav.example.org/dav/calendars/").unwrap()),
+        Some(Url::parse("https://dav.example.org/dav/books/").unwrap()),
+    )
+}
+
+/// Asserts `err` is the refusal of `id`: an invalid-input I/O error carrying
+/// the id.
+fn assert_refused(err: WebdavClientStdError, id: &str) {
+    let WebdavClientStdError::Io(err) = err else {
+        panic!("expected the refusal of {id:?}, got {err:?}");
+    };
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{id:?}");
+
+    let refused = err.get_ref().and_then(|err| err.downcast_ref());
+    assert_eq!(refused, Some(&WebdavIdError(id.to_string())));
+}
+
+#[test]
+fn a_collection_id_climbing_out_of_the_home_set_sends_nothing() {
+    let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut client = recording_client(&written, Vec::new());
+    let opts = CarddavCardListOptions::default();
+
+    for &id in CLIMBING_COLLECTION_IDS {
+        let calendar = CaldavCalendar {
+            id: id.into(),
+            ..Default::default()
+        };
+        let addressbook = CarddavAddressbook {
+            id: id.into(),
+            ..Default::default()
+        };
+        let patch = CarddavAddressbookPatch {
+            id: id.into(),
+            ..Default::default()
+        };
+
+        let refusals = [
+            client.create_calendar(&calendar).unwrap_err(),
+            client.update_calendar(&calendar).unwrap_err(),
+            client.delete_calendar(id).unwrap_err(),
+            client.list_items(id, "").unwrap_err(),
+            client.enum_items(id, "").unwrap_err(),
+            client.sync_items(id, None, Default::default()).unwrap_err(),
+            client.multiget_items(id, &["e.ics"]).unwrap_err(),
+            client.read_item(id, "e.ics").unwrap_err(),
+            client.delete_item(id, "e.ics", None).unwrap_err(),
+            client.move_item("personal", "e.ics", id, None).unwrap_err(),
+            client.create_addressbook(&addressbook).unwrap_err(),
+            client.update_addressbook(&patch).unwrap_err(),
+            client.delete_addressbook(id).unwrap_err(),
+            client.list_cards(id, &opts).unwrap_err(),
+            client.enum_cards(id).unwrap_err(),
+            client.sync_cards(id, None, Default::default()).unwrap_err(),
+            client.multiget_cards(id, &["c.vcf"]).unwrap_err(),
+            client.read_card(id, "c.vcf").unwrap_err(),
+            client.delete_card(id, "c.vcf", None).unwrap_err(),
+        ];
+
+        for err in refusals {
+            assert_refused(err, id);
+        }
+    }
+
+    assert!(written.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_resource_id_climbing_out_of_its_collection_sends_nothing() {
+    let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut client = recording_client(&written, Vec::new());
+
+    for &id in CLIMBING_RESOURCE_IDS {
+        let refusals = [
+            client.read_item("personal", id).unwrap_err(),
+            client.create_item("personal", id, Vec::new()).unwrap_err(),
+            client
+                .update_item("personal", id, Vec::new(), None)
+                .unwrap_err(),
+            client.move_item("personal", id, "work", None).unwrap_err(),
+            client.delete_item("personal", id, None).unwrap_err(),
+            client
+                .multiget_items("personal", &["e.ics", id])
+                .unwrap_err(),
+            client.read_card("contacts", id).unwrap_err(),
+            client.create_card("contacts", id, Vec::new()).unwrap_err(),
+            client
+                .update_card("contacts", id, Vec::new(), None)
+                .unwrap_err(),
+            client.delete_card("contacts", id, None).unwrap_err(),
+            client.multiget_cards("contacts", &[id]).unwrap_err(),
+        ];
+
+        for err in refusals {
+            assert_refused(err, id);
+        }
+    }
+
+    assert!(written.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_clean_id_addresses_the_path_it_did_before() {
+    let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let empty = || multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
+    let deleted = || http_response("204 No Content", &[], "");
+    let mut client = recording_client(
+        &written,
+        vec![
+            deleted(),
+            deleted(),
+            deleted(),
+            multistatus_response(PROPPATCH_OK_XML),
+            empty(),
+            deleted(),
+        ],
+    );
+
+    client.delete_addressbook("contacts").expect("relative id");
+    client.delete_addressbook("team/").expect("trailing slash");
+    client
+        .delete_calendar("/caldav/v2/team%40g/events")
+        .expect("absolute id");
+
+    let calendar = CaldavCalendar {
+        id: "/caldav/v2/team%40g/events/".into(),
+        display_name: Some("Team".into()),
+        ..Default::default()
+    };
+    client.update_calendar(&calendar).expect("absolute update");
+    client.list_items("personal", "").expect("relative listing");
+    client
+        .delete_item("personal", "/a...b.ics", None)
+        .expect("leading slash");
+
+    // NOTE: a body runs into the next request line, so lines are searched.
+    let written = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+    let mut rest = written.as_str();
+    for line in [
+        "DELETE /dav/books/contacts/",
+        "DELETE /dav/books/team/",
+        "DELETE /caldav/v2/team%40g/events/",
+        "PROPPATCH /caldav/v2/team%40g/events/",
+        "REPORT /dav/calendars/personal/",
+        "DELETE /dav/calendars/personal/a...b.ics",
+    ] {
+        let at = rest
+            .find(&format!("{line} HTTP/1.1\r\n"))
+            .unwrap_or_else(|| panic!("{line} not sent in order: {written}"));
+        rest = &rest[at + line.len()..];
+    }
 }

@@ -62,6 +62,10 @@ pub(crate) const ITEM_PROPS: &[WebdavProperty] = &[GETETAG, CALENDAR_DATA];
 
 /// Joins a calendar collection path with an item resource id, used verbatim,
 /// into the item resource path. io-webdav never adds nor strips an extension.
+///
+/// The id is joined as given;
+/// [`check_resource_id`](crate::rfc4918::check_resource_id) refuses one
+/// addressing another resource.
 pub fn join_path(calendar: &str, id: &str) -> String {
     let calendar = calendar.trim_end_matches('/');
     let id = id.trim_start_matches('/');

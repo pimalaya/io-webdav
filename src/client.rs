@@ -27,6 +27,9 @@
 //! `PROPFIND` fallback, and the cache is what tells so before the REPORT is
 //! sent rather than after it fails.
 //!
+//! Every collection, item and card id a method takes is checked before any
+//! byte is sent ([`check_collection_id`], [`check_resource_id`]).
+//!
 //! [`base_url`]: WebdavClientStd::base_url
 //! [`user_agent`]: WebdavClientStd::user_agent
 //! [`principal_url`]: WebdavClientStd::principal_url
@@ -86,7 +89,8 @@ use crate::{
         },
     },
     rfc4918::{
-        GETETAG, WebdavAuth, WebdavPropFailure, collection_path, coroutine::WebdavRedirectYield,
+        GETETAG, WebdavAuth, WebdavIdError, WebdavPropFailure, check_collection_id,
+        check_resource_id, collection_path, coroutine::WebdavRedirectYield,
         follow_redirects::WebdavFollowRedirectsError, proppatch::WebdavProppatchOk,
         send::WebdavSendError,
     },
@@ -148,7 +152,9 @@ pub enum WebdavClientStdError {
     /// A collection enumeration failed.
     #[error(transparent)]
     WebdavSyncCollection(#[from] WebdavSyncCollectionError),
-    /// An underlying I/O operation failed.
+    /// An underlying I/O operation failed, or an id was refused before any
+    /// byte was sent: an [`io::ErrorKind::InvalidInput`] carrying a
+    /// [`WebdavIdError`].
     #[error(transparent)]
     Io(#[from] io::Error),
     /// TLS negotiation or the underlying TLS stack failed.
@@ -695,6 +701,7 @@ impl WebdavClientStd {
             .calendar_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
+        check_collection_id(&calendar.id).map_err(refused_id)?;
         let path = home.path().to_string();
 
         let coroutine = CaldavCalendarCreate::new(
@@ -716,6 +723,7 @@ impl WebdavClientStd {
             .calendar_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
+        check_collection_id(&calendar.id).map_err(refused_id)?;
         let path = home.path().to_string();
 
         let coroutine = CaldavCalendarUpdate::new(
@@ -736,6 +744,7 @@ impl WebdavClientStd {
             .calendar_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
+        check_collection_id(calendar_id).map_err(refused_id)?;
         let path = home.path().to_string();
 
         let coroutine = CaldavCalendarDelete::new(
@@ -794,6 +803,9 @@ impl WebdavClientStd {
         ids: &[&str],
     ) -> Result<CaldavItemMultigetOk, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        ids.iter()
+            .try_for_each(|id| check_resource_id(id))
+            .map_err(refused_id)?;
         let coroutine =
             CaldavItemMultiget::new(&self.base_url, &self.auth, &self.user_agent, &path, ids);
         self.run(coroutine)
@@ -835,6 +847,7 @@ impl WebdavClientStd {
         item_id: &str,
     ) -> Result<CaldavItemBody, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        check_resource_id(item_id).map_err(refused_id)?;
         let coroutine =
             CaldavItemRead::new(&self.base_url, &self.auth, &self.user_agent, &path, item_id);
         self.run(coroutine)
@@ -848,6 +861,7 @@ impl WebdavClientStd {
         ical: Vec<u8>,
     ) -> Result<CaldavItemCreateOk, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        check_resource_id(id).map_err(refused_id)?;
         let coroutine = CaldavItemCreate::new(
             &self.base_url,
             &self.auth,
@@ -868,6 +882,7 @@ impl WebdavClientStd {
         if_match: Option<&str>,
     ) -> Result<CaldavItemUpdateOk, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        check_resource_id(id).map_err(refused_id)?;
         let coroutine = CaldavItemUpdate::new(
             &self.base_url,
             &self.auth,
@@ -890,6 +905,7 @@ impl WebdavClientStd {
         if_match: Option<&str>,
     ) -> Result<CaldavItemMoveOk, WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        check_resource_id(item_id).map_err(refused_id)?;
         let target = calendar_path(self.calendar_home_set.as_ref(), target_calendar_id)?;
         let coroutine = CaldavItemMove::new(
             &self.base_url,
@@ -911,6 +927,7 @@ impl WebdavClientStd {
         if_match: Option<&str>,
     ) -> Result<(), WebdavClientStdError> {
         let path = calendar_path(self.calendar_home_set.as_ref(), calendar_id)?;
+        check_resource_id(item_id).map_err(refused_id)?;
         let coroutine = CaldavItemDelete::new(
             &self.base_url,
             &self.auth,
@@ -985,6 +1002,7 @@ impl WebdavClientStd {
             .addressbook_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
+        check_collection_id(&addressbook.id).map_err(refused_id)?;
         let path = home.path().to_string();
 
         let coroutine = CarddavAddressbookCreate::new(
@@ -1008,6 +1026,7 @@ impl WebdavClientStd {
             .addressbook_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
+        check_collection_id(&patch.id).map_err(refused_id)?;
         let path = home.path().to_string();
 
         let coroutine = CarddavAddressbookUpdate::new(
@@ -1028,6 +1047,7 @@ impl WebdavClientStd {
             .addressbook_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
+        check_collection_id(addressbook_id).map_err(refused_id)?;
         let path = home.path().to_string();
 
         let coroutine = CarddavAddressbookDelete::new(
@@ -1072,6 +1092,9 @@ impl WebdavClientStd {
         ids: &[&str],
     ) -> Result<CarddavCardMultigetOk, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
+        ids.iter()
+            .try_for_each(|id| check_resource_id(id))
+            .map_err(refused_id)?;
         let coroutine =
             CarddavCardMultiget::new(&self.base_url, &self.auth, &self.user_agent, &path, ids);
         self.run(coroutine)
@@ -1113,6 +1136,7 @@ impl WebdavClientStd {
         card_id: &str,
     ) -> Result<CarddavCardBody, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
+        check_resource_id(card_id).map_err(refused_id)?;
         let coroutine =
             CarddavCardRead::new(&self.base_url, &self.auth, &self.user_agent, &path, card_id);
         self.run(coroutine)
@@ -1126,6 +1150,7 @@ impl WebdavClientStd {
         vcard: Vec<u8>,
     ) -> Result<CarddavCardCreateOk, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
+        check_resource_id(id).map_err(refused_id)?;
         let coroutine = CarddavCardCreate::new(
             &self.base_url,
             &self.auth,
@@ -1146,6 +1171,7 @@ impl WebdavClientStd {
         if_match: Option<&str>,
     ) -> Result<CarddavCardUpdateOk, WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
+        check_resource_id(id).map_err(refused_id)?;
         let coroutine = CarddavCardUpdate::new(
             &self.base_url,
             &self.auth,
@@ -1166,6 +1192,7 @@ impl WebdavClientStd {
         if_match: Option<&str>,
     ) -> Result<(), WebdavClientStdError> {
         let path = addressbook_path(self.addressbook_home_set.as_ref(), addressbook_id)?;
+        check_resource_id(card_id).map_err(refused_id)?;
         let coroutine = CarddavCardDelete::new(
             &self.base_url,
             &self.auth,
@@ -1202,6 +1229,7 @@ fn is_closed(err: &io::Error) -> bool {
 
 fn calendar_path(home: Option<&Url>, calendar_id: &str) -> Result<String, WebdavClientStdError> {
     let home = home.ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
+    check_collection_id(calendar_id).map_err(refused_id)?;
     Ok(collection_path(home.path(), calendar_id))
 }
 
@@ -1210,7 +1238,13 @@ fn addressbook_path(
     addressbook_id: &str,
 ) -> Result<String, WebdavClientStdError> {
     let home = home.ok_or(WebdavClientStdError::MissingAddressbookHomeSet)?;
+    check_collection_id(addressbook_id).map_err(refused_id)?;
     Ok(collection_path(home.path(), addressbook_id))
+}
+
+/// Refuses an id as an invalid input, before any byte is sent.
+fn refused_id(err: WebdavIdError) -> WebdavClientStdError {
+    WebdavClientStdError::Io(io::Error::new(io::ErrorKind::InvalidInput, err))
 }
 
 /// Marker for everything the client can run against; auto-implemented for any

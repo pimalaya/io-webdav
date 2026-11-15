@@ -81,6 +81,19 @@ An item or card id SHALL be the last non-empty path segment of its href, percent
 - WHEN the server answers without a Location header
 - THEN the returned id is the percent-encoded segment the request addressed
 
+### Requirement: An id stays inside what it names
+The crate SHALL offer a check for collection ids and one for item and card ids, refusing with a dedicated error carrying the id. A collection id SHALL be refused when, its trailing slashes dropped and then the leading slash of an id starting with one, it is empty or holds an empty, `.` or `..` segment. An item or card id SHALL be refused when, its leading slashes dropped, it is empty or holds such a segment. Segments SHALL be split on `/` and `\` and compared percent-decoded, the forms a URL parser or a server resolves as dot segments. The path builders and the coroutines SHALL join an id as given, checking it being their caller's part.
+
+#### Scenario: The parent of the home set
+- GIVEN the collection id `..`, `%2e%2e` or `a/../..`
+- WHEN the caller checks it
+- THEN it is refused, where joined under the home set it would address the home set's parent
+
+#### Scenario: A collection outside the home set
+- GIVEN the collection id /caldav/v2/team%40g/events
+- WHEN the caller checks it
+- THEN it passes, and addresses /caldav/v2/team%40g/events/ as before
+
 ### Requirement: Location header
 When a server reports a created resource in a Location header, the id SHALL be that header's last path segment, query and fragment dropped, falling back to the last segment of the request URL when the header is absent or its segment is empty.
 

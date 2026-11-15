@@ -8,10 +8,10 @@ use common::*;
 use io_webdav::{
     coroutine::{WebdavCoroutine, WebdavCoroutineState},
     rfc4918::{
-        DAV, DISPLAYNAME, GETETAG, MULTISTATUS_MAX_DEPTH, RESOURCETYPE, WebdavAuth,
+        DAV, DISPLAYNAME, GETETAG, MULTISTATUS_MAX_DEPTH, RESOURCETYPE, WebdavAuth, WebdavIdError,
         WebdavMemberFailure, WebdavMultistatusParseError, WebdavNamespace, WebdavPropFailure,
-        WebdavPropItem, WebdavPropValue, WebdavProperty, WebdavResponseEntry, collection_id,
-        collection_path,
+        WebdavPropItem, WebdavPropValue, WebdavProperty, WebdavResponseEntry, check_collection_id,
+        check_resource_id, collection_id, collection_path,
         copy::WebdavCopy as CopyResource,
         delete::WebdavDelete,
         encode_id,
@@ -1095,4 +1095,77 @@ fn a_collection_path_takes_an_id_starting_with_a_slash_as_is() {
         collection_path("/dav/cal/", "/caldav/v2/x/events"),
         "/caldav/v2/x/events/"
     );
+}
+
+#[test]
+fn a_collection_id_climbing_out_of_the_home_set_is_refused() {
+    let climbing = [
+        "", "/", "//", ".", "..", "./x", "x/.", "a/../..", "a//b", "//x", "/..", "/a/../b", "%2e",
+        "%2e%2E", "%2E.", ".%2e", "a\\..", "a%2F..", "a%5C..",
+    ];
+
+    for id in climbing {
+        assert_eq!(
+            check_collection_id(id),
+            Err(WebdavIdError(id.to_string())),
+            "{id:?}"
+        );
+    }
+
+    let err = check_collection_id("..").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        r#"WebDAV id ".." is empty or holds an empty, . or .. segment"#
+    );
+}
+
+#[test]
+fn a_clean_collection_id_keeps_its_path() {
+    let clean = [
+        ("work", "/dav/cal/work/"),
+        ("work/", "/dav/cal/work/"),
+        ("a..b", "/dav/cal/a..b/"),
+        ("...", "/dav/cal/.../"),
+        ("/caldav/v2/team%40g/events", "/caldav/v2/team%40g/events/"),
+        ("/caldav/v2/x/events/", "/caldav/v2/x/events/"),
+    ];
+
+    for (id, path) in clean {
+        assert_eq!(check_collection_id(id), Ok(()), "{id:?}");
+        assert_eq!(collection_path("/dav/cal/", id), path);
+    }
+}
+
+#[test]
+fn a_resource_id_climbing_out_of_its_collection_is_refused() {
+    let climbing = [
+        "",
+        "/",
+        ".",
+        "..",
+        "../x.ics",
+        "a/../../x.ics",
+        "x.ics/",
+        "a//x.ics",
+        "%2E%2E",
+        "x\\..\\..",
+    ];
+
+    for id in climbing {
+        assert_eq!(
+            check_resource_id(id),
+            Err(WebdavIdError(id.to_string())),
+            "{id:?}"
+        );
+    }
+
+    for id in [
+        "event-1.ics",
+        "/event-1.ics",
+        "a%40b.vcf",
+        "sub/x.ics",
+        "..ics",
+    ] {
+        assert_eq!(check_resource_id(id), Ok(()), "{id:?}");
+    }
 }

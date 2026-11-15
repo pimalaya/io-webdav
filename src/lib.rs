@@ -70,6 +70,10 @@
 //! raw bytes in both directions, the parse belonging to ical and vcard
 //! upstream, so neither is a dependency here.
 //!
+//! A coroutine joins the ids it is given as they stand.
+//! [`rfc4918::check_collection_id`] and [`rfc4918::check_resource_id`] refuse
+//! one addressing another resource, and the client runs them first.
+//!
 //! The living spec and the development history are in the cairn/ folder, and
 //! the crate's own conventions and test matrix are in CONTRIBUTING.md.
 

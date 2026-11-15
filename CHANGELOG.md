@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Added `rfc4918::check_collection_id` and `rfc4918::check_resource_id`.
+
+  Each refuses an id that is empty or holds an empty, `.` or `..` segment, percent-encoded or `\`-separated forms included.
+
+- Added `rfc4918::WebdavIdError`, the refused id.
+
+### Fixed
+
+- Fixed `WebdavClientStd` sending a request for an id addressing the server root, the home set or a parent of either.
+
+  Every method checks its collection, item and card ids first and fails with an `InvalidInput` I/O error carrying a `WebdavIdError`, sending nothing.
+
 ## [0.9.0] - 2026-11-15
 
 ### Added

@@ -63,6 +63,10 @@ pub(crate) const CARD_PROPS: &[WebdavProperty] = &[GETETAG, ADDRESS_DATA];
 
 /// Joins an addressbook collection path with a card resource id, used verbatim,
 /// into the card resource path. io-webdav never adds nor strips an extension.
+///
+/// The id is joined as given;
+/// [`check_resource_id`](crate::rfc4918::check_resource_id) refuses one
+/// addressing another resource.
 pub fn join_path(addressbook: &str, id: &str) -> String {
     let addressbook = addressbook.trim_end_matches('/');
     let id = id.trim_start_matches('/');

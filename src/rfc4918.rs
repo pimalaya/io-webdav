@@ -253,6 +253,9 @@ pub fn collection_id(home: &str, href: &str) -> String {
 /// Returns the path a collection id addresses, trailing slash included: the
 /// id itself when it starts with a slash (a collection outside the home set,
 /// see [`collection_id`]), the home set path `home` joined with it otherwise.
+///
+/// The id is joined as given; [`check_collection_id`] refuses one addressing
+/// another collection.
 pub fn collection_path(home: &str, id: &str) -> String {
     if id.starts_with('/') {
         return format!("{}/", id.trim_end_matches('/'));
@@ -262,6 +265,44 @@ pub fn collection_path(home: &str, id: &str) -> String {
     let id = id.trim_matches('/');
     format!("{home}/{id}/")
 }
+
+/// Refuses a collection id that would make [`collection_path`] address another
+/// collection, trailing slashes aside (see [`WebdavIdError`]).
+pub fn check_collection_id(id: &str) -> Result<(), WebdavIdError> {
+    let path = id.trim_end_matches('/');
+    check_segments(id, path.strip_prefix('/').unwrap_or(path))
+}
+
+/// Refuses an item or card id that would address another resource than one
+/// inside its collection, leading slashes aside (see [`WebdavIdError`]).
+pub fn check_resource_id(id: &str) -> Result<(), WebdavIdError> {
+    check_segments(id, id.trim_start_matches('/'))
+}
+
+/// Refuses `id` when `path`, its part to check, is empty or holds an empty,
+/// `.` or `..` segment once percent-decoded and split on `/` or `\`.
+fn check_segments(id: &str, path: &str) -> Result<(), WebdavIdError> {
+    let path: Vec<u8> = decoded(path).collect();
+    let mut segments = path.split(|byte| matches!(byte, b'/' | b'\\'));
+
+    if segments.any(|segment| matches!(segment, b"" | b"." | b"..")) {
+        return Err(WebdavIdError(id.to_string()));
+    }
+
+    Ok(())
+}
+
+/// A collection, item or card id refused before any request is built.
+///
+/// An empty id, or one holding an empty, `.` or `..` segment, would address
+/// the server root, the home set or a parent of either. Segments are split on
+/// `/` and `\` and compared percent-decoded, as URL parsers and servers do.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("WebDAV id {0:?} is empty or holds an empty, . or .. segment")]
+pub struct WebdavIdError(
+    /// The id as the caller gave it.
+    pub String,
+);
 
 /// Returns the path of `href`, an absolute URL or a reference, without its
 /// query or fragment.

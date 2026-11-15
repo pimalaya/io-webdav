@@ -36,6 +36,14 @@ A request on a calendar or an address book itself, a listing, an enumeration, a 
 - WHEN the client enumerates its items
 - THEN the REPORT addresses the calendar path ending in a slash
 
+### Requirement: A refused id sends nothing
+Every client method taking a collection, item or card id, the own id of a calendar or address book to create or update, a move target and each id of a multiget included, SHALL check it once the home set is known and, refused, SHALL fail with an invalid-input I/O error carrying the check's error, writing no byte.
+
+#### Scenario: Deleting an address book named ..
+- GIVEN a client with its address book home set cached
+- WHEN the caller deletes the address book `..`
+- THEN the call fails with an invalid-input error naming `..` and no DELETE is written
+
 ### Requirement: Closed connection
 A client given a way to reconnect SHALL, when the server closed the connection before any byte of the response to a request arrived, open a fresh connection and resend that request, once. The full client's connect SHALL give it that way, to the URL and options it connected with. A client without one SHALL surface the I/O error. Swapping the stream SHALL drop the way to reconnect, so a client moved to another host never reconnects to the old one.
 
