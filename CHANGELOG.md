@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-15
+
 ### Added
 
 - Added `rfc4918::typed::WebdavUnreadableEntry`, a listed resource that came without its data.
@@ -392,7 +394,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.8.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.9.0..HEAD
+[0.9.0]: https://github.com/pimalaya/io-webdav/compare/v0.8.0..v0.9.0
 [0.8.0]: https://github.com/pimalaya/io-webdav/compare/v0.7.0..v0.8.0
 [0.7.0]: https://github.com/pimalaya/io-webdav/compare/v0.6.0..v0.7.0
 [0.6.0]: https://github.com/pimalaya/io-webdav/compare/v0.5.1..v0.6.0
