@@ -52,8 +52,8 @@
 //!
 //! - `.well-known/carddav` 301-redirects only for an authenticated PROPFIND (a
 //!   plain GET 404s), so the CardDAV test starts there via
-//!   [`common::google_carddav_base`]. `.well-known/caldav` does not redirect,
-//!   so the CalDAV test starts at `/caldav/v2/`, which answers
+//!   [`common::live::google_carddav_base`]. `.well-known/caldav` does not
+//!   redirect, so the CalDAV test starts at `/caldav/v2/`, which answers
 //!   `current-user-principal`.
 //! - A `PUT` stores the resource under a name of Google's own, so the flows
 //!   carry on with the id the create answered with.
@@ -66,11 +66,13 @@
 //! - CardDAV rewrites the vCard `UID` to its own id, so the UID query uses
 //!   the UID read back from the server.
 
+#![cfg(feature = "client")]
+
 mod common;
 
 use std::{borrow::Cow, env, fs, time::Duration};
 
-use common::CarddavCardsChecks;
+use common::live::CarddavCardsChecks;
 use io_webdav::client::WebdavClientStd;
 
 use io_oauth::{
@@ -103,7 +105,7 @@ const DEFAULT_SUBJECT: &str = "google@pimalaya.org";
 fn caldav() {
     let calendar_id = env::var("GOOGLE_CALENDAR_ID").unwrap_or("events".into());
 
-    common::caldav_items(
+    common::live::caldav_items(
         "https://apidata.googleusercontent.com/caldav/v2/",
         common::bearer_auth(&token(None, &CALDAV_SCOPES)),
         &calendar_id,
@@ -197,11 +199,11 @@ fn carddav() {
     let token = token(Some(&subject()), &CARDDAV_SCOPES);
     let addressbook_id = env::var("GOOGLE_ADDRESSBOOK_ID").unwrap_or("default".into());
 
-    let base = common::google_carddav_base(&token);
+    let base = common::live::google_carddav_base(&token);
     // NOTE: Google answers sync-collection but reports neither the creation
     // nor the removal of a card made over CardDAV, and applies a stale
     // If-Match update instead of refusing it with 412.
-    common::carddav_cards(
+    common::live::carddav_cards(
         base.as_str(),
         common::bearer_auth(&token),
         &addressbook_id,

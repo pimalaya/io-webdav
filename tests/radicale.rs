@@ -12,6 +12,8 @@
 //! The bootstrap script runs Radicale in a container with a single htpasswd
 //! user (`test` / `test`) over plain HTTP on host port 5232.
 
+#![cfg(feature = "client")]
+
 use std::sync::{Mutex, MutexGuard};
 
 mod common;
@@ -35,7 +37,7 @@ fn alone() -> MutexGuard<'static, ()> {
 #[ignore = "requires a running Radicale instance on localhost:5232 and --ignored"]
 fn caldav() {
     let _alone = alone();
-    common::caldav(&base_url(), common::basic_auth("test", "test"));
+    common::live::caldav(&base_url(), common::basic_auth("test", "test"));
 }
 
 /// An item moved between two calendars, on a client reconnecting itself.
@@ -43,7 +45,7 @@ fn caldav() {
 #[ignore = "requires a running Radicale instance on localhost:5232 and --ignored"]
 fn caldav_move() {
     let _alone = alone();
-    common::caldav_move(&base_url(), common::basic_auth("test", "test"));
+    common::live::caldav_move(&base_url(), common::basic_auth("test", "test"));
 }
 
 /// Full CardDAV addressbook/card CRUD against Radicale.
@@ -51,5 +53,5 @@ fn caldav_move() {
 #[ignore = "requires a running Radicale instance on localhost:5232 and --ignored"]
 fn carddav() {
     let _alone = alone();
-    common::carddav(&base_url(), common::basic_auth("test", "test"));
+    common::live::carddav(&base_url(), common::basic_auth("test", "test"));
 }

@@ -15,6 +15,8 @@
 //! not a resource: discovery targets the per-type root, which resolves the
 //! shared principal.
 
+#![cfg(feature = "client")]
+
 mod common;
 
 const CALDAV_BASE_URL: &str = "http://localhost:8080/dav/cal/";
@@ -24,7 +26,7 @@ const CARDDAV_BASE_URL: &str = "http://localhost:8080/dav/card/";
 #[test]
 #[ignore = "requires a running Stalwart instance on localhost:8080 and --ignored"]
 fn caldav() {
-    common::caldav(
+    common::live::caldav(
         CALDAV_BASE_URL,
         common::basic_auth("test@pimalaya.org", "P!malaya-test-2026"),
     );
@@ -34,7 +36,7 @@ fn caldav() {
 #[test]
 #[ignore = "requires a running Stalwart instance on localhost:8080 and --ignored"]
 fn carddav() {
-    common::carddav(
+    common::live::carddav(
         CARDDAV_BASE_URL,
         common::basic_auth("test@pimalaya.org", "P!malaya-test-2026"),
     );

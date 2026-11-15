@@ -9,6 +9,8 @@
 //! cargo test --test fastmail -- --ignored
 //! ```
 
+#![cfg(feature = "client")]
+
 mod common;
 
 use std::env;
@@ -20,7 +22,7 @@ fn caldav() {
     let email = env::var("FASTMAIL_EMAIL").expect("FASTMAIL_EMAIL not set");
     let password = env::var("FASTMAIL_APP_PASSWORD").expect("FASTMAIL_APP_PASSWORD not set");
 
-    common::caldav(
+    common::live::caldav(
         "https://caldav.fastmail.com/dav/",
         common::basic_auth(&email, &password),
     );
@@ -33,7 +35,7 @@ fn caldav() {
 fn caldav_move() {
     let email = env::var("FASTMAIL_EMAIL").expect("FASTMAIL_EMAIL not set");
     let password = env::var("FASTMAIL_APP_PASSWORD").expect("FASTMAIL_APP_PASSWORD not set");
-    common::caldav_move(
+    common::live::caldav_move(
         "https://caldav.fastmail.com/dav/",
         common::basic_auth(&email, &password),
     );
@@ -46,7 +48,7 @@ fn carddav() {
     let email = env::var("FASTMAIL_EMAIL").expect("FASTMAIL_EMAIL not set");
     let password = env::var("FASTMAIL_APP_PASSWORD").expect("FASTMAIL_APP_PASSWORD not set");
 
-    common::carddav(
+    common::live::carddav(
         "https://carddav.fastmail.com/dav/",
         common::basic_auth(&email, &password),
     );

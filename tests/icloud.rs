@@ -30,11 +30,13 @@
 //! partition host outright, swap the base URL for the advertised one (or
 //! reconnect via `WebdavClientStd::set_stream`).
 
+#![cfg(feature = "client")]
+
 mod common;
 
 use std::env;
 
-use common::CarddavCardsChecks;
+use common::live::CarddavCardsChecks;
 
 /// CalDAV event CRUD inside an existing iCloud calendar.
 #[test]
@@ -44,7 +46,7 @@ fn caldav() {
     let password = env::var("ICLOUD_APP_PASSWORD").expect("ICLOUD_APP_PASSWORD not set");
     let calendar_id = env::var("ICLOUD_CALENDAR_ID").expect("ICLOUD_CALENDAR_ID not set");
 
-    common::caldav_items(
+    common::live::caldav_items(
         "https://caldav.icloud.com/",
         common::basic_auth(&email, &password),
         &calendar_id,
@@ -59,7 +61,7 @@ fn carddav() {
     let password = env::var("ICLOUD_APP_PASSWORD").expect("ICLOUD_APP_PASSWORD not set");
     let addressbook_id = env::var("ICLOUD_ADDRESSBOOK_ID").unwrap_or("card".into());
 
-    common::carddav_cards(
+    common::live::carddav_cards(
         "https://contacts.icloud.com/",
         common::basic_auth(&email, &password),
         &addressbook_id,
