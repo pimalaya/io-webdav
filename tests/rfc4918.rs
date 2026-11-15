@@ -32,6 +32,7 @@ use io_webdav::{
         send::{WebdavSendError, WebdavSendRaw},
         summarize_body, trace_unrecognized, xmlns_decls,
     },
+    rfc6352::addressbook::ADDRESS_DATA,
 };
 use url::Url;
 
@@ -474,6 +475,20 @@ fn response_entry_helpers_handle_missing_data() {
     assert!(!entry.has_resource_type(RESOURCETYPE, CALENDAR));
 
     trace_unrecognized(&entry, &[DISPLAYNAME]);
+}
+
+#[test]
+fn a_parsed_property_keeps_its_whole_text_beside_the_trimmed_one() {
+    let xml = "<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:carddav\">
+      <d:response><d:href>/dav/books/contacts/a.vcf</d:href><d:propstat><d:prop>
+        <c:address-data>BEGIN:VCARD&#13;\nEND:VCARD&#13;\n</c:address-data>
+      </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+    </d:multistatus>";
+    let ms = parse_multistatus(xml).unwrap();
+    let entry = &ms.responses[0];
+    let whole = &entry.prop(ADDRESS_DATA).unwrap().text;
+    assert_eq!(whole, "BEGIN:VCARD\r\nEND:VCARD\r\n");
+    assert_eq!(entry.text(ADDRESS_DATA), Some("BEGIN:VCARD\r\nEND:VCARD"));
 }
 
 // --- request builder and path resolution ---
@@ -1133,6 +1148,55 @@ fn a_clean_collection_id_keeps_its_path() {
     for (id, path) in clean {
         assert_eq!(check_collection_id(id), Ok(()), "{id:?}");
         assert_eq!(collection_path("/dav/cal/", id), path);
+    }
+}
+
+#[test]
+fn a_relative_collection_id_is_percent_encoded() {
+    let encoded = [
+        ("My Book", "/dav/cal/My%20Book/"),
+        ("My%20Book", "/dav/cal/My%20Book/"),
+        ("été", "/dav/cal/%C3%A9t%C3%A9/"),
+        ("a?b#c", "/dav/cal/a%3Fb%23c/"),
+        ("a\\b", "/dav/cal/a%5Cb/"),
+        ("a[b]|c^d", "/dav/cal/a%5Bb%5D%7Cc%5Ed/"),
+        ("50%off", "/dav/cal/50%25off/"),
+        ("%4", "/dav/cal/%254/"),
+        ("a%2fb", "/dav/cal/a%2fb/"),
+        ("sub/My Book/", "/dav/cal/sub/My%20Book/"),
+        ("a-._~!$&'()*+,;=:@b", "/dav/cal/a-._~!$&'()*+,;=:@b/"),
+        // NOTE: an id starting with a slash is the server's path, as given.
+        ("/caldav/v2/x y/events", "/caldav/v2/x y/events/"),
+    ];
+
+    for (id, path) in encoded {
+        assert_eq!(collection_path("/dav/cal/", id), path, "{id:?}");
+    }
+}
+
+#[test]
+fn an_encoded_id_is_judged_as_the_id_it_came_from() {
+    let ids = [
+        "", ".", "..", "a/../..", "a//b", "%2e%2E", "a\\..", "a%2F..", "a%5C..", "x/", "My Book",
+        "a\\b", "50%off", "%4", "%%2e", "a..b", "été",
+    ];
+
+    // NOTE: the encoding keeps every escape and adds only ones decoding back
+    // to the byte they replace, so the checks judge the path sent.
+    for id in ids {
+        let path = collection_path("/c/", id);
+        let sent = path.strip_prefix("/c/").unwrap();
+        let judged = check_collection_id(sent).is_ok();
+        assert_eq!(
+            check_collection_id(id).is_ok(),
+            judged,
+            "{id:?} as {sent:?}"
+        );
+
+        let path = io_webdav::rfc4791::item::join_path("/c", id);
+        let sent = path.strip_prefix("/c/").unwrap();
+        let judged = check_resource_id(sent).is_ok();
+        assert_eq!(check_resource_id(id).is_ok(), judged, "{id:?} as {sent:?}");
     }
 }
 

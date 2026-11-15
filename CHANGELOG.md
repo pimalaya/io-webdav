@@ -18,6 +18,14 @@ All notable changes to this project are documented in this file. The format is b
 
   Every method checks its collection, item and card ids first and fails with an `InvalidInput` I/O error carrying a `WebdavIdError`, sending nothing.
 
+- Fixed card and item listings and multigets trimming the body they read, which cut the final CRLF of every vCard and iCalendar object a server escapes as `&#13;` (iCloud, Fastmail).
+
+  The whole text of `address-data` and `calendar-data` is returned, so a body read by a REPORT matches the one a GET returns.
+
+- Fixed `rfc4918::collection_path` and the item and card `join_path` sending a relative id as given.
+
+  Each byte a path segment cannot hold raw is percent-encoded (a `\` no longer reads as a separator, a multiget href is encoded too), and an escape already there is kept, so an id read from a listing is sent unchanged.
+
 ## [0.9.0] - 2026-11-15
 
 ### Added

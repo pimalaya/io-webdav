@@ -112,6 +112,19 @@ fn item_join_path_keeps_the_resource_name_verbatim() {
     );
 }
 
+#[test]
+fn item_join_path_percent_encodes_what_a_segment_cannot_hold() {
+    for (id, path) in [
+        ("My Event.ics", "/dav/cal/My%20Event.ics"),
+        ("My%20Event.ics", "/dav/cal/My%20Event.ics"),
+        ("/a b.ics", "/dav/cal/a%20b.ics"),
+        ("sub/x?y.ics", "/dav/cal/sub/x%3Fy.ics"),
+        ("a%40b+c;d.ics", "/dav/cal/a%40b+c;d.ics"),
+    ] {
+        assert_eq!(join_path("/dav/cal/", id), path, "{id:?}");
+    }
+}
+
 // --- calendar coroutines ---
 
 #[test]
@@ -592,6 +605,65 @@ fn multiget_items_returns_a_missing_item() {
             failures: vec![],
         }]
     );
+}
+
+/// Items whose `calendar-data` escapes each CR, as iCloud and Fastmail write
+/// it, one of them indented inside the element and one blank.
+const WHOLE_ITEMS_XML: &str =
+    "<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">
+ <d:response><d:href>/dav/calendars/personal/a.ics</d:href><d:propstat><d:prop>
+  <c:calendar-data>BEGIN:VCALENDAR&#13;\nVERSION:2.0&#13;\nEND:VCALENDAR&#13;\n</c:calendar-data>
+ </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+ <d:response><d:href>/dav/calendars/personal/indented.ics</d:href><d:propstat><d:prop>
+  <c:calendar-data>\n   BEGIN:VCALENDAR&#13;\nEND:VCALENDAR&#13;\n  </c:calendar-data>
+ </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+ <d:response><d:href>/dav/calendars/personal/blank.ics</d:href><d:propstat><d:prop>
+  <c:calendar-data>\n  </c:calendar-data>
+ </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>";
+
+#[test]
+fn an_item_keeps_its_calendar_data_whole() {
+    let mut list = CaldavItemList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        "",
+    );
+    let mut multiget = CaldavItemMultiget::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/personal/",
+        &["a.ics", "indented.ics", "blank.ics"],
+    );
+    let reply = multistatus_response(WHOLE_ITEMS_XML);
+    let list = expect_exchange(&mut list, &reply).1.unwrap();
+    let multiget = expect_exchange(&mut multiget, &reply).1.unwrap();
+
+    // NOTE: the PCDATA is the iCalendar object (RFC 4791 §9.6), its final
+    // CRLF included, as a GET returns it; indentation inside the element is
+    // PCDATA too, so it stays.
+    let want = vec![
+        (
+            "a.ics".to_string(),
+            b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n".to_vec(),
+        ),
+        (
+            "indented.ics".to_string(),
+            b"\n   BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n  ".to_vec(),
+        ),
+    ];
+    for (items, unreadable) in [
+        (Vec::from_iter(list.items), list.unreadable),
+        (multiget.items, multiget.unreadable),
+    ] {
+        let items: Vec<_> = items.into_iter().map(|item| (item.id, item.data)).collect();
+        assert_eq!(items, want);
+        assert_eq!(unreadable.len(), 1);
+        assert_eq!(unreadable[0].id, "blank.ics");
+    }
 }
 
 #[test]

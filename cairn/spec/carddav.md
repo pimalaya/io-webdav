@@ -51,6 +51,14 @@ A card listing and a card multiget SHALL return beside their entries every respo
 - WHEN the cards are listed
 - THEN the two cards are entries and `c3.vcf` is a row carrying status 403
 
+### Requirement: A card comes back whole
+A card listing and a card multiget SHALL return the whole text of `address-data` as the card's bytes, its references resolved and its line ends normalised as XML 1.0 requires, nothing trimmed: RFC 6352 §10.4 makes that PCDATA the address object itself, whitespace around the vCard included. Blank text SHALL count as empty data.
+
+#### Scenario: A card ending in an escaped CR
+- GIVEN an `addressbook-multiget` answer whose `address-data` ends `END:VCARD&#13;` and a line feed
+- WHEN the card is read
+- THEN its bytes end `END:VCARD` and a CRLF, as a GET of the card returns them
+
 ### Requirement: Enumeration
 Enumeration SHALL use the same addressbook-query REPORT requesting the ETag only, returning id and ETag rows with no body.
 

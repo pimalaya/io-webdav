@@ -27,8 +27,8 @@ use serde::Deserialize;
 
 use crate::{
     rfc4918::{
-        GETETAG, WebdavProperty,
-        typed::{WebdavResponseOf, WebdavUnreadableEntry},
+        GETETAG, WebdavProperty, encode_segments,
+        typed::{WebdavResponseOf, WebdavUnreadableEntry, whole_text},
         unquoted_etag,
     },
     rfc6352::addressbook::ADDRESS_DATA,
@@ -54,22 +54,23 @@ pub struct CarddavCardEntry {
     pub id: String,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
-    /// Raw vCard bytes (`address-data`).
+    /// Raw vCard bytes: the whole text of `address-data`, untrimmed.
     pub data: Vec<u8>,
 }
 
 /// Properties requested when listing or batch-fetching card bodies.
 pub(crate) const CARD_PROPS: &[WebdavProperty] = &[GETETAG, ADDRESS_DATA];
 
-/// Joins an addressbook collection path with a card resource id, used verbatim,
-/// into the card resource path. io-webdav never adds nor strips an extension.
+/// Joins an addressbook collection path with a card resource id into the card
+/// resource path. io-webdav never adds nor strips an extension.
 ///
-/// The id is joined as given;
-/// [`check_resource_id`](crate::rfc4918::check_resource_id) refuses one
-/// addressing another resource.
+/// Each byte a path segment cannot hold raw is percent-encoded (RFC 3986
+/// §3.3), an escape already there kept, so an id read from a listing is
+/// joined verbatim. [`check_resource_id`](crate::rfc4918::check_resource_id)
+/// refuses an id addressing another resource.
 pub fn join_path(addressbook: &str, id: &str) -> String {
     let addressbook = addressbook.trim_end_matches('/');
-    let id = id.trim_start_matches('/');
+    let id = encode_segments(id.trim_start_matches('/'));
     format!("{addressbook}/{id}")
 }
 
@@ -78,6 +79,7 @@ pub fn join_path(addressbook: &str, id: &str) -> String {
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct CarddavCardProps {
     pub getetag: Option<String>,
+    #[serde(default, deserialize_with = "whole_text")]
     pub address_data: Option<String>,
 }
 
@@ -102,7 +104,10 @@ pub(crate) fn card_from_response(
     }
 
     let id = id.to_string();
-    let data = response.props.address_data.filter(|data| !data.is_empty());
+    let data = response
+        .props
+        .address_data
+        .filter(|data| !data.trim().is_empty());
 
     let Some(data) = data else {
         if response.status == Some(507) {

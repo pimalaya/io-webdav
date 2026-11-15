@@ -73,6 +73,9 @@ The refusal is the server saying the collection already holds this UID, which is
 ### Requirement: Property children
 A parsed property SHALL expose its direct child elements, each carrying its local name and its name attribute when it has one. Attribute-valued properties like supported-calendar-component-set are unreadable otherwise.
 
+### Requirement: A parsed property keeps its whole text
+The vocabulary-agnostic parser SHALL keep each property's whole text, references resolved and line ends normalised, on the parsed property; its text helper SHALL return it trimmed.
+
 ### Requirement: Resource identity
 An item or card id SHALL be the last non-empty path segment of its href, percent-encoding kept as the server served it. A collection's id SHALL follow its layer's identity rule (Calendar identity, Address book identity). The crate SHALL never add nor strip a file extension anywhere in that derivation. A create, update or move SHALL return the id as the last segment of the URL it sent, percent-encoded, which is the form a listing returns, never the caller's string as given. The crate SHALL offer an encoder turning a name the caller mints into such a segment, every byte but the RFC 3986 unreserved ones escaped; an encoded name SHALL be sent as it stands.
 
@@ -82,7 +85,7 @@ An item or card id SHALL be the last non-empty path segment of its href, percent
 - THEN the returned id is the percent-encoded segment the request addressed
 
 ### Requirement: An id stays inside what it names
-The crate SHALL offer a check for collection ids and one for item and card ids, refusing with a dedicated error carrying the id. A collection id SHALL be refused when, its trailing slashes dropped and then the leading slash of an id starting with one, it is empty or holds an empty, `.` or `..` segment. An item or card id SHALL be refused when, its leading slashes dropped, it is empty or holds such a segment. Segments SHALL be split on `/` and `\` and compared percent-decoded, the forms a URL parser or a server resolves as dot segments. The path builders and the coroutines SHALL join an id as given, checking it being their caller's part.
+The crate SHALL offer a check for collection ids and one for item and card ids, refusing with a dedicated error carrying the id. A collection id SHALL be refused when, its trailing slashes dropped and then the leading slash of an id starting with one, it is empty or holds an empty, `.` or `..` segment. An item or card id SHALL be refused when, its leading slashes dropped, it is empty or holds such a segment. Segments SHALL be split on `/` and `\` and compared percent-decoded, the forms a URL parser or a server resolves as dot segments. The path builders and the coroutines SHALL NOT check an id, checking it being their caller's part, and SHALL join it as A relative id is sent percent-encoded says.
 
 #### Scenario: The parent of the home set
 - GIVEN the collection id `..`, `%2e%2e` or `a/../..`
@@ -93,6 +96,19 @@ The crate SHALL offer a check for collection ids and one for item and card ids, 
 - GIVEN the collection id /caldav/v2/team%40g/events
 - WHEN the caller checks it
 - THEN it passes, and addresses /caldav/v2/team%40g/events/ as before
+
+### Requirement: A relative id is sent percent-encoded
+The collection path builder and the item and card path builders SHALL percent-encode each byte of a relative id that an RFC 3986 path segment cannot hold raw, any byte but the unreserved ones, the sub-delimiters, `:` and `@`, keeping `/` as the segment separator and an escape already there (`%` and two hex digits) as it stands. An id read from an href SHALL be joined byte-identical, and the id's percent-decoded form SHALL stay unchanged, so the id checks judge the path sent. A collection id starting with a slash SHALL be taken as the server gave it.
+
+#### Scenario: An address book named with a space
+- GIVEN the collection id `My Book`
+- WHEN the client creates the address book
+- THEN the MKCOL addresses `<home>/My%20Book/`, the path the id `My%20Book` read from a listing addresses too
+
+#### Scenario: A backslash in an id
+- GIVEN the collection id `a\b`
+- WHEN the client deletes the address book
+- THEN the DELETE addresses `<home>/a%5Cb/`, not the nested collection `<home>/a/b/`
 
 ### Requirement: Location header
 When a server reports a created resource in a Location header, the id SHALL be that header's last path segment, query and fragment dropped, falling back to the last segment of the request URL when the header is absent or its segment is empty.

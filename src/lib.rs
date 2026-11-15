@@ -68,9 +68,11 @@
 //!
 //! The crate stays byte-oriented. An iCalendar or vCard payload is carried as
 //! raw bytes in both directions, the parse belonging to ical and vcard
-//! upstream, so neither is a dependency here.
+//! upstream, so neither is a dependency here. A REPORT returns the whole text
+//! of `calendar-data` or `address-data`, untrimmed: it is the object itself.
 //!
-//! A coroutine joins the ids it is given as they stand.
+//! A coroutine joins the ids it is given, percent-encoding the bytes a path
+//! segment cannot hold raw, so an id read from a listing is sent as it stands.
 //! [`rfc4918::check_collection_id`] and [`rfc4918::check_resource_id`] refuse
 //! one addressing another resource, and the client runs them first.
 //!

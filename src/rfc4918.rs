@@ -254,16 +254,68 @@ pub fn collection_id(home: &str, href: &str) -> String {
 /// id itself when it starts with a slash (a collection outside the home set,
 /// see [`collection_id`]), the home set path `home` joined with it otherwise.
 ///
-/// The id is joined as given; [`check_collection_id`] refuses one addressing
-/// another collection.
+/// A relative id has each byte a path segment cannot hold raw percent-encoded
+/// (RFC 3986 §3.3), an escape already there kept, so an id read from a listing
+/// is joined verbatim; an id starting with a slash is taken as the server
+/// gave it. [`check_collection_id`] refuses an id addressing another
+/// collection.
 pub fn collection_path(home: &str, id: &str) -> String {
     if id.starts_with('/') {
         return format!("{}/", id.trim_end_matches('/'));
     }
 
     let home = home.trim_end_matches('/');
-    let id = id.trim_matches('/');
+    let id = encode_segments(id.trim_matches('/'));
     format!("{home}/{id}/")
+}
+
+/// Percent-encodes the segments of a relative path (RFC 3986 §3.3): every
+/// byte a segment cannot hold raw is escaped, `/` and an escape already there
+/// (`%` and two hex digits) kept.
+///
+/// An id read from an href comes back unchanged, and the id decodes as it did
+/// before, so [`check_collection_id`] and [`check_resource_id`] judge the path
+/// sent.
+pub(crate) fn encode_segments(path: &str) -> Cow<'_, str> {
+    let bytes = path.as_bytes();
+    let kept = |i: usize| match bytes[i] {
+        b'/' => true,
+        b'%' => bytes
+            .get(i + 1..i + 3)
+            .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit)),
+        byte => is_pchar(byte),
+    };
+
+    let Some(first) = (0..bytes.len()).find(|&i| !kept(i)) else {
+        return Cow::Borrowed(path);
+    };
+
+    let mut out = String::with_capacity(path.len() + 8);
+    out.push_str(&path[..first]);
+    for (i, &byte) in bytes.iter().enumerate().skip(first) {
+        if kept(i) {
+            out.push(char::from(byte));
+        } else {
+            push_escape(&mut out, byte);
+        }
+    }
+
+    Cow::Owned(out)
+}
+
+/// Whether a path segment holds `byte` raw: an unreserved character, a
+/// sub-delimiter, `:` or `@` (RFC 3986 §3.3 `pchar`, escapes aside).
+fn is_pchar(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@".contains(&byte)
+}
+
+/// Pushes `byte` percent-encoded (RFC 3986 §2.1), hex digits uppercase.
+fn push_escape(out: &mut String, byte: u8) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    out.push('%');
+    out.push(char::from(HEX[usize::from(byte >> 4)]));
+    out.push(char::from(HEX[usize::from(byte & 15)]));
 }
 
 /// Refuses a collection id that would make [`collection_path`] address another
@@ -591,18 +643,13 @@ pub(crate) fn sent_id(base_url: &Url, path: &str) -> String {
 /// A name the caller mints goes through here: the result is sent as it
 /// stands, and is the id a create returns.
 pub fn encode_id(name: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-
     let mut id = String::with_capacity(name.len());
     for byte in name.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
             id.push(char::from(byte));
-            continue;
+        } else {
+            push_escape(&mut id, byte);
         }
-
-        id.push('%');
-        id.push(char::from(HEX[usize::from(byte >> 4)]));
-        id.push(char::from(HEX[usize::from(byte & 15)]));
     }
     id
 }

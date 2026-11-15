@@ -2,8 +2,9 @@
 //!
 //! `create-card` coroutine: PUT raw vCard bytes against `<addressbook>/<id>`.
 //!
-//! The `id` is the resource name, used verbatim. io-webdav never appends a
-//! file extension, so the caller owns the whole name.
+//! The `id` is the resource name, used verbatim apart from the bytes a path
+//! segment cannot hold raw, which are percent-encoded. io-webdav never appends
+//! a file extension, so the caller owns the whole name.
 //!
 //! The returned [`CarddavCardCreateOk::id`] is that name, or the server's own
 //! when it relocates the resource and reports it in a `Location` header.

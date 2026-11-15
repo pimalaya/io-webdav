@@ -16,7 +16,7 @@ use common::*;
 use io_webdav::{
     client::{WebdavClientStd, WebdavClientStdError},
     rfc4791::calendar::CaldavCalendar,
-    rfc4918::{WebdavAuth, WebdavIdError, send::WebdavSendError},
+    rfc4918::{WebdavAuth, WebdavIdError, encode_id, send::WebdavSendError},
     rfc6352::{
         addressbook::{CarddavAddressbook, CarddavAddressbookPatch},
         card::list::CarddavCardListOptions,
@@ -1397,6 +1397,66 @@ fn a_clean_id_addresses_the_path_it_did_before() {
         let at = rest
             .find(&format!("{line} HTTP/1.1\r\n"))
             .unwrap_or_else(|| panic!("{line} not sent in order: {written}"));
+        rest = &rest[at + line.len()..];
+    }
+}
+
+#[test]
+fn an_id_holding_reserved_bytes_is_sent_percent_encoded() {
+    let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let empty = || multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
+    let deleted = || http_response("204 No Content", &[], "");
+    let mut client = recording_client(
+        &written,
+        vec![
+            http_response("201 Created", &[], ""),
+            deleted(),
+            deleted(),
+            deleted(),
+            deleted(),
+            deleted(),
+            empty(),
+        ],
+    );
+
+    let addressbook = CarddavAddressbook {
+        id: "My Book".into(),
+        ..Default::default()
+    };
+    client.create_addressbook(&addressbook).expect("space");
+    client.delete_addressbook("a\\b").expect("backslash");
+    client.delete_calendar("50%off").expect("bare percent");
+    client
+        .delete_item("personal", "a|b^[c].ics", None)
+        .expect("brackets");
+    // NOTE: a listed id is already encoded, and pchar stays raw.
+    let listed = "Caf%C3%A9%20(1)+x@y;z=1.vcf";
+    client
+        .delete_card("contacts", listed, None)
+        .expect("listed");
+    client
+        .delete_item("personal", &encode_id("50% off/été?.ics"), None)
+        .expect("minted");
+    client
+        .multiget_cards("contacts", &["My Card.vcf"])
+        .expect("multiget");
+
+    // NOTE: a body runs into the next request line, so lines are searched.
+    let written = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+    let mut rest = written.as_str();
+    for line in [
+        "MKCOL /dav/books/My%20Book/ HTTP/1.1\r\n",
+        "DELETE /dav/books/a%5Cb/ HTTP/1.1\r\n",
+        "DELETE /dav/calendars/50%25off/ HTTP/1.1\r\n",
+        "DELETE /dav/calendars/personal/a%7Cb%5E%5Bc%5D.ics HTTP/1.1\r\n",
+        "DELETE /dav/books/contacts/Caf%C3%A9%20(1)+x@y;z=1.vcf HTTP/1.1\r\n",
+        "DELETE /dav/calendars/personal/50%25%20off%2F%C3%A9t%C3%A9%3F.ics HTTP/1.1\r\n",
+        "REPORT /dav/books/contacts/ HTTP/1.1\r\n",
+        "<D:href>/dav/books/contacts/My%20Card.vcf</D:href>",
+    ] {
+        let at = rest
+            .find(line)
+            .unwrap_or_else(|| panic!("{line:?} not sent in order: {written}"));
         rest = &rest[at + line.len()..];
     }
 }

@@ -253,16 +253,20 @@ impl<'a> Envelope<'a> {
                     }
                 }
                 XmlEvent::Text { raw, clean } => match self.frames.last().map(|(frame, _)| frame) {
-                    Some(Frame::Text(_)) => push_text(&mut self.text, raw, clean),
+                    Some(Frame::Text(_)) => push_text(&mut self.text, raw, clean, false),
                     Some(&Frame::Node(i)) if i != self.propstat_root => {
-                        push_text(nodes.slots[i as usize].text.get_mut(), raw, clean);
+                        let node = &mut nodes.slots[i as usize];
+                        let nested = node.first != NONE;
+                        push_text(node.text.get_mut(), raw, clean, nested);
                     }
                     _ => {}
                 },
                 XmlEvent::Cdata(raw) => match self.frames.last().map(|(frame, _)| frame) {
-                    Some(Frame::Text(_)) => push_text(&mut self.text, raw, raw.len()),
+                    Some(Frame::Text(_)) => push_text(&mut self.text, raw, raw.len(), false),
                     Some(&Frame::Node(i)) if i != self.propstat_root => {
-                        push_text(nodes.slots[i as usize].text.get_mut(), raw, raw.len());
+                        let node = &mut nodes.slots[i as usize];
+                        let nested = node.first != NONE;
+                        push_text(node.text.get_mut(), raw, raw.len(), nested);
                     }
                     _ => {}
                 },
@@ -391,6 +395,11 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// Takes the whole text out, read once.
+    fn take_whole_text(&self) -> Cow<'a, str> {
+        self.text.take()
+    }
+
     fn is_leaf(&self) -> bool {
         self.first == NONE && XmlAttrs(self.attrs).all(|(name, _)| is_xmlns(name))
     }
@@ -454,10 +463,12 @@ impl<'a> Nodes<'a> {
     }
 }
 
-/// Appends a text piece, skipping the indentation before any content, which
-/// trimming drops anyway.
-fn push_text<'a>(text: &mut Cow<'a, str>, raw: &'a str, clean: usize) {
-    if text.is_empty() && raw.bytes().all(|b| b.is_ascii_whitespace()) {
+/// Appends a text piece. With `nested`, the element holding child elements,
+/// a blank piece is skipped while the text is blank too: indentation between
+/// children, which trimming drops anyway. A leaf keeps every piece, so its
+/// text can be read whole.
+fn push_text<'a>(text: &mut Cow<'a, str>, raw: &'a str, clean: usize, nested: bool) {
+    if nested && is_blank(raw) && is_blank(text) {
         return;
     }
 
@@ -470,8 +481,48 @@ fn push_text<'a>(text: &mut Cow<'a, str>, raw: &'a str, clean: usize) {
     }
 }
 
+fn is_blank(text: &str) -> bool {
+    text.bytes().all(|b| b.is_ascii_whitespace())
+}
+
 fn is_xmlns(name: &str) -> bool {
     name == "xmlns" || name.starts_with("xmlns:")
+}
+
+/// The newtype name [`whole_text`] asks for, which [`NodeDe`] answers with the
+/// untrimmed text.
+const WHOLE_TEXT: &str = "$io_webdav::whole_text";
+
+/// Reads a property's text whole, untrimmed, for a `deserialize_with` field.
+///
+/// The PCDATA of `calendar-data` (RFC 4791 §9.6) and `address-data` (RFC 6352
+/// §10.4) is the object itself, so its whitespace, the final CRLF included,
+/// belongs to it. References are resolved and line ends normalised as for any
+/// text.
+pub(crate) fn whole_text<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    deserializer
+        .deserialize_newtype_struct(WHOLE_TEXT, WholeTextVisitor)
+        .map(Some)
+}
+
+struct WholeTextVisitor;
+
+impl<'de> Visitor<'de> for WholeTextVisitor {
+    type Value = String;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("text")
+    }
+
+    fn visit_str<E>(self, text: &str) -> Result<String, E> {
+        Ok(text.to_string())
+    }
+
+    fn visit_string<E>(self, text: String) -> Result<String, E> {
+        Ok(text)
+    }
 }
 
 /// A deserialization failure, by message.
@@ -589,10 +640,17 @@ impl<'n, 'a> Deserializer<'a> for NodeDe<'n, 'a> {
 
     fn deserialize_newtype_struct<V: Visitor<'a>>(
         self,
-        _: &'static str,
+        name: &'static str,
         visitor: V,
     ) -> Result<V::Value, DeError> {
-        visitor.visit_newtype_struct(self)
+        if name != WHOLE_TEXT {
+            return visitor.visit_newtype_struct(self);
+        }
+
+        match self.node().take_whole_text() {
+            Cow::Borrowed(text) => visitor.visit_borrowed_str(text),
+            Cow::Owned(text) => visitor.visit_string(text),
+        }
     }
 
     fn deserialize_seq<V: Visitor<'a>>(self, visitor: V) -> Result<V::Value, DeError> {

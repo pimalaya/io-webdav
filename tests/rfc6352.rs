@@ -192,6 +192,19 @@ fn card_join_path_keeps_the_resource_name_verbatim() {
     );
 }
 
+#[test]
+fn card_join_path_percent_encodes_what_a_segment_cannot_hold() {
+    for (id, path) in [
+        ("My Card.vcf", "/dav/books/My%20Card.vcf"),
+        ("My%20Card.vcf", "/dav/books/My%20Card.vcf"),
+        ("/a b.vcf", "/dav/books/a%20b.vcf"),
+        ("sub/x#y.vcf", "/dav/books/sub/x%23y.vcf"),
+        ("a%40b+c;d.vcf", "/dav/books/a%40b+c;d.vcf"),
+    ] {
+        assert_eq!(join_path("/dav/books/", id), path, "{id:?}");
+    }
+}
+
 // --- addressbook coroutines ---
 
 #[test]
@@ -600,6 +613,64 @@ fn multiget_cards_returns_a_missing_card() {
             failures: vec![],
         }]
     );
+}
+
+/// Cards whose `address-data` escapes each CR, as iCloud and Fastmail write
+/// it, one of them indented inside the element and one blank.
+const WHOLE_CARDS_XML: &str = "<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:carddav\">
+ <d:response><d:href>/dav/books/contacts/alice.vcf</d:href><d:propstat><d:prop>
+  <c:address-data>BEGIN:VCARD&#13;\nVERSION:3.0&#13;\nFN:Alice&#13;\nEND:VCARD&#13;\n</c:address-data>
+ </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+ <d:response><d:href>/dav/books/contacts/indented.vcf</d:href><d:propstat><d:prop>
+  <c:address-data>\n   BEGIN:VCARD&#13;\nEND:VCARD&#13;\n  </c:address-data>
+ </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+ <d:response><d:href>/dav/books/contacts/blank.vcf</d:href><d:propstat><d:prop>
+  <c:address-data>\n  </c:address-data>
+ </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>";
+
+#[test]
+fn a_card_keeps_its_address_data_whole() {
+    let mut list = CarddavCardList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &CarddavCardListOptions::default(),
+    );
+    let mut multiget = CarddavCardMultiget::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &["alice.vcf", "indented.vcf", "blank.vcf"],
+    );
+    let reply = multistatus_response(WHOLE_CARDS_XML);
+    let list = expect_exchange(&mut list, &reply).1.unwrap();
+    let multiget = expect_exchange(&mut multiget, &reply).1.unwrap();
+
+    // NOTE: the PCDATA is the vCard (RFC 6352 §10.4), its final CRLF
+    // included, as a GET returns it; indentation inside the element is
+    // PCDATA too, so it stays.
+    let want = vec![
+        (
+            "alice.vcf".to_string(),
+            b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Alice\r\nEND:VCARD\r\n".to_vec(),
+        ),
+        (
+            "indented.vcf".to_string(),
+            b"\n   BEGIN:VCARD\r\nEND:VCARD\r\n  ".to_vec(),
+        ),
+    ];
+    for (cards, unreadable) in [
+        (Vec::from_iter(list.cards), list.unreadable),
+        (multiget.cards, multiget.unreadable),
+    ] {
+        let cards: Vec<_> = cards.into_iter().map(|card| (card.id, card.data)).collect();
+        assert_eq!(cards, want);
+        assert_eq!(unreadable.len(), 1);
+        assert_eq!(unreadable[0].id, "blank.vcf");
+    }
 }
 
 #[test]

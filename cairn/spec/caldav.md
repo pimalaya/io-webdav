@@ -56,6 +56,14 @@ An item listing and an item multiget SHALL return beside their entries every res
 - WHEN the items are listed
 - THEN the two items are entries and `e3.ics` is a row carrying status 403
 
+### Requirement: An item comes back whole
+An item listing and an item multiget SHALL return the whole text of `calendar-data` as the item's bytes, its references resolved and its line ends normalised as XML 1.0 requires, nothing trimmed: RFC 4791 §9.6 makes that PCDATA the iCalendar object itself, whitespace around it included. Blank text SHALL count as empty data.
+
+#### Scenario: An item ending in an escaped CR
+- GIVEN a `calendar-multiget` answer whose `calendar-data` ends `END:VCALENDAR&#13;` and a line feed
+- WHEN the item is read
+- THEN its bytes end `END:VCALENDAR` and a CRLF, as a GET of the item returns them
+
 ### Requirement: Enumeration
 Enumeration SHALL use the same calendar-query REPORT requesting the ETag only, returning id and ETag rows with no body, so a full spine costs no payload.
 
