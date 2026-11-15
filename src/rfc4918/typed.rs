@@ -8,6 +8,9 @@
 //!
 //! - children match fields by local name, prefixes ignored, the first of
 //!   several same-named runs winning;
+//! - a property matches a struct field named in Clark notation,
+//!   `{uri}local`, only in that namespace, its prefix resolved through the
+//!   declarations in scope, and then no field named `local` alone;
 //! - a text element reads as a string, a number or a boolean, trimmed;
 //! - an element reads as a struct or a map of its children, its attributes
 //!   first under `@` keys (`@name`), consecutive same-named children filling
@@ -43,7 +46,7 @@ use serde::{
 use crate::rfc4918::{
     MULTISTATUS_MAX_DEPTH, WebdavMultistatusParse, WebdavMultistatusParseError, WebdavPropFailure,
     sealed::Sealed,
-    status_code,
+    segment_id, status_code,
     xml::{XmlAttrs, XmlEvent, XmlScanner, decode_attr, decode_text, local, same_name},
 };
 
@@ -72,13 +75,12 @@ pub struct WebdavResponseOf<P> {
 }
 
 impl<P> WebdavResponseOf<P> {
-    /// Returns the last non-empty path segment of [`href`](Self::href).
-    pub fn id(&self) -> &str {
-        self.href
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
+    /// Returns the resource identifier: the last non-empty path segment of
+    /// [`href`](Self::href), read as
+    /// [`id_from_location`](crate::rfc4918::id_from_location) reads one.
+    pub fn id(&self) -> Cow<'_, str> {
+        let segment = self.href.trim_end_matches('/').rsplit('/').next();
+        segment_id(segment.unwrap_or(""))
     }
 }
 
@@ -86,7 +88,8 @@ impl<P> WebdavResponseOf<P> {
 /// answered it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WebdavUnreadableEntry {
-    /// Resource id: the last path segment of [`href`](Self::href), verbatim.
+    /// Resource id: the last path segment of [`href`](Self::href), read as a
+    /// listing reads it (see [`WebdavResponseOf::id`]).
     pub id: String,
     /// The `<href>` text, trimmed.
     pub href: String,
@@ -147,7 +150,11 @@ pub fn parse_multistatus_as<'a, P: Deserialize<'a>>(
 /// parse left to the caller.
 struct Envelope<'a> {
     events: XmlScanner<'a>,
-    frames: Vec<(Frame, &'a str)>,
+    /// The open elements, each with the length `scope` had before it.
+    frames: Vec<(Frame, &'a str, usize)>,
+    /// The namespace declarations in scope down to the property level, prefix
+    /// then URI.
+    scope: Vec<(&'a str, &'a str)>,
     /// The property elements of the response read last.
     nodes: Nodes<'a>,
     text: Cow<'a, str>,
@@ -168,6 +175,7 @@ impl<'a> Envelope<'a> {
         Self {
             events: XmlScanner::new(xml),
             frames: Vec::with_capacity(16),
+            scope: Vec::new(),
             nodes: Nodes::default(),
             text: Cow::Borrowed(""),
             href: None,
@@ -190,11 +198,13 @@ impl<'a> Envelope<'a> {
         for event in self.events.by_ref() {
             match event {
                 XmlEvent::Start {
+                    prefix,
                     local,
                     attrs,
                     empty,
                 } => {
-                    let frame = match self.frames.last().map(|(frame, _)| frame) {
+                    let mark = self.scope.len();
+                    let frame = match self.frames.last().map(|(frame, ..)| frame) {
                         None if self.closed => {
                             let err = WebdavMultistatusParseError::Incomplete(self.responses);
                             return Err(err);
@@ -220,23 +230,34 @@ impl<'a> Envelope<'a> {
                             b"prop" => Frame::Node(self.propstat_root),
                             _ => Frame::Skip,
                         },
+                        Some(&Frame::Node(parent)) if parent == self.propstat_root => {
+                            declare(&mut self.scope, attrs);
+                            let ns = namespace(&self.scope, prefix);
+                            Frame::Node(nodes.add_child(parent, local, attrs, ns))
+                        }
                         Some(&Frame::Node(parent)) => {
-                            Frame::Node(nodes.add_child(parent, local, attrs))
+                            Frame::Node(nodes.add_child(parent, local, attrs, ""))
                         }
                         _ => Frame::Skip,
                     };
 
                     match frame {
+                        Frame::Multistatus => declare(&mut self.scope, attrs),
                         Frame::Response => {
+                            declare(&mut self.scope, attrs);
                             nodes.clear();
-                            nodes.add("prop", "");
+                            nodes.add("prop", "", "");
                             self.href = None;
                             self.status = None;
                             self.failures.clear();
                         }
                         Frame::Propstat => {
+                            declare(&mut self.scope, attrs);
                             self.propstat_status = None;
-                            self.propstat_root = nodes.add("prop", "");
+                            self.propstat_root = nodes.add("prop", "", "");
+                        }
+                        Frame::Node(i) if i == self.propstat_root => {
+                            declare(&mut self.scope, attrs);
                         }
                         Frame::Text(_) => self.text = Cow::Borrowed(""),
                         _ => {}
@@ -247,21 +268,26 @@ impl<'a> Envelope<'a> {
                             let err = WebdavMultistatusParseError::TooDeep(MULTISTATUS_MAX_DEPTH);
                             return Err(err);
                         }
-                        self.frames.push((frame, local));
-                    } else if self.frames.is_empty() {
-                        self.closed = true;
+                        self.frames.push((frame, local, mark));
+                    } else {
+                        self.scope.truncate(mark);
+                        if self.frames.is_empty() {
+                            self.closed = true;
+                        }
                     }
                 }
-                XmlEvent::Text { raw, clean } => match self.frames.last().map(|(frame, _)| frame) {
-                    Some(Frame::Text(_)) => push_text(&mut self.text, raw, clean, false),
-                    Some(&Frame::Node(i)) if i != self.propstat_root => {
-                        let node = &mut nodes.slots[i as usize];
-                        let nested = node.first != NONE;
-                        push_text(node.text.get_mut(), raw, clean, nested);
+                XmlEvent::Text { raw, clean } => {
+                    match self.frames.last().map(|(frame, ..)| frame) {
+                        Some(Frame::Text(_)) => push_text(&mut self.text, raw, clean, false),
+                        Some(&Frame::Node(i)) if i != self.propstat_root => {
+                            let node = &mut nodes.slots[i as usize];
+                            let nested = node.first != NONE;
+                            push_text(node.text.get_mut(), raw, clean, nested);
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                },
-                XmlEvent::Cdata(raw) => match self.frames.last().map(|(frame, _)| frame) {
+                }
+                XmlEvent::Cdata(raw) => match self.frames.last().map(|(frame, ..)| frame) {
                     Some(Frame::Text(_)) => push_text(&mut self.text, raw, raw.len(), false),
                     Some(&Frame::Node(i)) if i != self.propstat_root => {
                         let node = &mut nodes.slots[i as usize];
@@ -272,7 +298,10 @@ impl<'a> Envelope<'a> {
                 },
                 XmlEvent::End(close) => {
                     let frame = match self.frames.last() {
-                        Some(&(frame, local)) if same_name(local, close) => frame,
+                        Some(&(frame, local, mark)) if same_name(local, close) => {
+                            self.scope.truncate(mark);
+                            frame
+                        }
                         _ => {
                             let err = WebdavMultistatusParseError::Incomplete(self.responses);
                             return Err(err);
@@ -355,6 +384,8 @@ enum Field {
 struct Node<'a> {
     local: &'a str,
     attrs: &'a str,
+    /// The namespace URI of a property, empty below the property level.
+    ns: &'a str,
     text: Cell<Cow<'a, str>>,
     first: u32,
     last: u32,
@@ -362,10 +393,11 @@ struct Node<'a> {
 }
 
 impl<'a> Node<'a> {
-    fn new(local: &'a str, attrs: &'a str) -> Self {
+    fn new(local: &'a str, attrs: &'a str, ns: &'a str) -> Self {
         Self {
             local,
             attrs,
+            ns,
             text: Cell::new(Cow::Borrowed("")),
             first: NONE,
             last: NONE,
@@ -374,9 +406,10 @@ impl<'a> Node<'a> {
     }
 
     /// Makes the node a new one, in place.
-    fn reset(&mut self, local: &'a str, attrs: &'a str) {
+    fn reset(&mut self, local: &'a str, attrs: &'a str, ns: &'a str) {
         self.local = local;
         self.attrs = attrs;
+        self.ns = ns;
         *self.text.get_mut() = Cow::Borrowed("");
         self.first = NONE;
         self.last = NONE;
@@ -423,10 +456,10 @@ impl<'a> Nodes<'a> {
     }
 
     /// Adds a node, returning its index.
-    fn add(&mut self, local: &'a str, attrs: &'a str) -> u32 {
+    fn add(&mut self, local: &'a str, attrs: &'a str, ns: &'a str) -> u32 {
         match self.slots.get_mut(self.len) {
-            Some(node) => node.reset(local, attrs),
-            None => self.slots.push(Node::new(local, attrs)),
+            Some(node) => node.reset(local, attrs, ns),
+            None => self.slots.push(Node::new(local, attrs, ns)),
         }
 
         self.len += 1;
@@ -434,8 +467,8 @@ impl<'a> Nodes<'a> {
     }
 
     /// Adds a node as the last child of `parent`, returning its index.
-    fn add_child(&mut self, parent: u32, local: &'a str, attrs: &'a str) -> u32 {
-        let i = self.add(local, attrs);
+    fn add_child(&mut self, parent: u32, local: &'a str, attrs: &'a str, ns: &'a str) -> u32 {
+        let i = self.add(local, attrs, ns);
         let slots = &mut self.slots;
 
         match slots[parent as usize].last {
@@ -487,6 +520,41 @@ fn is_blank(text: &str) -> bool {
 
 fn is_xmlns(name: &str) -> bool {
     name == "xmlns" || name.starts_with("xmlns:")
+}
+
+/// Pushes the namespace declarations of `attrs` onto `scope`, the default
+/// namespace under an empty prefix.
+fn declare<'a>(scope: &mut Vec<(&'a str, &'a str)>, attrs: &'a str) {
+    for (name, uri) in XmlAttrs(attrs) {
+        match name.strip_prefix("xmlns") {
+            Some("") => scope.push(("", uri)),
+            Some(rest) => scope.extend(rest.strip_prefix(':').map(|prefix| (prefix, uri))),
+            None => {}
+        }
+    }
+}
+
+/// The namespace URI `prefix` is bound to in `scope`, empty when unbound.
+fn namespace<'a>(scope: &[(&'a str, &'a str)], prefix: &str) -> &'a str {
+    scope
+        .iter()
+        .rev()
+        .find(|(bound, _)| same_name(bound, prefix))
+        .map_or("", |&(_, uri)| uri)
+}
+
+/// The field of `fields` naming `node` in Clark notation, `{uri}local`.
+fn clark_field(fields: &'static [&'static str], node: &Node<'_>) -> Option<&'static str> {
+    if node.ns.is_empty() {
+        return None;
+    }
+
+    fields.iter().copied().find(|field| {
+        let name = field
+            .strip_prefix('{')
+            .and_then(|name| name.split_once('}'));
+        name == Some((node.ns, node.local))
+    })
 }
 
 /// The newtype name [`whole_text`] asks for, which [`NodeDe`] answers with the
@@ -559,6 +627,21 @@ impl<'n, 'a> NodeDe<'n, 'a> {
         match self.node().take_text() {
             Cow::Borrowed(text) => visitor.visit_borrowed_str(text),
             Cow::Owned(text) => visitor.visit_string(text),
+        }
+    }
+
+    /// The element's attributes and children as a map, a child named in
+    /// Clark notation by one of `fields` keyed by that field.
+    fn children(self, fields: &'static [&'static str]) -> Children<'n, 'a> {
+        let clark = fields.iter().any(|field| field.starts_with('{'));
+
+        Children {
+            nodes: self.nodes,
+            fields: if clark { fields } else { &[] },
+            attrs: XmlAttrs(self.node().attrs),
+            cur: self.node().first,
+            seen: Seen::default(),
+            value: Value::None,
         }
     }
 
@@ -675,22 +758,16 @@ impl<'n, 'a> Deserializer<'a> for NodeDe<'n, 'a> {
     }
 
     fn deserialize_map<V: Visitor<'a>>(self, visitor: V) -> Result<V::Value, DeError> {
-        visitor.visit_map(Children {
-            nodes: self.nodes,
-            attrs: XmlAttrs(self.node().attrs),
-            cur: self.node().first,
-            seen: Seen::default(),
-            value: Value::None,
-        })
+        visitor.visit_map(self.children(&[]))
     }
 
     fn deserialize_struct<V: Visitor<'a>>(
         self,
         _: &'static str,
-        _: &'static [&'static str],
+        fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, DeError> {
-        self.deserialize_map(visitor)
+        visitor.visit_map(self.children(fields))
     }
 
     fn deserialize_enum<V: Visitor<'a>>(
@@ -899,38 +976,35 @@ enum Value<'a> {
 /// An element's attributes, then its children grouped by name, as a map.
 struct Children<'n, 'a> {
     nodes: &'n [Node<'a>],
+    /// The struct fields, when one is named in Clark notation.
+    fields: &'static [&'static str],
     attrs: XmlAttrs<'a>,
     cur: u32,
     seen: Seen<'a>,
     value: Value<'a>,
 }
 
-/// The child names a [`Children`] map returned, the nodes of the first eight
-/// inline.
+/// The keys a [`Children`] map returned, the first eight inline.
 #[derive(Default)]
 struct Seen<'a> {
-    inline: [u32; 8],
+    inline: [&'a str; 8],
     len: usize,
     spill: BTreeSet<&'a str>,
 }
 
 impl<'a> Seen<'a> {
-    /// Adds the name of node `i`, returning whether it was new.
-    fn insert(&mut self, nodes: &[Node<'a>], i: u32) -> bool {
-        let name = nodes[i as usize].local;
+    /// Adds `key`, returning whether it was new.
+    fn insert(&mut self, key: &'a str) -> bool {
         let inline = &self.inline[..self.len];
-        if inline
-            .iter()
-            .any(|&seen| same_name(nodes[seen as usize].local, name))
-        {
+        if inline.iter().any(|seen| same_name(seen, key)) {
             return false;
         }
 
         if self.len == self.inline.len() {
-            return self.spill.insert(name);
+            return self.spill.insert(key);
         }
 
-        self.inline[self.len] = i;
+        self.inline[self.len] = key;
         self.len += 1;
         true
     }
@@ -964,18 +1038,24 @@ impl<'n, 'a> MapAccess<'a> for Children<'n, 'a> {
 
             let first = self.cur;
             let local = self.nodes[first as usize].local;
+            let clark = clark_field(self.fields, &self.nodes[first as usize]);
             let mut len = 0;
-            while self.cur != NONE && same_name(self.nodes[self.cur as usize].local, local) {
-                self.cur = self.nodes[self.cur as usize].next;
+            while self.cur != NONE {
+                let node = &self.nodes[self.cur as usize];
+                if !same_name(node.local, local) || clark_field(self.fields, node) != clark {
+                    break;
+                }
+                self.cur = node.next;
                 len += 1;
             }
 
-            if !self.seen.insert(self.nodes, first) {
+            let key = clark.unwrap_or(local);
+            if !self.seen.insert(key) {
                 continue;
             }
 
             self.value = Value::Group { first, len };
-            return seed.deserialize(Key(local)).map(Some);
+            return seed.deserialize(Key(key)).map(Some);
         }
     }
 
@@ -1296,6 +1376,60 @@ mod tests {
         let body = ["\u{feff}notice\n", BODY, "\n<!-- served -->\n"].concat();
         let ms = parse_multistatus_as::<Props>(&body).unwrap();
         assert_eq!(ms.responses.len(), 3);
+    }
+
+    #[derive(Debug, Default, Deserialize, PartialEq)]
+    struct Colors {
+        #[serde(rename = "{urn:a}color")]
+        a: Option<String>,
+        color: Option<String>,
+    }
+
+    #[test]
+    fn parse_multistatus_as_reads_a_clark_field_from_its_namespace_only() {
+        let body = r#"<d:multistatus xmlns:d="DAV:" xmlns:a="urn:a" xmlns:b="urn:b">
+ <d:response>
+  <d:href>/1</d:href>
+  <d:propstat>
+   <d:prop><b:color>b</b:color><a:color>a</a:color></d:prop>
+   <d:status>HTTP/1.1 200 OK</d:status>
+  </d:propstat>
+ </d:response>
+ <d:response xmlns:x="urn:a">
+  <d:href>/2</d:href>
+  <d:propstat>
+   <d:prop><color xmlns="urn:b">b</color></d:prop>
+   <d:status>HTTP/1.1 200 OK</d:status>
+  </d:propstat>
+  <d:propstat>
+   <d:prop><x:color>a</x:color></d:prop>
+   <d:status>HTTP/1.1 200 OK</d:status>
+  </d:propstat>
+ </d:response>
+ <d:response>
+  <d:href>/3</d:href>
+  <d:propstat>
+   <d:prop><y:color xmlns:y="urn:a"/><x:color>z</x:color></d:prop>
+   <d:status>HTTP/1.1 200 OK</d:status>
+  </d:propstat>
+ </d:response>
+</d:multistatus>"#;
+
+        let ms = parse_multistatus_as::<Colors>(body).unwrap();
+        let colors: Vec<_> = ms.responses.into_iter().map(|r| r.props).collect();
+        let color = |a: Option<&str>, color: Option<&str>| Colors {
+            a: a.map(String::from),
+            color: color.map(String::from),
+        };
+
+        assert_eq!(
+            colors,
+            [
+                color(Some("a"), Some("b")),
+                color(Some("a"), Some("b")),
+                color(Some(""), Some("z")),
+            ]
+        );
     }
 
     #[derive(Debug, Deserialize, PartialEq)]

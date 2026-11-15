@@ -93,7 +93,7 @@ pub struct CarddavCardMultiget {
 
 impl CarddavCardMultiget {
     /// Builds a new `multiget-cards` coroutine fetching each card of `ids`
-    /// (resource ids as the server returned them, used verbatim) inside
+    /// (resource ids, as a listing returns them) inside
     /// `addressbook_path`. The `Depth` header is pinned to 0: RFC 6352 §8.7
     /// only defines the report for that value.
     pub fn new(

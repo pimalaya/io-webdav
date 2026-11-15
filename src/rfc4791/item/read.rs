@@ -71,8 +71,8 @@ pub struct CaldavItemRead {
 }
 
 impl CaldavItemRead {
-    /// Builds a new `read-item` coroutine. `id` is the resource id exactly as
-    /// the server returned it (`CaldavItemEntry::id`), used verbatim.
+    /// Builds a new `read-item` coroutine. `id` is the resource id, as a
+    /// listing returns it (`CaldavItemEntry::id`).
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

@@ -17,11 +17,7 @@ pub mod multiget;
 pub mod read;
 pub mod update;
 
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{format, string::String, vec::Vec};
 
 use serde::Deserialize;
 
@@ -38,8 +34,9 @@ use crate::{
 /// [`CarddavCardEnum`](crate::rfc6352::card::enumerate::CarddavCardEnum).
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CarddavCardRef {
-    /// Resource id: the last path segment of the card href, exactly as the
-    /// server returned it, and the addressing key of every other verb.
+    /// Resource id: the last path segment of the card href, read as
+    /// [`id_from_location`](crate::rfc4918::id_from_location) reads one, and
+    /// the addressing key of every other verb.
     pub id: String,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
@@ -49,8 +46,8 @@ pub struct CarddavCardRef {
 /// [`CarddavCardList`](crate::rfc6352::card::list::CarddavCardList).
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CarddavCardEntry {
-    /// Resource id: the last path segment of the card's href, exactly as the
-    /// server returned it (see [`CarddavCardRef::id`]).
+    /// Resource id: the last path segment of the card's href (see
+    /// [`CarddavCardRef::id`]).
     pub id: String,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
@@ -65,9 +62,10 @@ pub(crate) const CARD_PROPS: &[WebdavProperty] = &[GETETAG, ADDRESS_DATA];
 /// resource path. io-webdav never adds nor strips an extension.
 ///
 /// Each byte a path segment cannot hold raw is percent-encoded (RFC 3986
-/// §3.3), an escape already there kept, so an id read from a listing is
-/// joined verbatim. [`check_resource_id`](crate::rfc4918::check_resource_id)
-/// refuses an id addressing another resource.
+/// §3.3), an escape already there kept, so an id read from a listing
+/// addresses the segment it came from.
+/// [`check_resource_id`](crate::rfc4918::check_resource_id) refuses an id
+/// addressing another resource.
 pub fn join_path(addressbook: &str, id: &str) -> String {
     let addressbook = addressbook.trim_end_matches('/');
     let id = encode_segments(id.trim_start_matches('/'));
@@ -103,7 +101,7 @@ pub(crate) fn card_from_response(
         return None;
     }
 
-    let id = id.to_string();
+    let id = id.into_owned();
     let data = response
         .props
         .address_data

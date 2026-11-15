@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Added `rfc4791::calendar::CaldavCalendarPatch`, the partial update `CaldavCalendarUpdate` takes.
+
+  Each of the display name, description, color and time zone is doubly optional: `None` leaves it alone, `Some(None)` removes it, `Some(Some(value))` sets it.
+
+- Added `rfc4791::calendar::property_updates`.
+
+- Added `rfc4791::calendar::APPLE_ICAL` and `rfc4791::calendar::INFIT_CALENDAR_COLOR`.
+
+- Added namespace-qualified fields to `rfc4918::typed::parse_multistatus_as`.
+
+  A struct field named in Clark notation, `{uri}local`, reads only the properties of that namespace, so two properties sharing a local name no longer collide.
+
+### Changed
+
+- **BREAKING**: Changed `CaldavCalendarUpdate::new` and `WebdavClientStd::update_calendar` to take a `CaldavCalendarPatch`.
+
+  A cleared property is removed in the same `PROPPATCH`. The component set is no longer sent on update, a server protecting it once the calendar exists; `property_set` is the `MKCALENDAR` side only.
+
+- **BREAKING**: Changed every id read from an href or a sent URL to be percent-decoded when the decoding encodes back to the segment.
+
+  Listings, enumerations, multigets, their unreadable rows, `rfc4918::collection_id`, `rfc4918::id_from_location` and the id a create, update or move returns: a collection created as `My Book` lists as `My Book`, no longer `My%20Book`. A segment whose decoding would not be sent back as served (a `%2F`, an escape left in the decoding, `%40`, lowercase hex) keeps its served form. An id read before still addresses its resource.
+
+- **BREAKING**: Changed `WebdavResponseEntry::id` and `WebdavResponseOf::id` to return `Cow<str>`.
+
+### Fixed
+
+- Fixed a calendar's color being written and read as the inf-it `calendar-color`, the address book namespace, which iCloud ignores.
+
+  `rfc4791::calendar::CALENDAR_COLOR` is Apple's (`http://apple.com/ns/ical/`), written on create and update; a listing reads it, the inf-it one only when it is absent.
+
 ## [0.9.1] - 2026-11-15
 
 ### Added

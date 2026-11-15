@@ -211,14 +211,11 @@ impl WebdavResponseEntry {
             .collect()
     }
 
-    /// Returns the last non-empty path segment of [`href`](Self::href), the
-    /// resource identifier.
-    pub fn id(&self) -> &str {
-        self.href
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
+    /// Returns the resource identifier: the last non-empty path segment of
+    /// [`href`](Self::href), read as [`id_from_location`] reads one.
+    pub fn id(&self) -> Cow<'_, str> {
+        let segment = self.href.trim_end_matches('/').rsplit('/').next();
+        segment_id(segment.unwrap_or(""))
     }
 
     /// Returns the id of the collection this entry lists under the home set
@@ -230,8 +227,8 @@ impl WebdavResponseEntry {
 
 /// Returns the id of the collection at `href` listed under the home set path
 /// `home`: the last path segment when the collection is a direct child of
-/// `home`, the href's path otherwise, starting with a slash and kept as the
-/// server served it.
+/// `home`, read as [`id_from_location`] reads one, the href's path otherwise,
+/// starting with a slash and kept as the server served it.
 ///
 /// RFC 4791 and RFC 6352 make a collection URL opaque: Google lists every
 /// calendar as `/caldav/v2/<calendar>/events/`, outside the home set, where a
@@ -244,7 +241,7 @@ pub fn collection_id(home: &str, href: &str) -> String {
     // NOTE: a relative href names no parent to compare; it keeps the last
     // segment, as every id did before.
     if !path.starts_with('/') || same_path(parent, home.trim_end_matches('/')) {
-        return last.to_string();
+        return segment_id(last).into_owned();
     }
 
     path.to_string()
@@ -256,9 +253,9 @@ pub fn collection_id(home: &str, href: &str) -> String {
 ///
 /// A relative id has each byte a path segment cannot hold raw percent-encoded
 /// (RFC 3986 §3.3), an escape already there kept, so an id read from a listing
-/// is joined verbatim; an id starting with a slash is taken as the server
-/// gave it. [`check_collection_id`] refuses an id addressing another
-/// collection.
+/// addresses the segment it came from; an id starting with a slash is taken
+/// as the server gave it. [`check_collection_id`] refuses an id addressing
+/// another collection.
 pub fn collection_path(home: &str, id: &str) -> String {
     if id.starts_with('/') {
         return format!("{}/", id.trim_end_matches('/'));
@@ -301,6 +298,29 @@ pub(crate) fn encode_segments(path: &str) -> Cow<'_, str> {
     }
 
     Cow::Owned(out)
+}
+
+/// Returns the id a path segment gives: the segment percent-decoded when the
+/// decoding is UTF-8, passes [`check_resource_id`] and encodes back to the
+/// very segment (see [`encode_segments`]), the segment as it stands otherwise.
+///
+/// A decoded id is thus sent as the server served it, and one that would not
+/// be (a decoded `/`, an escape left in the decoding, an escape the encoder
+/// would not write) stays as served, which addresses the resource too.
+pub(crate) fn segment_id(segment: &str) -> Cow<'_, str> {
+    if !segment.contains('%') {
+        return Cow::Borrowed(segment);
+    }
+
+    let Ok(id) = String::from_utf8(decoded(segment).collect()) else {
+        return Cow::Borrowed(segment);
+    };
+
+    if check_resource_id(&id).is_err() || encode_segments(&id) != segment {
+        return Cow::Borrowed(segment);
+    }
+
+    Cow::Owned(id)
 }
 
 /// Whether a path segment holds `byte` raw: an unreserved character, a
@@ -614,8 +634,13 @@ pub fn prop_set_body(
     body.into_bytes()
 }
 
-/// Extracts a resource id from a `Location` header: its last path segment,
-/// query and fragment dropped, or [`None`] when that segment is empty.
+/// Extracts a resource id from a `Location` header or an href: its last path
+/// segment, query and fragment dropped, or [`None`] when that segment is empty.
+///
+/// The segment is percent-decoded when the decoding encodes back to it, as
+/// [`collection_path`] and the item and card `join_path` encode an id, so the
+/// id round-trips; it is kept as served otherwise (a decoded `/`, an escape
+/// left in the decoding, an escape the encoder would not write).
 ///
 /// A server may store a created resource under a name of its own and report it
 /// here (Google does), in which case that name, not the one the caller sent, is
@@ -627,11 +652,11 @@ pub fn id_from_location(location: &str) -> Option<String> {
         .unwrap_or(location)
         .trim_end_matches('/');
     let segment = path.rsplit('/').next().unwrap_or_default();
-    (!segment.is_empty()).then(|| segment.to_string())
+    (!segment.is_empty()).then(|| segment_id(segment).into_owned())
 }
 
 /// Returns the id a request to `path` addresses: the last segment of the URL
-/// sent, percent-encoded as [`resolve`] made it and as a listing returns it.
+/// sent, read as a listing reads it.
 pub(crate) fn sent_id(base_url: &Url, path: &str) -> String {
     let url = resolve(base_url, path);
     id_from_location(url.path()).unwrap_or_default()
@@ -641,7 +666,7 @@ pub(crate) fn sent_id(base_url: &Url, path: &str) -> String {
 /// every byte but the unreserved ones escaped.
 ///
 /// A name the caller mints goes through here: the result is sent as it
-/// stands, and is the id a create returns.
+/// stands, and a create returns the id a listing gives for it.
 pub fn encode_id(name: &str) -> String {
     let mut id = String::with_capacity(name.len());
     for byte in name.bytes() {
@@ -952,6 +977,7 @@ pub fn parse_multistatus(xml: &str) -> Result<WebdavMultistatus, WebdavMultistat
                 local,
                 attrs,
                 empty,
+                ..
             } => {
                 let depth = stack.len();
                 let parent = stack.last_mut();

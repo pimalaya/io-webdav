@@ -57,7 +57,7 @@
 //! println!("{} items", refs.refs.len());
 //! ```
 
-use alloc::{collections::BTreeSet, string::ToString};
+use alloc::collections::BTreeSet;
 
 use log::trace;
 use url::Url;
@@ -160,7 +160,7 @@ fn from_response(response: WebdavResponseOf<WebdavEtagProps>) -> Option<CaldavIt
     }
 
     Some(CaldavItemRef {
-        id: id.to_string(),
+        id: id.into_owned(),
         etag: unquoted_etag(response.props.getetag),
     })
 }

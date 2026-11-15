@@ -71,8 +71,8 @@ pub struct CarddavCardRead {
 }
 
 impl CarddavCardRead {
-    /// Builds a new `read-card` coroutine. `id` is the resource id exactly as
-    /// the server returned it (`CarddavCardEntry::id`), used verbatim.
+    /// Builds a new `read-card` coroutine. `id` is the resource id, as a
+    /// listing returns it (`CarddavCardEntry::id`).
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

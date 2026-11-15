@@ -24,8 +24,10 @@ use crate::rfc4918::xml::lanes::Lanes;
 /// One markup event, borrowed from the body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum XmlEvent<'a> {
-    /// A start tag, `empty` for `<a/>`; `attrs` is the raw attribute area.
+    /// A start tag, `empty` for `<a/>`; `prefix` is empty for an unprefixed
+    /// name, `attrs` is the raw attribute area.
     Start {
+        prefix: &'a str,
         local: &'a str,
         attrs: &'a str,
         empty: bool,
@@ -144,6 +146,7 @@ impl<'a> Iterator for XmlScanner<'a> {
                     let empty = end > name_end && bytes[end - 1] == b'/';
                     self.pos = end + 1;
                     return Some(XmlEvent::Start {
+                        prefix: colon.map_or("", |c| &self.xml[at + 1..c]),
                         local: &self.xml[colon.map_or(at + 1, |c| c + 1)..name_end],
                         attrs: &self.xml[name_end..end - empty as usize],
                         empty,
@@ -475,6 +478,7 @@ mod tests {
             events(xml),
             [
                 XmlEvent::Start {
+                    prefix: "",
                     local: "a",
                     attrs: "",
                     empty: false,
@@ -491,6 +495,7 @@ mod tests {
     #[test]
     fn scanner_ends_on_unterminated_markup() {
         let open = XmlEvent::Start {
+            prefix: "",
             local: "a",
             attrs: "",
             empty: false,
@@ -519,12 +524,14 @@ mod tests {
             events(xml),
             [
                 XmlEvent::Start {
+                    prefix: "C",
                     local: "supported-calendar-component-set",
                     attrs: " a:b='>'",
                     empty: true,
                 },
                 XmlEvent::End("supported-calendar-component-set"),
                 XmlEvent::Start {
+                    prefix: "x",
                     local: "y:zzzzzzzzzzzzzzz",
                     attrs: "",
                     empty: false,

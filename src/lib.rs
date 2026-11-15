@@ -72,7 +72,9 @@
 //! of `calendar-data` or `address-data`, untrimmed: it is the object itself.
 //!
 //! A coroutine joins the ids it is given, percent-encoding the bytes a path
-//! segment cannot hold raw, so an id read from a listing is sent as it stands.
+//! segment cannot hold raw. A listing decodes the segment it reads an id from
+//! only when that encoding gives the segment back, keeping it as served
+//! otherwise, so an id round-trips through create, list and address.
 //! [`rfc4918::check_collection_id`] and [`rfc4918::check_resource_id`] refuse
 //! one addressing another resource, and the client runs them first.
 //!

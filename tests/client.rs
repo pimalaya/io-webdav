@@ -15,7 +15,7 @@ use std::{
 use common::*;
 use io_webdav::{
     client::{WebdavClientStd, WebdavClientStdError},
-    rfc4791::calendar::CaldavCalendar,
+    rfc4791::calendar::{CaldavCalendar, CaldavCalendarPatch},
     rfc4918::{WebdavAuth, WebdavIdError, encode_id, send::WebdavSendError},
     rfc6352::{
         addressbook::{CarddavAddressbook, CarddavAddressbookPatch},
@@ -450,7 +450,9 @@ fn methods_require_the_home_set_cache() {
         WebdavClientStdError::MissingCalendarHomeSet
     ));
     assert!(matches!(
-        client.update_calendar(&calendar).unwrap_err(),
+        client
+            .update_calendar(&CaldavCalendarPatch::default())
+            .unwrap_err(),
         WebdavClientStdError::MissingCalendarHomeSet
     ));
     assert!(matches!(
@@ -542,7 +544,14 @@ fn calendar_methods_run_their_coroutines() {
         ..Default::default()
     };
     client.create_calendar(&calendar).expect("create calendar");
-    client.update_calendar(&calendar).expect("update calendar");
+
+    let patch = CaldavCalendarPatch {
+        id: "work".into(),
+        display_name: Some(Some("Work".into())),
+        description: Some(None),
+        ..Default::default()
+    };
+    client.update_calendar(&patch).expect("update calendar");
     client.delete_calendar("work").expect("delete calendar");
 }
 
@@ -669,13 +678,13 @@ fn a_refused_property_fails_the_update() {
     ));
     assert!(err.to_string().contains("displayname (403)"));
 
-    let calendar = CaldavCalendar {
+    let patch = CaldavCalendarPatch {
         id: "nope".into(),
-        display_name: Some("Renamed".into()),
+        display_name: Some(Some("Renamed".into())),
         ..Default::default()
     };
     assert!(matches!(
-        client.update_calendar(&calendar).unwrap_err(),
+        client.update_calendar(&patch).unwrap_err(),
         WebdavClientStdError::PropertiesRejected(_)
     ));
 }
@@ -694,7 +703,10 @@ fn a_property_the_server_never_mentions_fails_the_update() {
         </propstat>
       </response>
     </multistatus>"#;
-    let mut client = discovered_client(vec![multistatus_response(silent)]);
+    let mut client = discovered_client(vec![
+        multistatus_response(silent),
+        multistatus_response(silent),
+    ]);
 
     let patch = CarddavAddressbookPatch {
         id: "nope".into(),
@@ -710,6 +722,21 @@ fn a_property_the_server_never_mentions_fails_the_update() {
     ));
     assert!(err.to_string().contains("displayname"));
     assert!(err.to_string().contains("addressbook-description"));
+
+    let patch = CaldavCalendarPatch {
+        id: "nope".into(),
+        description: Some(None),
+        color: Some(None),
+        ..Default::default()
+    };
+    let err = client.update_calendar(&patch).unwrap_err();
+
+    assert!(matches!(
+        err,
+        WebdavClientStdError::PropertiesIgnored(ref ignored) if ignored.len() == 2
+    ));
+    assert!(err.to_string().contains("calendar-color"));
+    assert!(err.to_string().contains("calendar-description"));
 }
 
 #[test]
@@ -1284,10 +1311,14 @@ fn a_collection_id_climbing_out_of_the_home_set_sends_nothing() {
             id: id.into(),
             ..Default::default()
         };
+        let calendar_patch = CaldavCalendarPatch {
+            id: id.into(),
+            ..Default::default()
+        };
 
         let refusals = [
             client.create_calendar(&calendar).unwrap_err(),
-            client.update_calendar(&calendar).unwrap_err(),
+            client.update_calendar(&calendar_patch).unwrap_err(),
             client.delete_calendar(id).unwrap_err(),
             client.list_items(id, "").unwrap_err(),
             client.enum_items(id, "").unwrap_err(),
@@ -1372,12 +1403,12 @@ fn a_clean_id_addresses_the_path_it_did_before() {
         .delete_calendar("/caldav/v2/team%40g/events")
         .expect("absolute id");
 
-    let calendar = CaldavCalendar {
+    let patch = CaldavCalendarPatch {
         id: "/caldav/v2/team%40g/events/".into(),
-        display_name: Some("Team".into()),
+        display_name: Some(Some("Team".into())),
         ..Default::default()
     };
-    client.update_calendar(&calendar).expect("absolute update");
+    client.update_calendar(&patch).expect("absolute update");
     client.list_items("personal", "").expect("relative listing");
     client
         .delete_item("personal", "/a...b.ics", None)
@@ -1453,6 +1484,98 @@ fn an_id_holding_reserved_bytes_is_sent_percent_encoded() {
         "DELETE /dav/calendars/personal/50%25%20off%2F%C3%A9t%C3%A9%3F.ics HTTP/1.1\r\n",
         "REPORT /dav/books/contacts/ HTTP/1.1\r\n",
         "<D:href>/dav/books/contacts/My%20Card.vcf</D:href>",
+    ] {
+        let at = rest
+            .find(line)
+            .unwrap_or_else(|| panic!("{line:?} not sent in order: {written}"));
+        rest = &rest[at + line.len()..];
+    }
+}
+
+#[test]
+fn an_id_round_trips_through_create_list_and_address() {
+    let books = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/My%20Book/</d:href>
+        <d:propstat>
+          <d:prop><d:resourcetype><d:collection/><c:addressbook/></d:resourcetype></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/a%2Fb/</d:href>
+        <d:propstat>
+          <d:prop><d:resourcetype><d:collection/><c:addressbook/></d:resourcetype></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+    let cards = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/My%20Book/Caf%C3%A9%201.vcf</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:getetag>"1"</d:getetag>
+            <c:address-data>BEGIN:VCARD</c:address-data>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut client = recording_client(
+        &written,
+        vec![
+            http_response("201 Created", &[], ""),
+            multistatus_response(books),
+            http_response("201 Created", &[], ""),
+            multistatus_response(cards),
+            http_response("204 No Content", &[], ""),
+            http_response("204 No Content", &[], ""),
+        ],
+    );
+
+    let addressbook = CarddavAddressbook {
+        id: "My Book".into(),
+        ..Default::default()
+    };
+    client.create_addressbook(&addressbook).expect("create");
+
+    let ids: Vec<String> = client
+        .list_addressbooks()
+        .expect("list")
+        .into_iter()
+        .map(|book| book.id)
+        .collect();
+    // NOTE: a decoded slash would name another path: that id stays as served.
+    assert_eq!(ids, ["My Book", "a%2Fb"]);
+
+    let created = client
+        .create_card("My Book", "Café 1.vcf", b"BEGIN:VCARD".to_vec())
+        .expect("create card");
+    assert_eq!(created.id, "Café 1.vcf");
+
+    let listed = client
+        .list_cards("My Book", &CarddavCardListOptions::default())
+        .expect("list cards");
+    let card = listed.cards.first().unwrap();
+    assert_eq!(card.id, "Café 1.vcf");
+
+    client
+        .delete_card("My Book", &card.id, None)
+        .expect("delete card");
+    client.delete_addressbook(&ids[0]).expect("delete");
+
+    let written = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+    let mut rest = written.as_str();
+    for line in [
+        "MKCOL /dav/books/My%20Book/ HTTP/1.1\r\n",
+        "PROPFIND /dav/books/ HTTP/1.1\r\n",
+        "PUT /dav/books/My%20Book/Caf%C3%A9%201.vcf HTTP/1.1\r\n",
+        "REPORT /dav/books/My%20Book/ HTTP/1.1\r\n",
+        "DELETE /dav/books/My%20Book/Caf%C3%A9%201.vcf HTTP/1.1\r\n",
+        "DELETE /dav/books/My%20Book/ HTTP/1.1\r\n",
     ] {
         let at = rest
             .find(line)

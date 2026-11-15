@@ -21,7 +21,7 @@ A listed address book SHALL carry its id by the rule calendars follow, and an ad
 The crate SHALL provide read, create, update and delete coroutines for cards, plus list, ETag-only enumeration and batch multiget.
 
 ### Requirement: Card identity
-A card SHALL be addressed by its resource id, the href's last path segment used verbatim. The crate SHALL NOT append nor strip the .vcf extension, so the caller owns the whole resource name and an id read from a listing addresses the resource it came from.
+A card SHALL be addressed by its resource id, the href's last path segment read as A listed segment is decoded (webdav-core) says. The crate SHALL NOT append nor strip the .vcf extension, so the caller owns the whole resource name and an id read from a listing addresses the resource it came from.
 
 #### Scenario: Suffixing server
 - GIVEN a server that stores cards under a .vcf name and enumerates them that way

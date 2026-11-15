@@ -8,7 +8,7 @@ use common::*;
 use io_webdav::{
     rfc4791::{
         calendar::{
-            CaldavCalendar, calendar_multiget_body, calendar_query_body,
+            CaldavCalendar, CaldavCalendarPatch, calendar_multiget_body, calendar_query_body,
             create::CaldavCalendarCreate, delete::CaldavCalendarDelete,
             home_set::CaldavCalendarHomeSet, list::CaldavCalendarList, mkcalendar_body,
             property_set, update::CaldavCalendarUpdate,
@@ -208,18 +208,198 @@ fn create_calendar_sends_mkcalendar() {
 
 #[test]
 fn update_calendar_sends_proppatch() {
-    let calendar = CaldavCalendar {
+    let patch = CaldavCalendarPatch {
         id: "work".into(),
-        display_name: Some("Renamed".into()),
+        display_name: Some(Some("Renamed".into())),
         ..Default::default()
     };
     let mut update =
-        CaldavCalendarUpdate::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", &calendar);
+        CaldavCalendarUpdate::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", &patch);
     let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
     let (request, ret) = expect_exchange(&mut update, &reply);
     assert!(request.starts_with("proppatch /dav/calendars/work/ http/1.1\r\n"));
     assert!(request.contains("<d:displayname>renamed</d:displayname>"));
+    assert!(!request.contains("<d:remove>"));
     ret.unwrap();
+}
+
+#[test]
+fn update_calendar_removes_the_properties_the_patch_clears() {
+    let patch = CaldavCalendarPatch {
+        id: "work".into(),
+        display_name: Some(Some("Renamed".into())),
+        description: Some(None),
+        color: Some(None),
+        tz: None,
+    };
+    let mut update =
+        CaldavCalendarUpdate::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", &patch);
+    let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
+    let (request, ret) = expect_exchange(&mut update, &reply);
+
+    // NOTE: the cleared description and color leave as removals, while the
+    // untouched time zone appears in neither instruction.
+    assert!(
+        request.contains("<d:set><d:prop><d:displayname>renamed</d:displayname></d:prop></d:set>")
+    );
+    assert!(request.contains(
+        "<d:remove><d:prop><a:calendar-color/><c:calendar-description/></d:prop></d:remove>"
+    ));
+    assert!(request.contains("xmlns:a=\"http://apple.com/ns/ical/\""));
+    assert!(!request.contains("calendar-timezone"));
+    ret.unwrap();
+}
+
+#[test]
+fn a_calendar_color_is_written_in_the_apple_ical_namespace() {
+    let calendar = CaldavCalendar {
+        id: "work".into(),
+        color: Some("#00FF00".into()),
+        ..Default::default()
+    };
+    let mut create =
+        CaldavCalendarCreate::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", &calendar);
+    let (request, ret) = expect_exchange(&mut create, &http_response("201 Created", &[], ""));
+    assert!(request.contains("<a:calendar-color>#00ff00</a:calendar-color>"));
+    assert!(request.contains("xmlns:a=\"http://apple.com/ns/ical/\""));
+    assert!(!request.contains("inf-it.com"));
+    ret.unwrap();
+
+    let patch = CaldavCalendarPatch {
+        id: "work".into(),
+        color: Some(Some("#00FF00".into())),
+        ..Default::default()
+    };
+    let mut update =
+        CaldavCalendarUpdate::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/", &patch);
+    let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
+    let (request, ret) = expect_exchange(&mut update, &reply);
+    assert!(
+        request.contains(
+            "<d:set><d:prop><a:calendar-color>#00ff00</a:calendar-color></d:prop></d:set>"
+        )
+    );
+    assert!(request.contains("xmlns:a=\"http://apple.com/ns/ical/\""));
+    assert!(!request.contains("inf-it.com"));
+    ret.unwrap();
+}
+
+#[test]
+fn a_listed_calendar_or_item_id_is_decoded_when_its_encoding_gives_it_back() {
+    let mut list = CaldavCalendarList::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <d:response>
+        <d:href>/dav/calendars/R%C3%A9unions%202026/</d:href>
+        <d:propstat>
+          <d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/a%2Fb/</d:href>
+        <d:propstat>
+          <d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+    let (_, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+    let ids: Vec<String> = ret.unwrap().into_iter().map(|c| c.id).collect();
+    assert_eq!(ids, ["Réunions 2026", "a%2Fb"]);
+
+    let mut list = CaldavItemList::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/calendars/R%C3%A9unions%202026/",
+        "",
+    );
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+      <d:response>
+        <d:href>/dav/calendars/R%C3%A9unions%202026/r%C3%A9union%201.ics</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:getetag>"etag-1"</d:getetag>
+            <c:calendar-data>BEGIN:VCALENDAR</c:calendar-data>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/R%C3%A9unions%202026/a%2541.ics</d:href>
+        <d:status>HTTP/1.1 403 Forbidden</d:status>
+      </d:response>
+    </d:multistatus>"#;
+    let (_, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+    let ok = ret.unwrap();
+    assert_eq!(ok.items.first().unwrap().id, "réunion 1.ics");
+    assert_eq!(ok.unreadable.first().unwrap().id, "a%2541.ics");
+    assert_eq!(
+        join_path("/dav/calendars/R%C3%A9unions%202026/", "réunion 1.ics"),
+        "/dav/calendars/R%C3%A9unions%202026/r%C3%A9union%201.ics"
+    );
+}
+
+#[test]
+fn a_calendar_color_is_read_from_either_namespace_the_apple_one_first() {
+    let mut list = CaldavCalendarList::new(&base(), &WebdavAuth::None, UA, "/dav/calendars/");
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"
+        xmlns:i="http://inf-it.com/ns/ab/" xmlns:x1="http://apple.com/ns/ical/">
+      <d:response>
+        <d:href>/dav/calendars/both/</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+            <i:calendar-color>#111111</i:calendar-color>
+            <x1:calendar-color>#222222</x1:calendar-color>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/inline/</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+            <calendar-color xmlns="http://apple.com/ns/ical/">#333333</calendar-color>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+        <d:propstat>
+          <d:prop><i:calendar-color/></d:prop>
+          <d:status>HTTP/1.1 404 Not Found</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/calendars/infit/</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+            <i:calendar-color>#444444</i:calendar-color>
+            <x1:calendar-color></x1:calendar-color>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+    </d:multistatus>"#;
+
+    let (request, ret) = expect_exchange(&mut list, &multistatus_response(xml));
+    assert!(request.contains("<a:calendar-color/>"));
+    assert!(request.contains("<i:calendar-color/>"));
+
+    let colors: Vec<_> = ret
+        .unwrap()
+        .into_iter()
+        .map(|calendar| (calendar.id, calendar.color))
+        .collect();
+    assert_eq!(
+        colors,
+        [
+            ("both".to_string(), Some("#222222".to_string())),
+            ("infit".to_string(), Some("#444444".to_string())),
+            ("inline".to_string(), Some("#333333".to_string())),
+        ]
+    );
 }
 
 #[test]
@@ -711,7 +891,7 @@ fn create_item_uses_the_id_verbatim() {
 }
 
 #[test]
-fn create_and_update_item_return_the_segment_sent() {
+fn create_and_update_item_return_the_id_a_listing_gives() {
     let mut create = CaldavItemCreate::new(
         &base(),
         &WebdavAuth::None,
@@ -722,7 +902,7 @@ fn create_and_update_item_return_the_segment_sent() {
     );
     let (request, ret) = expect_exchange(&mut create, &http_response("201 Created", &[], ""));
     assert!(request.starts_with("put /dav/calendars/personal/r%c3%a9union%201.ics http/1.1\r\n"));
-    assert_eq!(ret.unwrap().id, "r%C3%A9union%201.ics");
+    assert_eq!(ret.unwrap().id, "réunion 1.ics");
 
     let mut update = CaldavItemUpdate::new(
         &base(),
@@ -734,11 +914,11 @@ fn create_and_update_item_return_the_segment_sent() {
         None,
     );
     let (_, ret) = expect_exchange(&mut update, &http_response("204 No Content", &[], ""));
-    assert_eq!(ret.unwrap().id, "r%C3%A9union%201.ics");
+    assert_eq!(ret.unwrap().id, "réunion 1.ics");
 }
 
 #[test]
-fn move_item_returns_the_segment_sent() {
+fn move_item_returns_the_id_a_listing_gives() {
     let mut moving = CaldavItemMove::new(
         &base(),
         &WebdavAuth::None,
@@ -752,7 +932,7 @@ fn move_item_returns_the_segment_sent() {
     assert!(request.contains(
         "\r\ndestination: https://dav.example.org/dav/calendars/work/r%c3%a9union%201.ics\r\n"
     ));
-    assert_eq!(ret.unwrap().id, "r%C3%A9union%201.ics");
+    assert_eq!(ret.unwrap().id, "réunion 1.ics");
 }
 
 #[test]
@@ -1115,19 +1295,14 @@ fn list_calendars_names_a_calendar_outside_the_home_set_by_its_path() {
 #[test]
 fn a_calendar_id_starting_with_a_slash_addresses_its_path() {
     let id = "/caldav/v2/team%40group.example.org/events";
-    let calendar = CaldavCalendar {
+    let patch = CaldavCalendarPatch {
         id: id.into(),
-        display_name: Some("Team".into()),
+        display_name: Some(Some("Team".into())),
         ..Default::default()
     };
 
-    let mut update = CaldavCalendarUpdate::new(
-        &base(),
-        &WebdavAuth::None,
-        UA,
-        "/caldav/v2/alice/",
-        &calendar,
-    );
+    let mut update =
+        CaldavCalendarUpdate::new(&base(), &WebdavAuth::None, UA, "/caldav/v2/alice/", &patch);
     let reply = multistatus_response("<d:multistatus xmlns:d=\"DAV:\"/>");
     let (request, _) = expect_exchange(&mut update, &reply);
     assert!(

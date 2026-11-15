@@ -79,8 +79,8 @@ pub struct CarddavCardDelete {
 }
 
 impl CarddavCardDelete {
-    /// Builds a new `delete-card` coroutine. `id` is the resource id exactly as
-    /// the server returned it (`CarddavCardRef::id`), used verbatim.
+    /// Builds a new `delete-card` coroutine. `id` is the resource id, as a
+    /// listing returns it (`CarddavCardRef::id`).
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,

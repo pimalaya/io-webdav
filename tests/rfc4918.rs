@@ -17,6 +17,7 @@ use io_webdav::{
         encode_id,
         follow_redirects::{WebdavFollowRedirects, WebdavFollowRedirectsError},
         get::WebdavGet,
+        id_from_location,
         mkcol::WebdavMkcol,
         r#move::WebdavMove,
         options::WebdavOptions,
@@ -1100,6 +1101,51 @@ fn a_collection_elsewhere_is_named_by_its_path() {
     // NOTE: a root href (or a URL without a path) is no collection: empty.
     assert_eq!(collection_id("/dav/cal/", "https://dav.example.org"), "");
     assert_eq!(collection_id("/dav/cal/", "/"), "");
+}
+
+#[test]
+fn a_listed_segment_is_decoded_when_its_encoding_gives_it_back() {
+    let listed = [
+        ("work", "work"),
+        ("a@b", "a@b"),
+        ("My%20Book", "My Book"),
+        ("%C3%A9t%C3%A9", "été"),
+        ("50%25off", "50%off"),
+        ("a%3Fb%23c", "a?b#c"),
+        ("a%5Cb", "a\\b"),
+        // NOTE: kept as served: a decoded slash, an escape left in the
+        // decoding, escapes the encoder would not write (a pchar, lowercase
+        // hex), bytes that are no UTF-8, an id the checks refuse.
+        ("a%2Fb", "a%2Fb"),
+        ("a%2541", "a%2541"),
+        ("a%40b", "a%40b"),
+        ("card%2D1", "card%2D1"),
+        ("caf%c3%a9", "caf%c3%a9"),
+        ("%FF", "%FF"),
+        ("%2E%2E", "%2E%2E"),
+        ("a%5C..", "a%5C.."),
+    ];
+
+    for (segment, id) in listed {
+        let href = format!("/dav/cal/{segment}/");
+        assert_eq!(collection_id("/dav/cal/", &href), id, "{segment:?}");
+
+        let location = format!("https://dav.example.org/dav/cal/work/{segment}?x");
+        assert_eq!(
+            id_from_location(&location).as_deref(),
+            Some(id),
+            "{segment:?}"
+        );
+
+        // NOTE: the id addresses the very segment it was read from.
+        assert_eq!(collection_path("/dav/cal/", id), href, "{segment:?}");
+    }
+
+    // NOTE: the path of a collection elsewhere stays as served.
+    assert_eq!(
+        collection_id("/dav/cal/", "/other/My%20Book/"),
+        "/other/My%20Book"
+    );
 }
 
 #[test]

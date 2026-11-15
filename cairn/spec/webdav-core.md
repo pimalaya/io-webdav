@@ -41,12 +41,17 @@ A body SHALL parse only as one whole multistatus document: its first element is 
 - THEN the outer response keeps its href and properties, and the nested elements stay children of the property
 
 ### Requirement: Typed multistatus
-The crate SHALL parse a multistatus into responses whose 2xx properties deserialize, merged across propstats, into a serde type the caller supplies. Children SHALL match by local name, prefixes ignored, the first of same-named properties winning. Text SHALL read trimmed, borrowed from the body where it needs no decoding; attributes SHALL read as `@name` keys; consecutive same-named children SHALL fill a sequence; an empty element SHALL read as unit. The envelope (href, response status, refused properties, sync token, depth cap, whole-document rule) SHALL keep the semantics of Multistatus parsing. A response whose properties do not fit the type SHALL fail the parse, naming its href, rather than drop out: a listing missing a member reads as its removal.
+The crate SHALL parse a multistatus into responses whose 2xx properties deserialize, merged across propstats, into a serde type the caller supplies. Children SHALL match by local name, prefixes ignored, the first of same-named properties winning. A struct field named in Clark notation, `{uri}local`, SHALL match only the properties of that namespace, each property's prefix resolved through the namespace declarations in scope, and a field named `local` alone the other same-named properties. Text SHALL read trimmed, borrowed from the body where it needs no decoding; attributes SHALL read as `@name` keys; consecutive same-named children SHALL fill a sequence; an empty element SHALL read as unit. The envelope (href, response status, refused properties, sync token, depth cap, whole-document rule) SHALL keep the semantics of Multistatus parsing. A response whose properties do not fit the type SHALL fail the parse, naming its href, rather than drop out: a listing missing a member reads as its removal.
 
 #### Scenario: A property the type cannot hold
 - GIVEN a typed multistatus expecting a number in `getcontentlength`
 - WHEN a response carries text there
 - THEN the parse fails naming that response's href
+
+#### Scenario: Two properties sharing a local name
+- GIVEN a response carrying `calendar-color` in two namespaces, both prefixes declared on the root
+- WHEN it is parsed into a type naming one of them `{http://apple.com/ns/ical/}calendar-color` and the other `calendar-color`
+- THEN each field reads the property of its own namespace, whichever comes first
 
 ### Requirement: A property update is verified, not assumed
 A `PROPPATCH` SHALL return its parsed multistatus together with the properties the request asked to change, and the client SHALL fail unless every one of them came back accepted. A property the server refused fails the call, and so does one it never mentioned: RFC 4918 §9.2.1 wants a propstat per requested property, and a server that names none of them (iCloud, for a collection that does not exist) changed nothing while answering 207.
@@ -77,12 +82,12 @@ A parsed property SHALL expose its direct child elements, each carrying its loca
 The vocabulary-agnostic parser SHALL keep each property's whole text, references resolved and line ends normalised, on the parsed property; its text helper SHALL return it trimmed.
 
 ### Requirement: Resource identity
-An item or card id SHALL be the last non-empty path segment of its href, percent-encoding kept as the server served it. A collection's id SHALL follow its layer's identity rule (Calendar identity, Address book identity). The crate SHALL never add nor strip a file extension anywhere in that derivation. A create, update or move SHALL return the id as the last segment of the URL it sent, percent-encoded, which is the form a listing returns, never the caller's string as given. The crate SHALL offer an encoder turning a name the caller mints into such a segment, every byte but the RFC 3986 unreserved ones escaped; an encoded name SHALL be sent as it stands.
+An item or card id SHALL be the last non-empty path segment of its href, read as A listed segment is decoded says. A collection's id SHALL follow its layer's identity rule (Calendar identity, Address book identity). The crate SHALL never add nor strip a file extension anywhere in that derivation. A create, update or move SHALL return the id the last segment of the URL it sent gives, read the same way, which is the form a listing returns, never the caller's string as given. The crate SHALL offer an encoder turning a name the caller mints into such a segment, every byte but the RFC 3986 unreserved ones escaped; an encoded name SHALL be sent as it stands.
 
 #### Scenario: A name needing escapes
 - GIVEN a create under a name holding a space and a non-ASCII letter
 - WHEN the server answers without a Location header
-- THEN the returned id is the percent-encoded segment the request addressed
+- THEN the request addresses the percent-encoded segment, and the returned id is the name itself, as a listing of that segment returns it
 
 ### Requirement: An id stays inside what it names
 The crate SHALL offer a check for collection ids and one for item and card ids, refusing with a dedicated error carrying the id. A collection id SHALL be refused when, its trailing slashes dropped and then the leading slash of an id starting with one, it is empty or holds an empty, `.` or `..` segment. An item or card id SHALL be refused when, its leading slashes dropped, it is empty or holds such a segment. Segments SHALL be split on `/` and `\` and compared percent-decoded, the forms a URL parser or a server resolves as dot segments. The path builders and the coroutines SHALL NOT check an id, checking it being their caller's part, and SHALL join it as A relative id is sent percent-encoded says.
@@ -98,17 +103,30 @@ The crate SHALL offer a check for collection ids and one for item and card ids, 
 - THEN it passes, and addresses /caldav/v2/team%40g/events/ as before
 
 ### Requirement: A relative id is sent percent-encoded
-The collection path builder and the item and card path builders SHALL percent-encode each byte of a relative id that an RFC 3986 path segment cannot hold raw, any byte but the unreserved ones, the sub-delimiters, `:` and `@`, keeping `/` as the segment separator and an escape already there (`%` and two hex digits) as it stands. An id read from an href SHALL be joined byte-identical, and the id's percent-decoded form SHALL stay unchanged, so the id checks judge the path sent. A collection id starting with a slash SHALL be taken as the server gave it.
+The collection path builder and the item and card path builders SHALL percent-encode each byte of a relative id that an RFC 3986 path segment cannot hold raw, any byte but the unreserved ones, the sub-delimiters, `:` and `@`, keeping `/` as the segment separator and an escape already there (`%` and two hex digits) as it stands. An id read from an href SHALL be joined into the very segment it was read from, and the id's percent-decoded form SHALL stay unchanged, so the id checks judge the path sent. A collection id starting with a slash SHALL be taken as the server gave it.
 
 #### Scenario: An address book named with a space
 - GIVEN the collection id `My Book`
 - WHEN the client creates the address book
-- THEN the MKCOL addresses `<home>/My%20Book/`, the path the id `My%20Book` read from a listing addresses too
+- THEN the MKCOL addresses `<home>/My%20Book/`, the path the listed id `My Book` addresses too, as does `My%20Book`
 
 #### Scenario: A backslash in an id
 - GIVEN the collection id `a\b`
 - WHEN the client deletes the address book
 - THEN the DELETE addresses `<home>/a%5Cb/`, not the nested collection `<home>/a/b/`
+
+### Requirement: A listed segment is decoded
+An id read from a path segment, the last segment of a listed or multiget href, of a Location header or of the URL a create, update or move sent, SHALL be that segment percent-decoded when the decoding is UTF-8, passes the item and card id check, and percent-encodes, as A relative id is sent percent-encoded says, back to the very segment; any other segment SHALL be the id as the server served it. A segment whose decoding holds a `/` or an escape, one escaping a byte the encoder writes raw (an unreserved byte, a sub-delimiter, `:` or `@`), one spelled with lowercase hex digits and one whose decoding the check refuses SHALL therefore stay as served. Either way the id addresses the segment it was read from, as does the segment itself.
+
+#### Scenario: An address book named with a space
+- GIVEN an address book created as `My Book`, which the server lists as `My%20Book`
+- WHEN the address books are listed
+- THEN it carries the id `My Book`, which addresses `<home>/My%20Book/` as the create did
+
+#### Scenario: A decoded slash
+- GIVEN a listed card whose href ends in `a%2Fb.vcf`
+- WHEN the cards are listed
+- THEN the card carries the id `a%2Fb.vcf`, where `a/b.vcf` would address another path
 
 ### Requirement: Location header
 When a server reports a created resource in a Location header, the id SHALL be that header's last path segment, query and fragment dropped, falling back to the last segment of the request URL when the header is absent or its segment is empty.

@@ -16,11 +16,7 @@ pub mod multiget;
 pub mod read;
 pub mod update;
 
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{format, string::String, vec::Vec};
 
 use serde::Deserialize;
 
@@ -37,8 +33,9 @@ use crate::{
 /// [`CaldavItemEnum`](crate::rfc4791::item::enumerate::CaldavItemEnum).
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CaldavItemRef {
-    /// Resource id: the last path segment of the item href, exactly as the
-    /// server returned it, and the addressing key of every other verb.
+    /// Resource id: the last path segment of the item href, read as
+    /// [`id_from_location`](crate::rfc4918::id_from_location) reads one, and
+    /// the addressing key of every other verb.
     pub id: String,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
@@ -48,8 +45,8 @@ pub struct CaldavItemRef {
 /// [`CaldavItemList`](crate::rfc4791::item::list::CaldavItemList).
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CaldavItemEntry {
-    /// Resource id: the last path segment of the item's href, exactly as the
-    /// server returned it (see [`CaldavItemRef::id`]).
+    /// Resource id: the last path segment of the item's href (see
+    /// [`CaldavItemRef::id`]).
     pub id: String,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
@@ -64,9 +61,10 @@ pub(crate) const ITEM_PROPS: &[WebdavProperty] = &[GETETAG, CALENDAR_DATA];
 /// resource path. io-webdav never adds nor strips an extension.
 ///
 /// Each byte a path segment cannot hold raw is percent-encoded (RFC 3986
-/// §3.3), an escape already there kept, so an id read from a listing is
-/// joined verbatim. [`check_resource_id`](crate::rfc4918::check_resource_id)
-/// refuses an id addressing another resource.
+/// §3.3), an escape already there kept, so an id read from a listing
+/// addresses the segment it came from.
+/// [`check_resource_id`](crate::rfc4918::check_resource_id) refuses an id
+/// addressing another resource.
 pub fn join_path(calendar: &str, id: &str) -> String {
     let calendar = calendar.trim_end_matches('/');
     let id = encode_segments(id.trim_start_matches('/'));
@@ -102,7 +100,7 @@ pub(crate) fn item_from_response(
         return None;
     }
 
-    let id = id.to_string();
+    let id = id.into_owned();
     let data = response
         .props
         .calendar_data

@@ -93,8 +93,8 @@ pub struct CarddavCardUpdate {
 }
 
 impl CarddavCardUpdate {
-    /// Builds a new `update-card` coroutine. `id` is the resource id exactly as
-    /// the server returned it (`CarddavCardEntry::id`), used verbatim.
+    /// Builds a new `update-card` coroutine. `id` is the resource id, as a
+    /// listing returns it (`CarddavCardEntry::id`).
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -157,8 +157,8 @@ enum State {
 /// Outcome of a successful [`CarddavCardUpdate`] resume.
 #[derive(Clone, Debug)]
 pub struct CarddavCardUpdateOk {
-    /// Card resource id: the last segment of the request URL, percent-encoded
-    /// as it was sent.
+    /// Card resource id: the last segment of the request URL, read as a
+    /// listing reads it.
     pub id: String,
     /// Updated entity tag returned by the server, when present.
     pub etag: Option<String>,

@@ -113,6 +113,8 @@ struct CalendarProps {
     resourcetype: Option<WebdavChildNames>,
     displayname: Option<String>,
     calendar_description: Option<String>,
+    #[serde(rename = "{http://apple.com/ns/ical/}calendar-color")]
+    apple_calendar_color: Option<String>,
     calendar_color: Option<String>,
     supported_calendar_component_set: Option<ComponentSet>,
     getctag: Option<String>,
@@ -163,7 +165,7 @@ fn from_response(
         id,
         display_name: non_empty(props.displayname),
         description: non_empty(props.calendar_description),
-        color: non_empty(props.calendar_color),
+        color: non_empty(props.apple_calendar_color).or(non_empty(props.calendar_color)),
         components,
         ctag: non_empty(props.getctag),
         sync_token: non_empty(props.sync_token),

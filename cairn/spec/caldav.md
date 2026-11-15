@@ -12,10 +12,18 @@ The RFC 4791 layer: calendar collections and the calendar object resources they 
 The crate SHALL provide list, create, update and delete coroutines for calendar collections. Creation SHALL use MKCALENDAR rather than the extended MKCOL, which CalDAV servers require for calendars.
 
 ### Requirement: Calendar properties
-A listed calendar SHALL carry its id, display name, description, color, component set, ctag, sync token, default time zone and the reports the server advertises for it. Every property the listing reads SHALL also be writable, the advertised report set excepted, which RFC 3253 section 3.1.5 protects, so a calendar round-trips through create and update.
+A listed calendar SHALL carry its id, display name, description, color, component set, ctag, sync token, default time zone and the reports the server advertises for it. Every property the listing reads SHALL also be writable on create, the advertised report set excepted, which RFC 3253 section 3.1.5 protects, so a calendar round-trips through create; an update SHALL write all of them but the component set (Calendar update).
+
+### Requirement: Calendar color
+A calendar's color SHALL be written as `calendar-color` in the `http://apple.com/ns/ical/` namespace, by a create and an update alike. A listing SHALL request that property and `calendar-color` in the `http://inf-it.com/ns/ab/` namespace, and SHALL read the first, the second when the first is absent or empty, whatever order the server answers them in. An address book's color SHALL stay `addressbook-color` in the inf-it namespace.
+
+#### Scenario: A calendar carrying both colors
+- GIVEN a calendar holding an inf-it `calendar-color` and an Apple one, the server answering the inf-it one first
+- WHEN the calendars are listed
+- THEN the calendar's color is the Apple one
 
 ### Requirement: Calendar identity
-A listed calendar whose collection is a direct child of the home set SHALL carry the last path segment of its href as its id. Any other listed calendar SHALL carry its href's path as its id, starting with a slash, percent-encoding kept as the server served it. The home set and the href SHALL be compared percent-decoded. A calendar id starting with a slash SHALL address that path; any other id SHALL address the home set joined with it.
+A listed calendar whose collection is a direct child of the home set SHALL carry the last path segment of its href as its id, read as A listed segment is decoded (webdav-core) says. Any other listed calendar SHALL carry its href's path as its id, starting with a slash, percent-encoding kept as the server served it. The home set and the href SHALL be compared percent-decoded. A calendar id starting with a slash SHALL address that path; any other id SHALL address the home set joined with it.
 
 #### Scenario: Calendars outside the home set
 - GIVEN a home set /caldav/v2/alice/ listing /caldav/v2/alice/events/ and /caldav/v2/team/events/
@@ -26,11 +34,19 @@ A listed calendar whose collection is a direct child of the home set SHALL carry
 ### Requirement: Component set
 The component types a calendar holds SHALL be read from and written to supported-calendar-component-set (RFC 4791 section 5.2.3), whose value is a list of comp children carrying a name attribute. An empty set means the server advertises no restriction, which the RFC defines as accepting any type. A server fixes the set at creation time, so setting it is only meaningful on create.
 
+### Requirement: Calendar update
+A calendar update SHALL take a partial update in which each of the display name, description, color and default time zone is left alone, removed (`DAV:remove`, RFC 4918 section 9.2) or set (`DAV:set`), all sent in one PROPPATCH. A removed property SHALL be verified as a set one is (A property update is verified, not assumed). The component set SHALL be no part of it, RFC 4791 section 5.2.3 protecting it once the calendar exists.
+
+#### Scenario: A cleared description
+- GIVEN a calendar with a name, a description and a color
+- WHEN the caller updates it, setting the name and removing the description
+- THEN one PROPPATCH sets the name and removes the description, and the color appears in neither
+
 ### Requirement: Item verbs
 The crate SHALL provide read, create, update, delete and move coroutines for calendar items, plus list, ETag-only enumeration and batch multiget.
 
 ### Requirement: Item identity
-An item SHALL be addressed by its resource id, the href's last path segment used verbatim. The crate SHALL NOT append nor strip the .ics extension, so the caller owns the whole resource name and an id read from a listing addresses the resource it came from.
+An item SHALL be addressed by its resource id, the href's last path segment read as A listed segment is decoded (webdav-core) says. The crate SHALL NOT append nor strip the .ics extension, so the caller owns the whole resource name and an id read from a listing addresses the resource it came from.
 
 #### Scenario: Listed id round-trips
 - GIVEN a listing returning an item whose href last segment carries no extension

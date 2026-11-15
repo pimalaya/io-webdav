@@ -12,7 +12,7 @@
 //!
 //! use io_webdav::{
 //!     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-//!     rfc4791::calendar::{CaldavCalendar, update::CaldavCalendarUpdate},
+//!     rfc4791::calendar::{CaldavCalendarPatch, update::CaldavCalendarUpdate},
 //!     rfc4918::WebdavAuth,
 //! };
 //! use url::Url;
@@ -23,13 +23,17 @@
 //!
 //! let base_url: Url = "https://dav.example.org/".parse().unwrap();
 //! let auth = WebdavAuth::None;
-//! let calendar = CaldavCalendar {
+//!
+//! // Sets the calendar's color and clears its description, leaving its
+//! // display name untouched.
+//! let patch = CaldavCalendarPatch {
 //!     id: "personal".into(),
-//!     color: Some("#ff0000".into()),
+//!     color: Some(Some("#ff0000".into())),
+//!     description: Some(None),
 //!     ..Default::default()
 //! };
 //! let mut coroutine =
-//!     CaldavCalendarUpdate::new(&base_url, &auth, "io-webdav", "/dav/calendars/", &calendar);
+//!     CaldavCalendarUpdate::new(&base_url, &auth, "io-webdav", "/dav/calendars/", &patch);
 //! let mut arg = None;
 //!
 //! loop {
@@ -57,7 +61,7 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc4791::calendar::{CaldavCalendar, join_path, property_set},
+    rfc4791::calendar::{CaldavCalendarPatch, join_path, property_updates},
     rfc4918::{
         WebdavAuth,
         proppatch::{WebdavProppatch, WebdavProppatchOk},
@@ -72,21 +76,18 @@ pub struct CaldavCalendarUpdate {
 }
 
 impl CaldavCalendarUpdate {
-    /// Builds a new `update-calendar` coroutine targeting `home_set_path`
-    /// joined with `calendar.id`.
+    /// Builds a new `update-calendar` coroutine, setting the properties
+    /// `patch` carries a value for and removing the ones it clears.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
         user_agent: &str,
         home_set_path: &str,
-        calendar: &CaldavCalendar,
+        patch: &CaldavCalendarPatch,
     ) -> Self {
-        let path = join_path(home_set_path, &calendar.id);
-        let set = property_set(calendar);
-        // NOTE: set-only, so a property this calendar leaves empty stays as it
-        // is on the server. The CardDAV twin takes a patch that can also
-        // remove; this one follows when calendula needs it.
-        let proppatch = WebdavProppatch::new(base_url, auth, user_agent, &path, &set, &[]);
+        let path = join_path(home_set_path, &patch.id);
+        let (set, remove) = property_updates(patch);
+        let proppatch = WebdavProppatch::new(base_url, auth, user_agent, &path, &set, &remove);
         Self {
             state: State::WebdavProppatch(proppatch),
         }

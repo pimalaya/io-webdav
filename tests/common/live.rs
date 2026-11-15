@@ -73,7 +73,7 @@ use io_http::{
 use io_webdav::{
     client::{WebdavClientStd, WebdavClientStdError},
     coroutine::*,
-    rfc4791::calendar::CaldavCalendar,
+    rfc4791::calendar::{CaldavCalendar, CaldavCalendarPatch},
     rfc4918::{SYNC_TOKEN, WebdavAuth, propfind::WebdavPropfind, send::WebdavSendError},
     rfc6352::addressbook::{CarddavAddressbook, CarddavAddressbookPatch},
     rfc6352::card::list::CarddavCardListOptions,
@@ -344,9 +344,9 @@ fn caldav_body(
 
     // NOTE: only the name goes out: the component set is protected once
     // the calendar exists (RFC 4791 section 5.2.3).
-    let renamed = CaldavCalendar {
+    let renamed = CaldavCalendarPatch {
         id: cal_id.to_owned(),
-        display_name: Some("io-webdav integration test (renamed)".to_owned()),
+        display_name: Some(Some("io-webdav integration test (renamed)".to_owned())),
         ..Default::default()
     };
     client.set_stream(connect(base));

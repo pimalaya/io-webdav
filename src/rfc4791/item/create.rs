@@ -161,7 +161,7 @@ enum State {
 pub struct CaldavItemCreateOk {
     /// Item resource id: the `Location` header's last path segment when the
     /// server returns one (its own name for the resource), otherwise the last
-    /// segment of the request URL, percent-encoded as it was sent.
+    /// segment of the request URL; either read as a listing reads it.
     pub id: String,
     /// Entity tag returned by the server, when present.
     pub etag: Option<String>,

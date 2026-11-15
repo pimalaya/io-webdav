@@ -615,6 +615,52 @@ fn multiget_cards_returns_a_missing_card() {
     );
 }
 
+#[test]
+fn a_listed_card_id_is_decoded_when_its_encoding_gives_it_back() {
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+      <d:response>
+        <d:href>/dav/books/contacts/zo%C3%A9%201.vcf</d:href>
+        <d:propstat>
+          <d:prop>
+            <d:getetag>"etag-1"</d:getetag>
+            <c:address-data>BEGIN:VCARD</c:address-data>
+          </d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/a%2Fb.vcf</d:href>
+        <d:status>HTTP/1.1 404 Not Found</d:status>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/x%20y.vcf</d:href>
+        <d:status>HTTP/1.1 404 Not Found</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    let mut multiget = CarddavCardMultiget::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        "/dav/books/contacts/",
+        &["zoé 1.vcf", "a%2Fb.vcf", "x y.vcf"],
+    );
+    let (request, ret) = expect_exchange(&mut multiget, &multistatus_response(xml));
+    assert!(request.contains("<d:href>/dav/books/contacts/zo%c3%a9%201.vcf</d:href>"));
+    assert!(request.contains("<d:href>/dav/books/contacts/a%2fb.vcf</d:href>"));
+
+    let ok = ret.unwrap();
+    assert_eq!(ok.cards.first().unwrap().id, "zoé 1.vcf");
+    let unreadable: Vec<&str> = ok.unreadable.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(unreadable, ["a%2Fb.vcf", "x y.vcf"]);
+
+    let mut enumerate =
+        CarddavCardEnum::new(&base(), &WebdavAuth::None, UA, "/dav/books/contacts/");
+    let (_, ret) = expect_exchange(&mut enumerate, &multistatus_response(xml));
+    let ids: Vec<String> = ret.unwrap().refs.into_iter().map(|r| r.id).collect();
+    assert_eq!(ids, ["a%2Fb.vcf", "x y.vcf", "zoé 1.vcf"]);
+}
+
 /// Cards whose `address-data` escapes each CR, as iCloud and Fastmail write
 /// it, one of them indented inside the element and one blank.
 const WHOLE_CARDS_XML: &str = "<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:carddav\">
@@ -718,7 +764,7 @@ fn create_card_uses_the_id_verbatim() {
 }
 
 #[test]
-fn create_and_update_card_return_the_segment_sent() {
+fn create_and_update_card_return_the_id_a_listing_gives() {
     let mut create = CarddavCardCreate::new(
         &base(),
         &WebdavAuth::None,
@@ -729,7 +775,7 @@ fn create_and_update_card_return_the_segment_sent() {
     );
     let (request, ret) = expect_exchange(&mut create, &http_response("201 Created", &[], ""));
     assert!(request.starts_with("put /dav/books/contacts/zo%c3%a9%201.vcf http/1.1\r\n"));
-    assert_eq!(ret.unwrap().id, "zo%C3%A9%201.vcf");
+    assert_eq!(ret.unwrap().id, "zoé 1.vcf");
 
     let mut update = CarddavCardUpdate::new(
         &base(),
@@ -741,7 +787,7 @@ fn create_and_update_card_return_the_segment_sent() {
         None,
     );
     let (_, ret) = expect_exchange(&mut update, &http_response("204 No Content", &[], ""));
-    assert_eq!(ret.unwrap().id, "zo%C3%A9%201.vcf");
+    assert_eq!(ret.unwrap().id, "zoé 1.vcf");
 }
 
 #[test]

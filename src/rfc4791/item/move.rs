@@ -93,8 +93,8 @@ pub struct CaldavItemMove {
 
 impl CaldavItemMove {
     /// Builds a new `move-item` coroutine moving `<calendar_path>/<id>` to
-    /// `<target_path>/<id>`. `id` is the resource id exactly as the server
-    /// returned it (`CaldavItemRef::id`), used verbatim on both sides.
+    /// `<target_path>/<id>`. `id` is the resource id, as a listing
+    /// returns it (`CaldavItemRef::id`), the same on both sides.
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
@@ -161,7 +161,7 @@ enum State {
 #[derive(Clone, Debug)]
 pub struct CaldavItemMoveOk {
     /// Item resource id in the target calendar, the source's own: the last
-    /// segment of the request URL, percent-encoded as it was sent.
+    /// segment of the request URL, read as a listing reads it.
     pub id: String,
     /// Entity tag of the moved item, when the server returns one: most do not,
     /// and a reader of the target learns it from its next listing.

@@ -63,12 +63,38 @@ pub struct CaldavCalendar {
     pub supported_reports: BTreeSet<String>,
 }
 
+/// A partial update over a [`CaldavCalendar`]'s properties.
+///
+/// Each property is doubly optional, which a flat [`CaldavCalendar`] cannot
+/// express: [`None`] leaves the property alone, `Some(None)` removes it
+/// (`DAV:remove`, RFC 4918 §9.2) and `Some(Some(value))` sets it (`DAV:set`).
+/// The component set is left out: a server fixes it at creation time.
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
+pub struct CaldavCalendarPatch {
+    /// Identifier of the calendar to patch, as [`CaldavCalendar::id`] carries
+    /// it.
+    pub id: String,
+    /// New human-readable display name (DAV:displayname).
+    pub display_name: Option<Option<String>>,
+    /// New free-form description (RFC 4791 §5.2.1).
+    pub description: Option<Option<String>>,
+    /// New display color, as a CSS hex string (RFC 7986 §5.9).
+    pub color: Option<Option<String>>,
+    /// New default time zone, as a VTIMEZONE block (RFC 4791 §5.2.2).
+    pub tz: Option<Option<String>>,
+}
+
 /// CalDAV namespace (RFC 4791 §4).
 pub const CALDAV: WebdavNamespace = WebdavNamespace {
     uri: "urn:ietf:params:xml:ns:caldav",
     prefix: "C",
 };
-/// inf-it extension namespace (calendar color).
+/// Apple iCal extension namespace (calendar color).
+pub const APPLE_ICAL: WebdavNamespace = WebdavNamespace {
+    uri: "http://apple.com/ns/ical/",
+    prefix: "A",
+};
+/// inf-it extension namespace, the CardDAV address book color one.
 pub const INFIT: WebdavNamespace = WebdavNamespace {
     uri: "http://inf-it.com/ns/ab/",
     prefix: "I",
@@ -99,8 +125,13 @@ pub const CALENDAR_DATA: WebdavProperty = WebdavProperty {
     ns: CALDAV,
     local: "calendar-data",
 };
-/// `I:calendar-color` (inf-it extension).
+/// `A:calendar-color` (Apple iCal extension), the one written.
 pub const CALENDAR_COLOR: WebdavProperty = WebdavProperty {
+    ns: APPLE_ICAL,
+    local: "calendar-color",
+};
+/// `I:calendar-color` (inf-it extension), read when the other is absent.
+pub const INFIT_CALENDAR_COLOR: WebdavProperty = WebdavProperty {
     ns: INFIT,
     local: "calendar-color",
 };
@@ -131,6 +162,7 @@ pub const LIST_PROPS: &[WebdavProperty] = &[
     DISPLAYNAME,
     CALENDAR_DESCRIPTION,
     CALENDAR_COLOR,
+    INFIT_CALENDAR_COLOR,
     SUPPORTED_CALENDAR_COMPONENT_SET,
     GETCTAG,
     SYNC_TOKEN,
@@ -153,10 +185,7 @@ pub fn mkcalendar_body(set: &[(WebdavProperty, WebdavPropValue<'_>)]) -> Vec<u8>
 }
 
 /// Turns the display name, color, description, time zone and component set of
-/// `calendar` into `PROPPATCH` or `MKCALENDAR` set pairs.
-///
-/// A [`None`] field is left out rather than sent empty, so a partially filled
-/// [`CaldavCalendar`] patches only what it carries.
+/// `calendar` into `MKCALENDAR` set pairs, a [`None`] field left out.
 pub fn property_set(calendar: &CaldavCalendar) -> Vec<(WebdavProperty, WebdavPropValue<'_>)> {
     let mut set = Vec::new();
     if let Some(name) = &calendar.display_name {
@@ -185,6 +214,34 @@ pub fn property_set(calendar: &CaldavCalendar) -> Vec<(WebdavProperty, WebdavPro
         ));
     }
     set
+}
+
+/// Splits `patch` into the `PROPPATCH` set pairs and the properties to remove.
+pub fn property_updates(
+    patch: &CaldavCalendarPatch,
+) -> (
+    Vec<(WebdavProperty, WebdavPropValue<'_>)>,
+    Vec<WebdavProperty>,
+) {
+    let fields = [
+        (DISPLAYNAME, &patch.display_name),
+        (CALENDAR_COLOR, &patch.color),
+        (CALENDAR_DESCRIPTION, &patch.description),
+        (CALENDAR_TIMEZONE, &patch.tz),
+    ];
+
+    let mut set = Vec::new();
+    let mut remove = Vec::new();
+
+    for (property, field) in fields {
+        match field {
+            None => continue,
+            Some(None) => remove.push(property),
+            Some(Some(value)) => set.push((property, WebdavPropValue::Text(value))),
+        }
+    }
+
+    (set, remove)
 }
 
 /// Builds a CalDAV `calendar-multiget` REPORT body (RFC 4791 §7.9) requesting

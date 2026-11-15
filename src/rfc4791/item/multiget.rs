@@ -93,7 +93,7 @@ pub struct CaldavItemMultiget {
 
 impl CaldavItemMultiget {
     /// Builds a new `multiget-items` coroutine fetching each item of `ids`
-    /// (resource ids as the server returned them, used verbatim) inside
+    /// (resource ids, as a listing returns them) inside
     /// `calendar_path`. The `Depth` header is pinned to 0: RFC 4791 §7.9 only
     /// defines the report for that value.
     pub fn new(

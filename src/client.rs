@@ -73,9 +73,9 @@ use crate::{
     coroutine::*,
     rfc4791::{
         calendar::{
-            CaldavCalendar, create::CaldavCalendarCreate, delete::CaldavCalendarDelete,
-            home_set::CaldavCalendarHomeSet, list::CaldavCalendarList,
-            update::CaldavCalendarUpdate,
+            CaldavCalendar, CaldavCalendarPatch, create::CaldavCalendarCreate,
+            delete::CaldavCalendarDelete, home_set::CaldavCalendarHomeSet,
+            list::CaldavCalendarList, update::CaldavCalendarUpdate,
         },
         item::{
             create::{CaldavItemCreate, CaldavItemCreateOk},
@@ -714,25 +714,22 @@ impl WebdavClientStd {
         self.run(coroutine).map(|_| ())
     }
 
-    /// Updates a calendar collection's properties.
+    /// Updates a calendar collection's properties: sets the ones `patch`
+    /// carries a value for, removes the ones it clears and leaves the rest
+    /// alone.
     pub fn update_calendar(
         &mut self,
-        calendar: &CaldavCalendar,
+        patch: &CaldavCalendarPatch,
     ) -> Result<(), WebdavClientStdError> {
         let home = self
             .calendar_home_set
             .as_ref()
             .ok_or(WebdavClientStdError::MissingCalendarHomeSet)?;
-        check_collection_id(&calendar.id).map_err(refused_id)?;
+        check_collection_id(&patch.id).map_err(refused_id)?;
         let path = home.path().to_string();
 
-        let coroutine = CaldavCalendarUpdate::new(
-            &self.base_url,
-            &self.auth,
-            &self.user_agent,
-            &path,
-            calendar,
-        );
+        let coroutine =
+            CaldavCalendarUpdate::new(&self.base_url, &self.auth, &self.user_agent, &path, patch);
         let multistatus = self.run(coroutine)?;
 
         check_properties_accepted(multistatus)

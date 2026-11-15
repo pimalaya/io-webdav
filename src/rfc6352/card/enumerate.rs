@@ -52,7 +52,7 @@
 //! println!("{} cards", refs.refs.len());
 //! ```
 
-use alloc::{collections::BTreeSet, string::ToString};
+use alloc::collections::BTreeSet;
 
 use log::trace;
 use url::Url;
@@ -150,7 +150,7 @@ fn from_response(response: WebdavResponseOf<WebdavEtagProps>) -> Option<CarddavC
     }
 
     Some(CarddavCardRef {
-        id: id.to_string(),
+        id: id.into_owned(),
         etag: unquoted_etag(response.props.getetag),
     })
 }

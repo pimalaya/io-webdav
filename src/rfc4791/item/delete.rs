@@ -79,8 +79,8 @@ pub struct CaldavItemDelete {
 }
 
 impl CaldavItemDelete {
-    /// Builds a new `delete-item` coroutine. `id` is the resource id exactly as
-    /// the server returned it (`CaldavItemRef::id`), used verbatim.
+    /// Builds a new `delete-item` coroutine. `id` is the resource id, as a
+    /// listing returns it (`CaldavItemRef::id`).
     pub fn new(
         base_url: &Url,
         auth: &WebdavAuth,
