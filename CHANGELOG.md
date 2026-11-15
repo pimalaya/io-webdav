@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-15
+
 ### Added
 
 - **BREAKING**: Added `href` to `rfc4791::item::CaldavItemRef`, `CaldavItemEntry`, `rfc6352::card::CarddavCardRef` and `CarddavCardEntry`, the `<href>` a listing, an enumeration or a multiget served.
@@ -466,7 +468,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.10.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.11.0..HEAD
+[0.11.0]: https://github.com/pimalaya/io-webdav/compare/v0.10.0..v0.11.0
 [0.10.0]: https://github.com/pimalaya/io-webdav/compare/v0.9.1..v0.10.0
 [0.9.1]: https://github.com/pimalaya/io-webdav/compare/v0.9.0..v0.9.1
 [0.9.0]: https://github.com/pimalaya/io-webdav/compare/v0.8.0..v0.9.0
