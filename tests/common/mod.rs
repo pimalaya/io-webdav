@@ -13,6 +13,7 @@
 #![allow(dead_code)]
 
 use core::fmt::Debug;
+use std::collections::BTreeSet;
 
 use io_http::{rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic};
 use io_webdav::{
@@ -37,6 +38,38 @@ pub fn http_response(status: &str, extra: &[(&str, &str)], body: &str) -> Vec<u8
 /// Shortcut for a 207 Multi-Status [`http_response`] carrying `xml`.
 pub fn multistatus_response(xml: &str) -> Vec<u8> {
     http_response("207 Multi-Status", &[], xml)
+}
+
+/// A segment as servers serve it: an escaped space, a raw space, raw non-ASCII
+/// and an escaped slash.
+pub const SERVED_SEGMENTS: [&str; 4] = ["My%20Cal", "My Cal", "Réunion", "a%2Fb"];
+
+/// The ids of [`SERVED_SEGMENTS`], both spaces giving the same one.
+pub const SERVED_IDS: [&str; 4] = ["My Cal", "My Cal", "Réunion", "a%2Fb"];
+
+/// One `<response>` per [`SERVED_SEGMENTS`] entry, its href
+/// `{parent}{segment}{suffix}`, holding `body`.
+pub fn served_responses(parent: &str, suffix: &str, body: &str) -> String {
+    SERVED_SEGMENTS
+        .iter()
+        .map(|segment| {
+            format!("<d:response><d:href>{parent}{segment}{suffix}</d:href>{body}</d:response>")
+        })
+        .collect()
+}
+
+/// The `(id, href)` pairs of [`served_responses`], the id ending in `suffix`
+/// without its trailing slash.
+pub fn served_pairs(parent: &str, suffix: &str) -> BTreeSet<(String, String)> {
+    let id_suffix = suffix.trim_end_matches('/');
+    SERVED_SEGMENTS
+        .iter()
+        .zip(SERVED_IDS)
+        .map(|(segment, id)| {
+            let href = format!("{parent}{segment}{suffix}");
+            (format!("{id}{id_suffix}"), href)
+        })
+        .collect()
 }
 
 /// Resumes a standard-shape coroutine and returns the written bytes.

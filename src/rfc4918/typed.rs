@@ -91,7 +91,8 @@ pub struct WebdavUnreadableEntry {
     /// Resource id: the last path segment of [`href`](Self::href), read as a
     /// listing reads it (see [`WebdavResponseOf::id`]).
     pub id: String,
-    /// The `<href>` text, trimmed.
+    /// The `<href>` as served, percent-encoding kept: the key for a store
+    /// keeping the server's spelling, which [`id`](Self::id) may decode.
     pub href: String,
     /// The response-level `<status>` code, when present (a 403 or a 404).
     pub status: Option<u16>,

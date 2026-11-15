@@ -163,6 +163,7 @@ fn from_response(
 
     Some(CaldavCalendar {
         id,
+        href: response.href,
         display_name: non_empty(props.displayname),
         description: non_empty(props.calendar_description),
         color: non_empty(props.apple_calendar_color).or(non_empty(props.calendar_color)),

@@ -75,19 +75,19 @@ use crate::{
     coroutine::*,
     rfc4791::item::join_path,
     rfc4918::{
-        WebdavAuth,
+        WebdavAuth, id_from_location,
         put::duplicate_uid,
         read_etag,
         request::WebdavRequest,
         send::{WebdavSendError, WebdavSendOk, WebdavSendRaw, check_members},
-        sent_id,
+        sent_href,
     },
 };
 
 /// Coroutine that moves a calendar item into another calendar.
 #[derive(Debug)]
 pub struct CaldavItemMove {
-    id: String,
+    href: String,
     state: State,
 }
 
@@ -108,6 +108,7 @@ impl CaldavItemMove {
         // NOTE: an absolute URL, which RFC 2518 required and every server
         // takes, where RFC 4918 also allows a path.
         let target = join_path(target_path, id);
+        let href = sent_href(base_url, &target);
         let destination = base_url.join(&target).map_or(target, |url| url.to_string());
         let mut request = WebdavRequest::r#move(base_url, auth, user_agent, &path)
             .destination(&destination)
@@ -116,7 +117,7 @@ impl CaldavItemMove {
             request = request.if_match(etag);
         }
         Self {
-            id: sent_id(base_url, &path),
+            href,
             state: State::Send(WebdavSendRaw::new(request.body(Vec::new()))),
         }
     }
@@ -145,8 +146,9 @@ impl WebdavCoroutine for CaldavItemMove {
                     Err(err) => return WebdavCoroutineState::Complete(Err(err)),
                 };
                 let etag = read_etag(&response);
-                let id = mem::take(&mut self.id);
-                WebdavCoroutineState::Complete(Ok(CaldavItemMoveOk { id, etag }))
+                let href = mem::take(&mut self.href);
+                let id = id_from_location(&href).unwrap_or_default();
+                WebdavCoroutineState::Complete(Ok(CaldavItemMoveOk { id, href, etag }))
             }
         }
     }
@@ -161,8 +163,11 @@ enum State {
 #[derive(Clone, Debug)]
 pub struct CaldavItemMoveOk {
     /// Item resource id in the target calendar, the source's own: the last
-    /// segment of the request URL, read as a listing reads it.
+    /// segment of the `Destination` URL, read as a listing reads it.
     pub id: String,
+    /// The `Destination` URL's path as sent: the key for a store keeping the
+    /// server's spelling, which [`id`](Self::id) may decode.
+    pub href: String,
     /// Entity tag of the moved item, when the server returns one: most do not,
     /// and a reader of the target learns it from its next listing.
     pub etag: Option<String>,

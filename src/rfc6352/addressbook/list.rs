@@ -140,6 +140,7 @@ fn from_response(
 
     Some(CarddavAddressbook {
         id,
+        href: response.href,
         display_name: non_empty(props.displayname),
         description: non_empty(props.addressbook_description),
         color: non_empty(props.addressbook_color),

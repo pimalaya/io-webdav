@@ -38,6 +38,9 @@ pub struct CarddavCardRef {
     /// [`id_from_location`](crate::rfc4918::id_from_location) reads one, and
     /// the addressing key of every other verb.
     pub id: String,
+    /// The `<href>` as served, percent-encoding kept: the key for a store
+    /// keeping the server's spelling, which [`id`](Self::id) may decode.
+    pub href: String,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
 }
@@ -49,6 +52,8 @@ pub struct CarddavCardEntry {
     /// Resource id: the last path segment of the card's href (see
     /// [`CarddavCardRef::id`]).
     pub id: String,
+    /// The `<href>` as served (see [`CarddavCardRef::href`]).
+    pub href: String,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
     /// Raw vCard bytes: the whole text of `address-data`, untrimmed.
@@ -122,6 +127,7 @@ pub(crate) fn card_from_response(
 
     Some(Ok(CarddavCardEntry {
         id,
+        href: response.href,
         etag: unquoted_etag(response.props.getetag),
         data: data.into_bytes(),
     }))

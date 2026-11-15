@@ -12,7 +12,7 @@ The RFC 4791 layer: calendar collections and the calendar object resources they 
 The crate SHALL provide list, create, update and delete coroutines for calendar collections. Creation SHALL use MKCALENDAR rather than the extended MKCOL, which CalDAV servers require for calendars.
 
 ### Requirement: Calendar properties
-A listed calendar SHALL carry its id, display name, description, color, component set, ctag, sync token, default time zone and the reports the server advertises for it. Every property the listing reads SHALL also be writable on create, the advertised report set excepted, which RFC 3253 section 3.1.5 protects, so a calendar round-trips through create; an update SHALL write all of them but the component set (Calendar update).
+A listed calendar SHALL carry its id, its href as served (A served href beside the id, webdav-core), display name, description, color, component set, ctag, sync token, default time zone and the reports the server advertises for it. Every property the listing reads SHALL also be writable on create, the advertised report set excepted, which RFC 3253 section 3.1.5 protects, so a calendar round-trips through create; an update SHALL write all of them but the component set (Calendar update).
 
 ### Requirement: Calendar color
 A calendar's color SHALL be written as `calendar-color` in the `http://apple.com/ns/ical/` namespace, by a create and an update alike. A listing SHALL request that property and `calendar-color` in the `http://inf-it.com/ns/ab/` namespace, and SHALL read the first, the second when the first is absent or empty, whatever order the server answers them in. An address book's color SHALL stay `addressbook-color` in the inf-it namespace.

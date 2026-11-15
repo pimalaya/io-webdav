@@ -9,7 +9,12 @@ status: current
 The optional std layer, gated behind the client feature: a ready-made pump for callers who want a working client rather than a coroutine to drive.
 
 ### Requirement: Light client
-The client SHALL wrap a single stream the caller opened, any blocking reader and writer, and expose one method per WebDAV operation. It SHALL also expose the stream, so a higher-level crate can pump its own coroutines against the same connection while reusing the discovery cache.
+The client SHALL wrap a single stream the caller opened, any blocking reader and writer, and expose one method per WebDAV operation. It SHALL also expose the stream, so a higher-level crate can pump its own coroutines against the same connection while reusing the discovery cache, and SHALL run a coroutine the caller builds through the exchange its own methods use, Closed connection included.
+
+#### Scenario: A raw REPORT after the server closed
+- GIVEN a client given a way to reconnect, whose server closed the connection after the previous response
+- WHEN the caller runs a REPORT coroutine of its own through the client
+- THEN the REPORT reaches the server on a fresh connection and its parsed multistatus is returned
 
 ### Requirement: Full client
 Under one of the TLS features the client SHALL additionally open http and https URLs itself, handling the TCP connection and the TLS negotiation through pimalaya-stream. The connection SHALL go through the proxy the caller names in the connect options, the default resolving it from the environment.

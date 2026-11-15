@@ -16,7 +16,10 @@ use common::*;
 use io_webdav::{
     client::{WebdavClientStd, WebdavClientStdError},
     rfc4791::calendar::{CaldavCalendar, CaldavCalendarPatch},
-    rfc4918::{WebdavAuth, WebdavIdError, encode_id, send::WebdavSendError},
+    rfc4918::{
+        RESOURCETYPE, WebdavAuth, WebdavIdError, WebdavMultistatus, encode_id,
+        propfind::WebdavPropfind, report::WebdavReport, send::WebdavSendError,
+    },
     rfc6352::{
         addressbook::{CarddavAddressbook, CarddavAddressbookPatch},
         card::list::CarddavCardListOptions,
@@ -1189,6 +1192,55 @@ fn a_discovery_request_is_resent_too() {
 
     let url = client.current_user_principal().expect("principal");
     assert_eq!(url.path(), "/principals/alice/");
+}
+
+#[test]
+fn a_coroutine_the_caller_runs_is_resent_too() {
+    let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let reconnects = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    let mut client = client_over(ClosedStream);
+    let (sink, count) = (written.clone(), reconnects.clone());
+    client.set_reconnect(Box::new(move || {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Box::new(RecordingStream {
+            written: sink.clone(),
+            script: ScriptedStream::new([multistatus_response(PRINCIPAL_XML)]),
+        }))
+    }));
+
+    let report = WebdavReport::<WebdavMultistatus>::new(
+        &client.base_url,
+        client.auth(),
+        &client.user_agent,
+        "/dav/calendars/personal/",
+        1,
+        b"<C:calendar-query/>".to_vec(),
+    );
+    let multistatus = client.run(report).expect("report on a fresh connection");
+    assert_eq!(multistatus.responses.len(), 1);
+
+    let propfind = WebdavPropfind::<WebdavMultistatus>::new(
+        &client.base_url,
+        client.auth(),
+        &client.user_agent,
+        "/dav/calendars/",
+        0,
+        &[RESOURCETYPE],
+    );
+    client
+        .run(propfind)
+        .expect("propfind on a fresh connection");
+
+    assert_eq!(reconnects.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let written = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+    assert!(written.starts_with("REPORT /dav/calendars/personal/ HTTP/1.1\r\n"));
+    assert_eq!(
+        written
+            .matches("PROPFIND /dav/calendars/ HTTP/1.1\r\n")
+            .count(),
+        2
+    );
 }
 
 #[test]

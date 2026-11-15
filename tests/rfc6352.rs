@@ -5,6 +5,7 @@
 mod common;
 
 use core::num::NonZeroU32;
+use std::collections::BTreeSet;
 
 use common::*;
 use io_webdav::{
@@ -661,6 +662,95 @@ fn a_listed_card_id_is_decoded_when_its_encoding_gives_it_back() {
     assert_eq!(ids, ["a%2Fb.vcf", "x y.vcf", "zoé 1.vcf"]);
 }
 
+/// A CardDAV multistatus holding `responses`.
+fn carddav_multistatus(responses: &str) -> Vec<u8> {
+    multistatus_response(&format!(
+        r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">{responses}</d:multistatus>"#
+    ))
+}
+
+const ADDRESSBOOK_PROPSTAT: &str = "<d:propstat><d:prop><d:resourcetype><d:collection/>\
+    <c:addressbook/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>";
+const CARD_PROPSTAT: &str = "<d:propstat><d:prop><d:getetag>\"e\"</d:getetag>\
+    <c:address-data>BEGIN:VCARD</c:address-data></d:prop>\
+    <d:status>HTTP/1.1 200 OK</d:status></d:propstat>";
+const GONE_STATUS: &str = "<d:status>HTTP/1.1 404 Not Found</d:status>";
+
+#[test]
+fn a_listed_addressbook_or_card_carries_its_href_as_served() {
+    let home = "/dav/books/";
+    let mut list = CarddavAddressbookList::new(&base(), &WebdavAuth::None, UA, home);
+    let reply = carddav_multistatus(&served_responses(home, "/", ADDRESSBOOK_PROPSTAT));
+    let (_, ret) = expect_exchange(&mut list, &reply);
+    let books: BTreeSet<_> = ret.unwrap().into_iter().map(|b| (b.id, b.href)).collect();
+    assert_eq!(books, served_pairs(home, "/"));
+
+    let book = "/dav/books/contacts/";
+    let responses = served_responses(book, ".vcf", CARD_PROPSTAT)
+        + &served_responses(book, "-gone.vcf", GONE_STATUS);
+    let opts = CarddavCardListOptions::default();
+    let mut list = CarddavCardList::new(&base(), &WebdavAuth::None, UA, book, &opts);
+    let (_, ret) = expect_exchange(&mut list, &carddav_multistatus(&responses));
+    let ok = ret.unwrap();
+    let cards: BTreeSet<_> = ok.cards.into_iter().map(|c| (c.id, c.href)).collect();
+    let unreadable: BTreeSet<_> = ok.unreadable.into_iter().map(|u| (u.id, u.href)).collect();
+    assert_eq!(cards, served_pairs(book, ".vcf"));
+    assert_eq!(unreadable, served_pairs(book, "-gone.vcf"));
+
+    let ids = ["My Cal.vcf"];
+    let mut multiget = CarddavCardMultiget::new(&base(), &WebdavAuth::None, UA, book, &ids);
+    let (_, ret) = expect_exchange(&mut multiget, &carddav_multistatus(&responses));
+    let ok = ret.unwrap();
+    let cards: BTreeSet<_> = ok.cards.into_iter().map(|c| (c.id, c.href)).collect();
+    let unreadable: BTreeSet<_> = ok.unreadable.into_iter().map(|u| (u.id, u.href)).collect();
+    assert_eq!(cards, served_pairs(book, ".vcf"));
+    assert_eq!(unreadable, served_pairs(book, "-gone.vcf"));
+
+    let mut enumerate = CarddavCardEnum::new(&base(), &WebdavAuth::None, UA, book);
+    let reply = carddav_multistatus(&served_responses(book, ".vcf", CARD_PROPSTAT));
+    let (_, ret) = expect_exchange(&mut enumerate, &reply);
+    let refs: BTreeSet<_> = ret
+        .unwrap()
+        .refs
+        .into_iter()
+        .map(|r| (r.id, r.href))
+        .collect();
+    assert_eq!(refs, served_pairs(book, ".vcf"));
+}
+
+#[test]
+fn a_written_card_carries_the_href_it_was_sent_to_or_located_at() {
+    let book = "/dav/books/contacts/";
+    let vcard = || b"BEGIN:VCARD".to_vec();
+
+    for (segment, id) in SERVED_SEGMENTS.iter().zip(SERVED_IDS) {
+        let location = format!("{book}{segment}.vcf");
+        let mut create =
+            CarddavCardCreate::new(&base(), &WebdavAuth::None, UA, book, "x.vcf", vcard());
+        let reply = http_response("201 Created", &[("Location", &location)], "");
+        let ok = expect_exchange(&mut create, &reply).1.unwrap();
+        assert_eq!((ok.id, ok.href), (format!("{id}.vcf"), location));
+    }
+
+    let mut create =
+        CarddavCardCreate::new(&base(), &WebdavAuth::None, UA, book, "My Cal.vcf", vcard());
+    let reply = http_response("201 Created", &[], "");
+    let ok = expect_exchange(&mut create, &reply).1.unwrap();
+    assert_eq!(ok.id, "My Cal.vcf");
+    assert_eq!(ok.href, "/dav/books/contacts/My%20Cal.vcf");
+
+    for (id, href) in [
+        ("Réunion.vcf", "/dav/books/contacts/R%C3%A9union.vcf"),
+        ("a%2Fb.vcf", "/dav/books/contacts/a%2Fb.vcf"),
+    ] {
+        let mut update =
+            CarddavCardUpdate::new(&base(), &WebdavAuth::None, UA, book, id, vcard(), None);
+        let reply = http_response("204 No Content", &[], "");
+        let ok = expect_exchange(&mut update, &reply).1.unwrap();
+        assert_eq!((ok.id.as_str(), ok.href.as_str()), (id, href));
+    }
+}
+
 /// Cards whose `address-data` escapes each CR, as iCloud and Fastmail write
 /// it, one of them indented inside the element and one blank.
 const WHOLE_CARDS_XML: &str = "<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:carddav\">
@@ -819,6 +909,10 @@ fn create_card_prefers_the_location_id_when_the_server_relocates() {
 
     let ok = ret.unwrap();
     assert_eq!(ok.id, "server-9f8e7d");
+    assert_eq!(
+        ok.href,
+        "https://dav.example.org/dav/books/contacts/server-9f8e7d"
+    );
     assert_eq!(ok.etag.as_deref(), Some("etag-1"));
 }
 

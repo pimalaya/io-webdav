@@ -4,6 +4,8 @@
 
 mod common;
 
+use std::collections::BTreeSet;
+
 use common::*;
 use io_webdav::{
     rfc4791::{
@@ -338,6 +340,116 @@ fn a_listed_calendar_or_item_id_is_decoded_when_its_encoding_gives_it_back() {
         join_path("/dav/calendars/R%C3%A9unions%202026/", "réunion 1.ics"),
         "/dav/calendars/R%C3%A9unions%202026/r%C3%A9union%201.ics"
     );
+}
+
+/// A CalDAV multistatus holding `responses`.
+fn caldav_multistatus(responses: &str) -> Vec<u8> {
+    multistatus_response(&format!(
+        r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">{responses}</d:multistatus>"#
+    ))
+}
+
+const CALENDAR_PROPSTAT: &str = "<d:propstat><d:prop><d:resourcetype><d:collection/>\
+    <c:calendar/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>";
+const ITEM_PROPSTAT: &str = "<d:propstat><d:prop><d:getetag>\"e\"</d:getetag>\
+    <c:calendar-data>BEGIN:VCALENDAR</c:calendar-data></d:prop>\
+    <d:status>HTTP/1.1 200 OK</d:status></d:propstat>";
+const GONE_STATUS: &str = "<d:status>HTTP/1.1 404 Not Found</d:status>";
+
+#[test]
+fn a_listed_calendar_or_item_carries_its_href_as_served() {
+    let home = "/dav/calendars/";
+    let mut list = CaldavCalendarList::new(&base(), &WebdavAuth::None, UA, home);
+    let reply = caldav_multistatus(&served_responses(home, "/", CALENDAR_PROPSTAT));
+    let (_, ret) = expect_exchange(&mut list, &reply);
+    let calendars: BTreeSet<_> = ret.unwrap().into_iter().map(|c| (c.id, c.href)).collect();
+    assert_eq!(calendars, served_pairs(home, "/"));
+
+    let calendar = "/dav/calendars/personal/";
+    let responses = served_responses(calendar, ".ics", ITEM_PROPSTAT)
+        + &served_responses(calendar, "-gone.ics", GONE_STATUS);
+    let mut list = CaldavItemList::new(&base(), &WebdavAuth::None, UA, calendar, "");
+    let (_, ret) = expect_exchange(&mut list, &caldav_multistatus(&responses));
+    let ok = ret.unwrap();
+    let items: BTreeSet<_> = ok.items.into_iter().map(|i| (i.id, i.href)).collect();
+    let unreadable: BTreeSet<_> = ok.unreadable.into_iter().map(|u| (u.id, u.href)).collect();
+    assert_eq!(items, served_pairs(calendar, ".ics"));
+    assert_eq!(unreadable, served_pairs(calendar, "-gone.ics"));
+
+    let ids = ["My Cal.ics"];
+    let mut multiget = CaldavItemMultiget::new(&base(), &WebdavAuth::None, UA, calendar, &ids);
+    let (_, ret) = expect_exchange(&mut multiget, &caldav_multistatus(&responses));
+    let ok = ret.unwrap();
+    let items: BTreeSet<_> = ok.items.into_iter().map(|i| (i.id, i.href)).collect();
+    let unreadable: BTreeSet<_> = ok.unreadable.into_iter().map(|u| (u.id, u.href)).collect();
+    assert_eq!(items, served_pairs(calendar, ".ics"));
+    assert_eq!(unreadable, served_pairs(calendar, "-gone.ics"));
+
+    let mut enumerate = CaldavItemEnum::new(&base(), &WebdavAuth::None, UA, calendar, "");
+    let reply = caldav_multistatus(&served_responses(calendar, ".ics", ITEM_PROPSTAT));
+    let (_, ret) = expect_exchange(&mut enumerate, &reply);
+    let refs: BTreeSet<_> = ret
+        .unwrap()
+        .refs
+        .into_iter()
+        .map(|r| (r.id, r.href))
+        .collect();
+    assert_eq!(refs, served_pairs(calendar, ".ics"));
+}
+
+#[test]
+fn a_written_item_carries_the_href_it_was_sent_to_or_located_at() {
+    let calendar = "/dav/calendars/personal/";
+    let ical = || b"BEGIN:VCALENDAR".to_vec();
+
+    for (segment, id) in SERVED_SEGMENTS.iter().zip(SERVED_IDS) {
+        let location = format!("{calendar}{segment}.ics");
+        let mut create =
+            CaldavItemCreate::new(&base(), &WebdavAuth::None, UA, calendar, "x.ics", ical());
+        let reply = http_response("201 Created", &[("Location", &location)], "");
+        let ok = expect_exchange(&mut create, &reply).1.unwrap();
+        assert_eq!((ok.id, ok.href), (format!("{id}.ics"), location));
+    }
+
+    let mut create = CaldavItemCreate::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        calendar,
+        "My Cal.ics",
+        ical(),
+    );
+    let reply = http_response("201 Created", &[], "");
+    let ok = expect_exchange(&mut create, &reply).1.unwrap();
+    assert_eq!(ok.id, "My Cal.ics");
+    assert_eq!(ok.href, "/dav/calendars/personal/My%20Cal.ics");
+
+    for (id, href) in [
+        ("Réunion.ics", "/dav/calendars/personal/R%C3%A9union.ics"),
+        ("a%2Fb.ics", "/dav/calendars/personal/a%2Fb.ics"),
+    ] {
+        let mut update =
+            CaldavItemUpdate::new(&base(), &WebdavAuth::None, UA, calendar, id, ical(), None);
+        let reply = http_response("204 No Content", &[], "");
+        let ok = expect_exchange(&mut update, &reply).1.unwrap();
+        assert_eq!((ok.id.as_str(), ok.href.as_str()), (id, href));
+    }
+
+    let target = "/dav/calendars/work/";
+    let mut moving = CaldavItemMove::new(
+        &base(),
+        &WebdavAuth::None,
+        UA,
+        calendar,
+        "My Cal.ics",
+        target,
+        None,
+    );
+    let ok = expect_exchange(&mut moving, &http_response("201 Created", &[], ""))
+        .1
+        .unwrap();
+    assert_eq!(ok.id, "My Cal.ics");
+    assert_eq!(ok.href, "/dav/calendars/work/My%20Cal.ics");
 }
 
 #[test]
@@ -964,6 +1076,10 @@ fn create_item_prefers_the_location_id_when_the_server_relocates() {
 
     let ok = ret.unwrap();
     assert_eq!(ok.id, "server-9f8e7d.ics");
+    assert_eq!(
+        ok.href,
+        "https://dav.example.org/dav/calendars/personal/server-9f8e7d.ics"
+    );
     assert_eq!(ok.etag.as_deref(), Some("etag-1"));
 }
 

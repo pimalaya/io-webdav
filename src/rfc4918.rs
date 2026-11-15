@@ -655,11 +655,9 @@ pub fn id_from_location(location: &str) -> Option<String> {
     (!segment.is_empty()).then(|| segment_id(segment).into_owned())
 }
 
-/// Returns the id a request to `path` addresses: the last segment of the URL
-/// sent, read as a listing reads it.
-pub(crate) fn sent_id(base_url: &Url, path: &str) -> String {
-    let url = resolve(base_url, path);
-    id_from_location(url.path()).unwrap_or_default()
+/// Returns the path of the URL a request to `path` sends, as sent.
+pub(crate) fn sent_href(base_url: &Url, path: &str) -> String {
+    resolve(base_url, path).path().to_string()
 }
 
 /// Percent-encodes a resource name into one path segment (RFC 3986 §2.1),

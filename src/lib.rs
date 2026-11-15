@@ -78,6 +78,10 @@
 //! [`rfc4918::check_collection_id`] and [`rfc4918::check_resource_id`] refuse
 //! one addressing another resource, and the client runs them first.
 //!
+//! Beside its id, every listed, fetched or written resource carries its href
+//! as served, percent-encoding kept: the key for a store keeping the server's
+//! spelling, two spellings decoding to one id.
+//!
 //! The living spec and the development history are in the cairn/ folder, and
 //! the crate's own conventions and test matrix are in CONTRIBUTING.md.
 

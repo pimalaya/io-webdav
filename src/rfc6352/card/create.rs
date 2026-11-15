@@ -81,7 +81,7 @@ use crate::{
         put::{WebdavPut, WebdavPutArgs, duplicate_uid},
         read_etag,
         send::{WebdavSendError, WebdavSendOk},
-        sent_id,
+        sent_href,
     },
     rfc6352::card::join_path,
 };
@@ -89,7 +89,7 @@ use crate::{
 /// Coroutine that creates a card.
 #[derive(Debug)]
 pub struct CarddavCardCreate {
-    id: String,
+    href: String,
     state: State,
 }
 
@@ -115,7 +115,7 @@ impl CarddavCardCreate {
             if_none_match: Some("*"),
         });
         Self {
-            id: sent_id(base_url, &path),
+            href: sent_href(base_url, &path),
             state: State::WebdavPut(put),
         }
     }
@@ -141,11 +141,12 @@ impl WebdavCoroutine for CarddavCardCreate {
 
                 let WebdavSendOk { response, .. } = ok;
                 let etag = read_etag(&response);
-                let id = response
-                    .header("location")
-                    .and_then(id_from_location)
-                    .unwrap_or_else(|| mem::take(&mut self.id));
-                WebdavCoroutineState::Complete(Ok(CarddavCardCreateOk { id, etag }))
+                let href = match response.header("location") {
+                    Some(location) if id_from_location(location).is_some() => location.into(),
+                    _ => mem::take(&mut self.href),
+                };
+                let id = id_from_location(&href).unwrap_or_default();
+                WebdavCoroutineState::Complete(Ok(CarddavCardCreateOk { id, href, etag }))
             }
         }
     }
@@ -163,6 +164,9 @@ pub struct CarddavCardCreateOk {
     /// server returns one (its own name for the resource), otherwise the last
     /// segment of the request URL; either read as a listing reads it.
     pub id: String,
+    /// The `Location` header as served when it names the resource, else the
+    /// request URL's path: the key for a store keeping the server's spelling.
+    pub href: String,
     /// Entity tag returned by the server, when present.
     pub etag: Option<String>,
 }

@@ -37,6 +37,9 @@ pub struct CaldavItemRef {
     /// [`id_from_location`](crate::rfc4918::id_from_location) reads one, and
     /// the addressing key of every other verb.
     pub id: String,
+    /// The `<href>` as served, percent-encoding kept: the key for a store
+    /// keeping the server's spelling, which [`id`](Self::id) may decode.
+    pub href: String,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
 }
@@ -48,6 +51,8 @@ pub struct CaldavItemEntry {
     /// Resource id: the last path segment of the item's href (see
     /// [`CaldavItemRef::id`]).
     pub id: String,
+    /// The `<href>` as served (see [`CaldavItemRef::href`]).
+    pub href: String,
     /// Entity tag (RFC 9110 §8.8.3), without surrounding quotes.
     pub etag: Option<String>,
     /// Raw iCalendar bytes: the whole text of `calendar-data`, untrimmed.
@@ -121,6 +126,7 @@ pub(crate) fn item_from_response(
 
     Some(Ok(CaldavItemEntry {
         id,
+        href: response.href,
         etag: unquoted_etag(response.props.getetag),
         data: data.into_bytes(),
     }))

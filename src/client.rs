@@ -30,6 +30,10 @@
 //! Every collection, item and card id a method takes is checked before any
 //! byte is sent ([`check_collection_id`], [`check_resource_id`]).
 //!
+//! A coroutine the client has no method for runs through [`run`], resent on a
+//! fresh connection as every method is.
+//!
+//! [`run`]: WebdavClientStd::run
 //! [`base_url`]: WebdavClientStd::base_url
 //! [`user_agent`]: WebdavClientStd::user_agent
 //! [`principal_url`]: WebdavClientStd::principal_url
@@ -291,7 +295,8 @@ fn check_properties_accepted(out: WebdavProppatchOk) -> Result<(), WebdavClientS
 pub struct WebdavClientStd {
     /// The active blocking stream. Public so higher-level crates can pump their
     /// own [`WebdavCoroutine`]s through it (as io-jmap exposes its stream),
-    /// reusing this client's discovery cache.
+    /// reusing this client's discovery cache; [`run`](Self::run) pumps one
+    /// with the resend.
     pub stream: Box<dyn WebdavStream>,
     auth: WebdavAuth,
     /// Base URL prepended to every request path.
@@ -453,10 +458,15 @@ impl WebdavClientStd {
         &self.auth
     }
 
-    /// Runs any standard-shape coroutine (`Yield = WebdavYield`) against the
-    /// client stream until completion. Redirect-aware discovery uses
-    /// [`run_redirect`](Self::run_redirect) instead.
-    fn run<C, T, E>(&mut self, mut coroutine: C) -> Result<T, WebdavClientStdError>
+    /// Runs a coroutine yielding [`WebdavYield`] over the client stream until
+    /// it completes, resending its request as every method does.
+    ///
+    /// A request the client has no method for (a raw `REPORT`, a `PROPFIND`)
+    /// goes through here rather than through [`stream`](Self::stream) by hand,
+    /// so a server closing the connection is met (see [`set_reconnect`]).
+    ///
+    /// [`set_reconnect`]: WebdavClientStd::set_reconnect
+    pub fn run<C, T, E>(&mut self, mut coroutine: C) -> Result<T, WebdavClientStdError>
     where
         C: WebdavCoroutine<Yield = WebdavYield, Return = Result<T, E>>,
         E: Into<WebdavClientStdError>,

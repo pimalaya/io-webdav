@@ -76,11 +76,11 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc4918::{
-        WebdavAuth,
+        WebdavAuth, id_from_location,
         put::{WebdavPut, WebdavPutArgs, duplicate_uid},
         read_etag,
         send::{WebdavSendError, WebdavSendOk},
-        sent_id,
+        sent_href,
     },
     rfc6352::card::join_path,
 };
@@ -88,7 +88,7 @@ use crate::{
 /// Coroutine that updates a card.
 #[derive(Debug)]
 pub struct CarddavCardUpdate {
-    id: String,
+    href: String,
     state: State,
 }
 
@@ -116,7 +116,7 @@ impl CarddavCardUpdate {
             if_none_match: None,
         });
         Self {
-            id: sent_id(base_url, &path),
+            href: sent_href(base_url, &path),
             state: State::WebdavPut(put),
         }
     }
@@ -142,8 +142,9 @@ impl WebdavCoroutine for CarddavCardUpdate {
 
                 let WebdavSendOk { response, .. } = ok;
                 let etag = read_etag(&response);
-                let id = mem::take(&mut self.id);
-                WebdavCoroutineState::Complete(Ok(CarddavCardUpdateOk { id, etag }))
+                let href = mem::take(&mut self.href);
+                let id = id_from_location(&href).unwrap_or_default();
+                WebdavCoroutineState::Complete(Ok(CarddavCardUpdateOk { id, href, etag }))
             }
         }
     }
@@ -160,6 +161,9 @@ pub struct CarddavCardUpdateOk {
     /// Card resource id: the last segment of the request URL, read as a
     /// listing reads it.
     pub id: String,
+    /// The request URL's path as sent, percent-encoding kept: the key for a
+    /// store keeping the server's spelling, which [`id`](Self::id) may decode.
+    pub href: String,
     /// Updated entity tag returned by the server, when present.
     pub etag: Option<String>,
 }

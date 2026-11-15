@@ -151,6 +151,7 @@ fn from_response(response: WebdavResponseOf<WebdavEtagProps>) -> Option<CarddavC
 
     Some(CarddavCardRef {
         id: id.into_owned(),
+        href: response.href,
         etag: unquoted_etag(response.props.getetag),
     })
 }

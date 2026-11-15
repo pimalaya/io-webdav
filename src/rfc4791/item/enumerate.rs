@@ -161,6 +161,7 @@ fn from_response(response: WebdavResponseOf<WebdavEtagProps>) -> Option<CaldavIt
 
     Some(CaldavItemRef {
         id: id.into_owned(),
+        href: response.href,
         etag: unquoted_etag(response.props.getetag),
     })
 }

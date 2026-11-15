@@ -30,6 +30,12 @@ pub struct CaldavCalendar {
     /// URL's path otherwise, starting with a slash (see
     /// [`collection_id`](crate::rfc4918::collection_id)).
     pub id: String,
+    /// The `<href>` a listing served, percent-encoding kept: the key for a
+    /// store keeping the server's spelling, which [`id`](Self::id) may decode.
+    ///
+    /// A create addresses [`id`](Self::id) and ignores it.
+    #[serde(default)]
+    pub href: String,
     /// Human-readable display name (DAV:displayname).
     pub display_name: Option<String>,
     /// Free-form description (RFC 4791 §6.2.1).

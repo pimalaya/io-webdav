@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **BREAKING**: Added `href` to `rfc4791::item::CaldavItemRef`, `CaldavItemEntry`, `rfc6352::card::CarddavCardRef` and `CarddavCardEntry`, the `<href>` a listing, an enumeration or a multiget served.
+
+  Escapes and raw bytes are kept as served: a `My%20Cal` and a raw `My Cal`, both read as the id `My Cal`, stay apart for a store keyed on the server's spelling.
+
+- **BREAKING**: Added `href` to `rfc4791::calendar::CaldavCalendar` and `rfc6352::addressbook::CarddavAddressbook`, the `<href>` a listing served; a create ignores it.
+
+- **BREAKING**: Added `href` to `CaldavItemCreateOk`, `CaldavItemUpdateOk`, `CaldavItemMoveOk`, `CarddavCardCreateOk` and `CarddavCardUpdateOk`.
+
+  The `Location` header as served when it names the resource, else the path of the URL sent, the `Destination` for a move; the returned id is unchanged.
+
+- Added `client::WebdavClientStd::run`, running a coroutine the caller builds over the client stream with the resend every method gets.
+
 ## [0.10.0] - 2026-11-15
 
 ### Added
