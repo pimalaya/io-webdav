@@ -2,6 +2,11 @@ name: Tests
 
 on:
   push:
+  workflow_dispatch:
+  # The suites against real accounts (fastmail, google) run weekly and by
+  # hand, never on push: a push storm burns their quotas.
+  schedule:
+    - cron: "0 7 * * 1"
 
 jobs:
   tests:
@@ -28,6 +33,7 @@ jobs:
           fail_ci_if_error: false
 
   fastmail-tests:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -80,7 +86,7 @@ jobs:
           RUST_LOG: trace
 
   google-tests:
-    if: github.repository == 'pimalaya/io-webdav'
+    if: github.repository == 'pimalaya/io-webdav' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
