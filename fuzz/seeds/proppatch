@@ -1,0 +1,1 @@
+<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:" xmlns:Z="urn:z"><D:set><D:prop><Z:a>x<Z:b name="c"/></Z:a><D:displayname>n</D:displayname></D:prop></D:set><D:remove><D:prop><Z:c/></D:prop></D:remove></D:propertyupdate>

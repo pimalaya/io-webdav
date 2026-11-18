@@ -1,6 +1,6 @@
 [package]
 name = "io-webdav"
-description = "WebDAV client library for Rust"
+description = "WebDAV client and server library for Rust"
 version = "0.11.0"
 authors = ["Clément DOUIN (soywod) <pimalaya.org@posteo.net>"]
 rust-version = "1.89"
@@ -11,17 +11,20 @@ keywords = ["io-free", "no-std", "coroutine", "caldav", "carddav"]
 homepage = "https://pimalaya.org"
 documentation = "https://docs.rs/io-webdav/latest/io_webdav"
 repository = "https://github.com/pimalaya/io-webdav"
+exclude = ["/fuzz"]
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["rustls-ring"]
-client = []
-rustls-ring = ["client", "pimalaya-stream/rustls-ring", "dep:anyhow", "dep:pimalaya-stream"]
-rustls-aws = ["client", "pimalaya-stream/rustls-aws", "dep:anyhow", "dep:pimalaya-stream"]
-native-tls = ["client", "pimalaya-stream/native-tls", "dep:anyhow", "dep:pimalaya-stream"]
+default = ["client", "rustls-ring"]
+client = ["dep:io-http"]
+server = []
+std = ["client"]
+rustls-ring = ["std", "client", "pimalaya-stream/rustls-ring", "dep:anyhow", "dep:pimalaya-stream"]
+rustls-aws = ["std", "client", "pimalaya-stream/rustls-aws", "dep:anyhow", "dep:pimalaya-stream"]
+native-tls = ["std", "client", "pimalaya-stream/native-tls", "dep:anyhow", "dep:pimalaya-stream"]
 vendored = ["pimalaya-stream?/vendored"]
 
 [[example]]
@@ -41,7 +44,7 @@ url = { version = "2.5", default-features = false }
 
 [dependencies]
 anyhow = { version = "1", optional = true }
-io-http = { version = "0.8", default-features = false }
+io-http = { version = "0.8", default-features = false, optional = true }
 log = { version = "0.4", default-features = false }
 memchr = { version = "2", default-features = false }
 pimalaya-stream = { version = "0.4", default-features = false, optional = true }

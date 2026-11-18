@@ -2,6 +2,8 @@
 //! vocabularies, the request-body helpers and every coroutine, resumed against
 //! scripted HTTP response bytes.
 
+#![cfg(feature = "client")]
+
 mod common;
 
 use core::num::NonZeroU32;

@@ -200,5 +200,9 @@ pub fn bearer_auth(token: &str) -> WebdavAuth {
     WebdavAuth::Bearer(HttpAuthBearer::new(token))
 }
 
-#[cfg(feature = "client")]
+#[cfg(any(
+    feature = "rustls-ring",
+    feature = "rustls-aws",
+    feature = "native-tls"
+))]
 pub mod live;

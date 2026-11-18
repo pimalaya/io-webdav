@@ -9,9 +9,19 @@
 //! performing I/O itself.
 //!
 //! The caller owns the socket and pumps the coroutine with the bytes it read,
-//! whatever the runtime (blocking, async, in-memory tests). The `client`
-//! feature ships a ready-made std-blocking pump for callers who just want a
-//! working client.
+//! whatever the runtime (blocking, async, in-memory tests). The `std` feature
+//! ships a ready-made std-blocking pump for callers who just want a working
+//! client.
+//!
+//! ## Features
+//!
+//! The vocabulary (namespaces, properties, hrefs and ids, the multistatus
+//! parsers and the request body builders) is always compiled. `client`, on by
+//! default, adds the coroutines and io-http. `server` adds [`server`]: request
+//! body and header parsers plus multistatus and error body writers, for a
+//! server that owns its HTTP stack. `std` adds the blocking client, and each
+//! TLS feature (`rustls-ring` by default, `rustls-aws`, `native-tls`) its
+//! connector.
 //!
 //! ## Layout: one folder per RFC
 //!
@@ -37,12 +47,13 @@
 //! sync-collection REPORT and its tokens, protocol-neutral so both layers
 //! use it, plus the PROPFIND enumeration for a server implementing none.
 //!
-//! Two modules span the RFC modules and therefore live at the crate root.
+//! Three modules span the RFC modules and therefore live at the crate root.
 //! [`coroutine`] defines the coroutine contract every state machine
-//! implements. The optional [`client`] module (`client` feature) is the
+//! implements. The optional [`client`] module (`std` feature) is the
 //! std-blocking pump: a light client wrapping any stream you opened yourself,
 //! or a full client opening the TCP/TLS connection itself when one of the TLS
-//! features is enabled.
+//! features is enabled. The optional [`server`] module (`server` feature) is
+//! the server side, without a session.
 //!
 //! ## The coroutine contract
 //!
@@ -61,7 +72,7 @@
 //!
 //! ## Conventions
 //!
-//! The crate is no_std with alloc. std only enters behind the `client` feature.
+//! The crate is no_std with alloc. std only enters behind the `std` feature.
 //! Every public item carries the bare `Webdav` prefix, the protocol not being
 //! version-scoped. Logging follows the library rules: state changes at debug
 //! level, in-process steps and data dumps at trace level.
@@ -86,14 +97,19 @@
 //! the crate's own conventions and test matrix are in CONTRIBUTING.md.
 
 extern crate alloc;
-#[cfg(feature = "client")]
+#[cfg(feature = "std")]
 extern crate std;
 
-#[cfg(feature = "client")]
+#[cfg(feature = "std")]
 pub mod client;
+#[cfg(feature = "client")]
 pub mod coroutine;
 pub mod rfc4791;
 pub mod rfc4918;
+#[cfg(feature = "client")]
 pub mod rfc5397;
 pub mod rfc6352;
+#[cfg(feature = "client")]
 pub mod rfc6578;
+#[cfg(feature = "server")]
+pub mod server;

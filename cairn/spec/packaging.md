@@ -6,16 +6,16 @@ status: current
 
 # Packaging
 
-io-webdav is an I/O-free library following the Pimalaya crate conventions: a no_std core with an optional std-blocking client, dual-licensed MIT OR Apache-2.0.
+io-webdav is an I/O-free library following the Pimalaya crate conventions: a no_std core with optional client coroutines, an optional std-blocking client and an optional server side, dual-licensed MIT OR Apache-2.0.
 
 ### Requirement: no_std core
-The crate SHALL be no_std unconditionally, pulling in alloc for its owned buffers. std SHALL be reachable only through the client feature, and no dependency SHALL pull it in otherwise: the core SHALL build for a bare-metal target.
+The crate SHALL be no_std unconditionally, pulling in alloc for its owned buffers. std SHALL be reachable only through the std feature, and no dependency SHALL pull it in otherwise: the core SHALL build for a bare-metal target.
 
 ### Requirement: Feature layering
-The crate SHALL expose a client feature gating the std-blocking client, and one feature per TLS provider (rustls-ring by default, rustls-aws, native-tls), each implying client and selecting the matching pimalaya-stream provider. A vendored feature SHALL forward weakly to pimalaya-stream. This follows the golden rule that a feature is justified only when it changes the crate set.
+The vocabulary (namespaces, property constants, hrefs and ids, the multistatus parsers and the request body builders) SHALL compile under no feature. The crate SHALL expose a client feature gating the coroutines and the io-http dependency, on by default; a server feature gating the server module; a std feature gating the std-blocking client and implying client; and one feature per TLS provider (rustls-ring by default, rustls-aws, native-tls), each implying std and client and selecting the matching pimalaya-stream provider. Every combination SHALL build, none included. A vendored feature SHALL forward weakly to pimalaya-stream. This follows the golden rule that a feature is justified only when it changes the crate set.
 
 ### Requirement: Source layout
-The source tree SHALL be organised one module per RFC (rfc4918, rfc4791, rfc5397, rfc6352, rfc6578), mirroring how the WebDAV specifications are split. Code spanning the RFC modules SHALL live at the crate root: the coroutine contract and the optional client. Every public type SHALL carry its domain prefix, Webdav for the core and the protocol-neutral pieces, Caldav and Carddav for their layers, and SHALL read domain then target then verb.
+The source tree SHALL be organised one module per RFC (rfc4918, rfc4791, rfc5397, rfc6352, rfc6578), mirroring how the WebDAV specifications are split. Code spanning the RFC modules SHALL live at the crate root: the coroutine contract, the optional client and the optional server. Every public type SHALL carry its domain prefix, Webdav for the core and the protocol-neutral pieces, Caldav and Carddav for their layers, and SHALL read domain then target then verb.
 
 ### Requirement: Byte orientation
 The crate SHALL stay byte-oriented. iCalendar and vCard payloads SHALL be returned as raw bytes and accepted as raw bytes, the parse belonging to ical and vcard upstream. The crate SHALL NOT depend on either.

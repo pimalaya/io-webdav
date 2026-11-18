@@ -7,23 +7,34 @@
 //! composition and the multistatus entry mapper. Each coroutine is its own
 //! submodule, together with the result types only it returns.
 
+#[cfg(feature = "client")]
 pub mod create;
+#[cfg(feature = "client")]
 pub mod delete;
+#[cfg(feature = "client")]
 pub mod enumerate;
+#[cfg(feature = "client")]
 pub mod list;
+#[cfg(feature = "client")]
 pub mod r#move;
+#[cfg(feature = "client")]
 pub mod multiget;
+#[cfg(feature = "client")]
 pub mod read;
+#[cfg(feature = "client")]
 pub mod update;
 
 use alloc::{format, string::String, vec::Vec};
 
+#[cfg(feature = "client")]
 use serde::Deserialize;
 
+use crate::rfc4918::encode_segments;
+#[cfg(feature = "client")]
 use crate::{
     rfc4791::calendar::CALENDAR_DATA,
     rfc4918::{
-        GETETAG, WebdavProperty, encode_segments,
+        GETETAG, WebdavProperty,
         typed::{WebdavResponseOf, WebdavUnreadableEntry, whole_text},
         unquoted_etag,
     },
@@ -60,6 +71,7 @@ pub struct CaldavItemEntry {
 }
 
 /// Properties requested when listing or batch-fetching item bodies.
+#[cfg(feature = "client")]
 pub(crate) const ITEM_PROPS: &[WebdavProperty] = &[GETETAG, CALENDAR_DATA];
 
 /// Joins a calendar collection path with an item resource id into the item
@@ -77,6 +89,7 @@ pub fn join_path(calendar: &str, id: &str) -> String {
 }
 
 /// The properties of [`ITEM_PROPS`], as a typed multistatus reads them.
+#[cfg(feature = "client")]
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct CaldavItemProps {
@@ -91,6 +104,7 @@ pub(crate) struct CaldavItemProps {
 ///
 /// Answers [`None`] for a response naming no item: a self-entry, an href
 /// without a last segment, or a 507 truncation row.
+#[cfg(feature = "client")]
 pub(crate) fn item_from_response(
     response: WebdavResponseOf<CaldavItemProps>,
 ) -> Option<Result<CaldavItemEntry, WebdavUnreadableEntry>> {

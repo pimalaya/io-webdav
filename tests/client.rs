@@ -2,7 +2,7 @@
 //! against a scripted stream replaying canned HTTP responses, plus local TCP
 //! listeners for the connect flow.
 
-#![cfg(feature = "client")]
+#![cfg(feature = "std")]
 
 mod common;
 

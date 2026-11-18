@@ -9,21 +9,31 @@
 //! Each coroutine is its own submodule, together with the result types only
 //! it returns.
 
+#[cfg(feature = "client")]
 pub mod create;
+#[cfg(feature = "client")]
 pub mod delete;
+#[cfg(feature = "client")]
 pub mod enumerate;
+#[cfg(feature = "client")]
 pub mod list;
+#[cfg(feature = "client")]
 pub mod multiget;
+#[cfg(feature = "client")]
 pub mod read;
+#[cfg(feature = "client")]
 pub mod update;
 
 use alloc::{format, string::String, vec::Vec};
 
+#[cfg(feature = "client")]
 use serde::Deserialize;
 
+use crate::rfc4918::encode_segments;
+#[cfg(feature = "client")]
 use crate::{
     rfc4918::{
-        GETETAG, WebdavProperty, encode_segments,
+        GETETAG, WebdavProperty,
         typed::{WebdavResponseOf, WebdavUnreadableEntry, whole_text},
         unquoted_etag,
     },
@@ -61,6 +71,7 @@ pub struct CarddavCardEntry {
 }
 
 /// Properties requested when listing or batch-fetching card bodies.
+#[cfg(feature = "client")]
 pub(crate) const CARD_PROPS: &[WebdavProperty] = &[GETETAG, ADDRESS_DATA];
 
 /// Joins an addressbook collection path with a card resource id into the card
@@ -78,6 +89,7 @@ pub fn join_path(addressbook: &str, id: &str) -> String {
 }
 
 /// The properties of [`CARD_PROPS`], as a typed multistatus reads them.
+#[cfg(feature = "client")]
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct CarddavCardProps {
@@ -92,6 +104,7 @@ pub(crate) struct CarddavCardProps {
 ///
 /// Answers [`None`] for a response naming no card: a self-entry, an href
 /// without a last segment, or a 507 truncation row.
+#[cfg(feature = "client")]
 pub(crate) fn card_from_response(
     response: WebdavResponseOf<CarddavCardProps>,
 ) -> Option<Result<CarddavCardEntry, WebdavUnreadableEntry>> {

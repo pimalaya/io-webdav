@@ -66,7 +66,11 @@
 //! - CardDAV rewrites the vCard `UID` to its own id, so the UID query uses
 //!   the UID read back from the server.
 
-#![cfg(feature = "client")]
+#![cfg(any(
+    feature = "rustls-ring",
+    feature = "rustls-aws",
+    feature = "native-tls"
+))]
 
 mod common;
 

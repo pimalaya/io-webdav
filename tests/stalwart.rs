@@ -15,7 +15,11 @@
 //! not a resource: discovery targets the per-type root, which resolves the
 //! shared principal.
 
-#![cfg(feature = "client")]
+#![cfg(any(
+    feature = "rustls-ring",
+    feature = "rustls-aws",
+    feature = "native-tls"
+))]
 
 mod common;
 

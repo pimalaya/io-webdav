@@ -6,10 +6,15 @@
 //! vocabulary and the request-body helpers the addressbook coroutines reuse.
 //! Each coroutine is its own submodule.
 
+#[cfg(feature = "client")]
 pub mod create;
+#[cfg(feature = "client")]
 pub mod delete;
+#[cfg(feature = "client")]
 pub mod home_set;
+#[cfg(feature = "client")]
 pub mod list;
+#[cfg(feature = "client")]
 pub mod update;
 
 use core::num::NonZeroU32;

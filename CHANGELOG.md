@@ -4,6 +4,41 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Added the `server` feature and its `server` module, the server side without a session (no_std, alloc), for a server that owns its HTTP stack:
+
+  - request body parsers: `propfind::parse_propfind`, `proppatch::parse_proppatch` (set values kept as raw XML for dead properties), `mkcol::parse_mkcol` (RFC 5689), `mkcol::parse_mkcalendar`, `lock::parse_lockinfo` and `report::parse_report` (calendar-multiget, calendar-query with its whole filter, free-busy-query, addressbook-multiget, addressbook-query into the client's `CarddavFilter`, sync-collection);
+  - header parsers in `header`: `Depth`, `Destination`, `Overwrite`, `If`, `If-Match` and `If-None-Match`, `Timeout`, `Lock-Token`;
+  - writers: `multistatus::WebdavMultistatusBody` (propstats grouped by status, response-level status, sync token) and `precondition::WebdavPrecondition` (`DAV:error` bodies of RFC 4918, 5689, 3253, 4791, 6352 and 6578);
+  - `name::WebdavPropName`, the DAV, CalDAV, CardDAV, CalendarServer and Apple iCal properties typed, any other kept by name.
+
+### Changed
+
+- **BREAKING**: Renamed the `client` feature, which gated the blocking client, to `std`.
+
+  A consumer naming it moves to the new name:
+
+  ```toml
+  # before
+  io-webdav = { version = "0.11", default-features = false, features = ["client"] }
+  # after
+  io-webdav = { version = "0.12", default-features = false, features = ["std"] }
+  ```
+
+- **BREAKING**: Changed the `client` feature to gate the coroutines (`coroutine`, `rfc5397`, `rfc6578`, every method submodule of `rfc4918`, `rfc4791` and `rfc6352`, `WebdavAuth`, `emit_header`, `read_etag`) and the io-http dependency.
+
+  It is on by default and implied by `std` and the TLS features. A consumer turning default features off to drive the coroutines itself adds it:
+
+  ```toml
+  # before
+  io-webdav = { version = "0.11", default-features = false }
+  # after
+  io-webdav = { version = "0.12", default-features = false, features = ["client"] }
+  ```
+
+  The vocabulary stays compiled without it: namespaces, property constants, hrefs and ids, the multistatus parsers and the request body builders.
+
 ## [0.11.0] - 2026-11-15
 
 ### Added

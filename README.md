@@ -1,6 +1,6 @@
 # I/O WebDAV [![Documentation](https://img.shields.io/docsrs/io-webdav?style=flat&logo=docs.rs&logoColor=white)](https://docs.rs/io-webdav/latest/io_webdav) [![Coverage](https://img.shields.io/codecov/c/github/pimalaya/io-webdav/master?style=flat&logo=codecov&logoColor=white)](https://codecov.io/gh/pimalaya/io-webdav) [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya) [![Sponsor](https://img.shields.io/badge/sponsor-pink?style=flat&logo=github-sponsors&logoColor=white)](https://pimalaya.org/sponsor/)
 
-WebDAV client library for Rust
+WebDAV client and server library for Rust
 
 This library is composed of 3 feature-gated layers:
 
@@ -29,6 +29,7 @@ This library is composed of 3 feature-gated layers:
 - **Incremental sync**: collection synchronization with sync tokens, batch multiget and ETag-only enumeration for change detection, on both calendars and address books.
 - **Authentication**: HTTP Basic and Bearer.
 - **Full client**: blocking client with TLS via Rustls (`rustls-ring` default, `rustls-aws`) or Native TLS (`native-tls`), reconnecting when the server closed the connection.
+- **Server side** (`server` feature): session-free parsers for request bodies and WebDAV headers, plus multistatus and `DAV:error` writers, for a server that owns its HTTP stack.
 
 > [!TIP]
 > I/O WebDAV is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate the client layers. The default feature set is declared in [Cargo.toml](./Cargo.toml) or on [docs.rs](https://docs.rs/crate/io-webdav/latest/features).

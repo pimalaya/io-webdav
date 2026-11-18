@@ -1,0 +1,21 @@
+[package]
+name = "io-webdav-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+io-webdav = { path = "..", default-features = false, features = ["client", "server"] }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "server_bodies"
+path = "fuzz_targets/server_bodies.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

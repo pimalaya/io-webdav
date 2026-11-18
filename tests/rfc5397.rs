@@ -1,6 +1,8 @@
 //! Offline coverage of the current-user-principal discovery (RFC 5397), resumed
 //! against scripted HTTP response bytes.
 
+#![cfg(feature = "client")]
+
 mod common;
 
 use common::*;

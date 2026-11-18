@@ -2,6 +2,8 @@
 //! the XML body generators, the multistatus parser, the shared helpers and
 //! every generic coroutine, all resumed against scripted HTTP response bytes.
 
+#![cfg(feature = "client")]
+
 mod common;
 
 use common::*;

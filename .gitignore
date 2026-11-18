@@ -53,3 +53,7 @@ fabric.properties
 
 ## Others
 .metadata/
+
+# Fuzzing corpus and crashes
+/fuzz/corpus
+/fuzz/artifacts

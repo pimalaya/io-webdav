@@ -6,7 +6,7 @@ status: current
 
 # Standard blocking client
 
-The optional std layer, gated behind the client feature: a ready-made pump for callers who want a working client rather than a coroutine to drive.
+The optional std layer, gated behind the std feature: a ready-made pump for callers who want a working client rather than a coroutine to drive.
 
 ### Requirement: Light client
 The client SHALL wrap a single stream the caller opened, any blocking reader and writer, and expose one method per WebDAV operation. It SHALL also expose the stream, so a higher-level crate can pump its own coroutines against the same connection while reusing the discovery cache, and SHALL run a coroutine the caller builds through the exchange its own methods use, Closed connection included.
@@ -20,7 +20,7 @@ The client SHALL wrap a single stream the caller opened, any blocking reader and
 Under one of the TLS features the client SHALL additionally open http and https URLs itself, handling the TCP connection and the TLS negotiation through pimalaya-stream. The connection SHALL go through the proxy the caller names in the connect options, the default resolving it from the environment.
 
 ### Requirement: TLS providers
-The crate SHALL offer Rustls with ring crypto as the default, Rustls with aws crypto, and native-tls, each as its own feature implying the client feature.
+The crate SHALL offer Rustls with ring crypto as the default, Rustls with aws crypto, and native-tls, each as its own feature implying the std feature.
 
 ### Requirement: Discovery cache
 The client SHALL cache the principal URL and both home sets, plus the reports each listed collection advertises. Each discovery step SHALL resolve the previous one when it is not cached. A method needing a home set that was never resolved SHALL fail with a dedicated missing-cache error rather than guess a path.

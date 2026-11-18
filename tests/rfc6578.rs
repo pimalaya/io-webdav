@@ -2,6 +2,8 @@
 //! `sync-collection` REPORT and its `PROPFIND` fallback, resumed against
 //! scripted HTTP response bytes.
 
+#![cfg(feature = "client")]
+
 mod common;
 
 use common::*;

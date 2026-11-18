@@ -12,7 +12,11 @@
 //! The bootstrap script runs Radicale in a container with a single htpasswd
 //! user (`test` / `test`) over plain HTTP on host port 5232.
 
-#![cfg(feature = "client")]
+#![cfg(any(
+    feature = "rustls-ring",
+    feature = "rustls-aws",
+    feature = "native-tls"
+))]
 
 use std::sync::{Mutex, MutexGuard};
 

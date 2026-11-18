@@ -9,7 +9,11 @@
 //! cargo test --test fastmail -- --ignored
 //! ```
 
-#![cfg(feature = "client")]
+#![cfg(any(
+    feature = "rustls-ring",
+    feature = "rustls-aws",
+    feature = "native-tls"
+))]
 
 mod common;
 

@@ -16,37 +16,55 @@
 //! generators need no central namespace table: every RFC layer owns the
 //! namespaces and constants it speaks.
 
+#[cfg(feature = "client")]
 pub mod copy;
+#[cfg(feature = "client")]
 pub mod coroutine;
+#[cfg(feature = "client")]
 pub mod delete;
+#[cfg(feature = "client")]
 pub mod follow_redirects;
+#[cfg(feature = "client")]
 pub mod get;
+#[cfg(feature = "client")]
 pub mod mkcol;
+#[cfg(feature = "client")]
 pub mod r#move;
+#[cfg(feature = "client")]
 pub mod options;
+#[cfg(feature = "client")]
 pub mod propfind;
+#[cfg(feature = "client")]
 pub mod proppatch;
+#[cfg(feature = "client")]
 pub mod put;
+#[cfg(feature = "client")]
 pub mod report;
+#[cfg(feature = "client")]
 pub mod request;
+#[cfg(feature = "client")]
 pub mod send;
 pub mod typed;
 pub(crate) mod xml;
 
 use core::{fmt, iter, mem, str};
 
+#[cfg(feature = "client")]
+use alloc::collections::BTreeMap;
 use alloc::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     format,
     string::{String, ToString},
     vec::{self, Vec},
 };
 
+#[cfg(feature = "client")]
 use io_http::{
     rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic, rfc9110::response::HttpResponse,
 };
 use log::trace;
+#[cfg(feature = "client")]
 use serde::{
     Deserialize, Deserializer,
     de::{IgnoredAny, MapAccess, Visitor},
@@ -61,6 +79,7 @@ use crate::rfc4918::xml::{XmlEvent, XmlScanner, attr, decode_attr, decode_text, 
 /// Covers the three modes CalDAV and CardDAV deployments handle in practice,
 /// reusing the io-http credential types. Higher-level coroutines never observe
 /// a credential, only the header value [`emit_header`] formats out of it.
+#[cfg(feature = "client")]
 #[derive(Clone, Debug, Default)]
 pub enum WebdavAuth {
     /// No authentication; no `Authorization` header is emitted.
@@ -393,7 +412,7 @@ pub(crate) fn same_path(a: &str, b: &str) -> bool {
 
 /// Percent-decodes `path` (RFC 3986 §2.1), leaving a malformed escape as it
 /// stands.
-fn decoded(path: &str) -> impl Iterator<Item = u8> {
+pub(crate) fn decoded(path: &str) -> impl Iterator<Item = u8> {
     let bytes = path.as_bytes();
     let mut i = 0;
 
@@ -552,6 +571,7 @@ pub fn escape_attr(value: &str) -> String {
 /// Read as XML rather than searched for as a substring, so a body merely
 /// quoting the name is not one. Preconditions are matched this way, the RFCs
 /// naming the element and only recommending the status that wraps it.
+#[cfg(feature = "client")]
 pub(crate) fn has_element(body: &str, locals: &[&str]) -> bool {
     XmlScanner::new(body)
         .any(|event| matches!(event, XmlEvent::Start { local, .. } if locals.contains(&local)))
@@ -656,6 +676,7 @@ pub fn id_from_location(location: &str) -> Option<String> {
 }
 
 /// Returns the path of the URL a request to `path` sends, as sent.
+#[cfg(feature = "client")]
 pub(crate) fn sent_href(base_url: &Url, path: &str) -> String {
     resolve(base_url, path).path().to_string()
 }
@@ -779,12 +800,14 @@ pub(crate) mod sealed {
 }
 
 /// The `getetag` of a response, the one property enumerations read.
+#[cfg(feature = "client")]
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct WebdavEtagProps {
     pub getetag: Option<String>,
 }
 
 /// Returns an entity tag without its surrounding quotes, when non-empty.
+#[cfg(feature = "client")]
 pub(crate) fn unquoted_etag(etag: Option<String>) -> Option<String> {
     etag.filter(|etag| !etag.is_empty())
         .map(|etag| unquoted(&etag).to_string())
@@ -792,6 +815,7 @@ pub(crate) fn unquoted_etag(etag: Option<String>) -> Option<String> {
 
 /// Returns the opaque value of a strong entity tag (RFC 9110 §8.8.3), its
 /// quotes dropped; a weak tag (`W/"..."`) is kept whole.
+#[cfg(feature = "client")]
 fn unquoted(etag: &str) -> &str {
     let value = etag.strip_prefix('"');
     value
@@ -801,22 +825,27 @@ fn unquoted(etag: &str) -> &str {
 
 /// The local names of a property's children, e.g. the types a
 /// `resourcetype` lists.
+#[cfg(feature = "client")]
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct WebdavChildNames(pub BTreeMap<String, ()>);
 
 /// The hrefs a property names, e.g. the home sets of a principal: its `href`
 /// children, or its own text when it has none.
+#[cfg(feature = "client")]
 #[derive(Debug, Default)]
 pub(crate) struct WebdavHrefs(pub Vec<String>);
 
+#[cfg(feature = "client")]
 impl<'de> Deserialize<'de> for WebdavHrefs {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_any(WebdavHrefsVisitor)
     }
 }
 
+#[cfg(feature = "client")]
 struct WebdavHrefsVisitor;
 
+#[cfg(feature = "client")]
 impl<'de> Visitor<'de> for WebdavHrefsVisitor {
     type Value = WebdavHrefs;
 
@@ -849,6 +878,7 @@ impl<'de> Visitor<'de> for WebdavHrefsVisitor {
 
 /// A `supported-report-set` (RFC 3253 §3.1.5): one `supported-report` per
 /// report, each holding a `report` holding the report element itself.
+#[cfg(feature = "client")]
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct WebdavReportSet {
@@ -857,12 +887,14 @@ pub(crate) struct WebdavReportSet {
 }
 
 /// One `supported-report` of a [`WebdavReportSet`].
+#[cfg(feature = "client")]
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct WebdavSupportedReport {
     #[serde(default)]
     pub report: WebdavChildNames,
 }
 
+#[cfg(feature = "client")]
 impl WebdavReportSet {
     /// Returns the local names of the advertised reports.
     pub(crate) fn reports(self) -> BTreeSet<String> {
@@ -874,6 +906,7 @@ impl WebdavReportSet {
 }
 
 /// Returns `text` unless it is empty.
+#[cfg(feature = "client")]
 pub(crate) fn non_empty(text: Option<String>) -> Option<String> {
     text.filter(|text| !text.is_empty())
 }
@@ -1187,6 +1220,7 @@ fn push_text<'a>(text: &mut Cow<'a, str>, piece: Cow<'a, str>) {
 
 /// Returns the value of the HTTP `Authorization` header for the given scheme,
 /// or [`None`] when no header should be emitted.
+#[cfg(feature = "client")]
 pub fn emit_header(auth: &WebdavAuth) -> Option<String> {
     match auth {
         WebdavAuth::None => None,
@@ -1224,6 +1258,7 @@ pub fn resolve(base_url: &Url, path: &str) -> Url {
 
 /// Reads the `ETag` header (RFC 9110 §8.8.3) out of an HTTP response: the
 /// opaque value of a strong tag, its quotes dropped, a weak tag kept whole.
+#[cfg(feature = "client")]
 pub fn read_etag(response: &HttpResponse) -> Option<String> {
     response.header("etag").map(|raw| unquoted(raw).into())
 }
@@ -1272,6 +1307,7 @@ pub(crate) fn status_code(text: &str) -> Option<u16> {
 ///
 /// `str::from_utf8` checks ASCII a word at a time, where
 /// `String::from_utf8_lossy` reads byte by byte.
+#[cfg(feature = "client")]
 pub(crate) fn body_text(body: &[u8]) -> Cow<'_, str> {
     match str::from_utf8(body) {
         Ok(text) => Cow::Borrowed(text),
@@ -1374,8 +1410,11 @@ fn value_element(prop: WebdavProperty, value: &WebdavPropValue<'_>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{borrow::Cow, string::ToString};
+    #[cfg(feature = "client")]
+    use alloc::borrow::Cow;
+    use alloc::string::ToString;
 
+    #[cfg(feature = "client")]
     use io_http::{rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic};
 
     use crate::rfc4918::*;
@@ -1487,6 +1526,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn body_text_borrows_utf8_and_replaces_invalid_sequences() {
         let body = "<d:a>é</d:a>".as_bytes();
@@ -1643,11 +1683,13 @@ mod tests {
         assert_eq!(entry.text(principal), Some("/principals/alice/"));
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn none_emits_nothing() {
         assert!(emit_header(&WebdavAuth::None).is_none());
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn basic_encodes_credentials() {
         let auth = WebdavAuth::Basic(HttpAuthBasic::new("alice", "secret"));
@@ -1655,6 +1697,7 @@ mod tests {
         assert_eq!(emit_header(&auth).unwrap(), "Basic YWxpY2U6c2VjcmV0");
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn bearer_prepends_scheme() {
         let auth = WebdavAuth::Bearer(HttpAuthBearer::new("xyz"));

@@ -56,6 +56,12 @@ impl<'a> XmlScanner<'a> {
     pub(crate) fn is_done(&self) -> bool {
         self.pos == self.xml.len()
     }
+
+    /// The offset the scan stands at: past the last event returned.
+    #[cfg(feature = "server")]
+    pub(crate) fn offset(&self) -> usize {
+        self.pos
+    }
 }
 
 impl<'a> Iterator for XmlScanner<'a> {

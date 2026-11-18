@@ -30,7 +30,11 @@
 //! partition host outright, swap the base URL for the advertised one (or
 //! reconnect via `WebdavClientStd::set_stream`).
 
-#![cfg(feature = "client")]
+#![cfg(any(
+    feature = "rustls-ring",
+    feature = "rustls-aws",
+    feature = "native-tls"
+))]
 
 mod common;
 

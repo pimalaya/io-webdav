@@ -568,6 +568,7 @@ const WHOLE_TEXT: &str = "$io_webdav::whole_text";
 /// §10.4) is the object itself, so its whitespace, the final CRLF included,
 /// belongs to it. References are resolved and line ends normalised as for any
 /// text.
+#[cfg(feature = "client")]
 pub(crate) fn whole_text<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
@@ -576,8 +577,10 @@ pub(crate) fn whole_text<'de, D: Deserializer<'de>>(
         .map(Some)
 }
 
+#[cfg(feature = "client")]
 struct WholeTextVisitor;
 
+#[cfg(feature = "client")]
 impl<'de> Visitor<'de> for WholeTextVisitor {
     type Value = String;
 

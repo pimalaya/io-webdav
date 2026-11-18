@@ -6,10 +6,15 @@
 //! the request-body helpers the calendar coroutines reuse. Each coroutine is
 //! its own submodule.
 
+#[cfg(feature = "client")]
 pub mod create;
+#[cfg(feature = "client")]
 pub mod delete;
+#[cfg(feature = "client")]
 pub mod home_set;
+#[cfg(feature = "client")]
 pub mod list;
+#[cfg(feature = "client")]
 pub mod update;
 
 use alloc::{collections::BTreeSet, format, string::String, vec::Vec};
