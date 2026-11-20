@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-20
+
 ### Added
 
 - Added the `server` feature and its `server` module, the server side without a session (no_std, alloc), for a server that owns its HTTP stack:
@@ -503,7 +505,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.11.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.12.0..HEAD
+[0.12.0]: https://github.com/pimalaya/io-webdav/compare/v0.11.0..v0.12.0
 [0.11.0]: https://github.com/pimalaya/io-webdav/compare/v0.10.0..v0.11.0
 [0.10.0]: https://github.com/pimalaya/io-webdav/compare/v0.9.1..v0.10.0
 [0.9.1]: https://github.com/pimalaya/io-webdav/compare/v0.9.0..v0.9.1
