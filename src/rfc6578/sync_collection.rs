@@ -8,6 +8,10 @@
 //! returns only the members changed or removed since the given token, plus
 //! the next token to checkpoint.
 //!
+//! A member row answered with an error (a 403, a 5xx) is neither a change nor
+//! a removal: it lands in [`WebdavSyncDelta::unreadable`], so a full listing
+//! holding one is known to be incomplete.
+//!
 //! A rejected token surfaces as
 //! [`WebdavSyncCollectionError::InvalidSyncToken`] so the consumer can fall
 //! back to a full enumeration.
@@ -90,8 +94,13 @@ use crate::{
     coroutine::*,
     rfc4918::{
         DAV, WebdavAuth, WebdavEtagProps, WebdavProperty, XML_DECL, escape_text, has_element,
-        href_path, prop_block, propfind::WebdavPropfind, report::WebdavReport, same_path,
-        send::WebdavSendError, typed::WebdavMultistatusOf, unquoted_etag, xmlns_decls,
+        href_path, prop_block,
+        propfind::WebdavPropfind,
+        report::WebdavReport,
+        same_path,
+        send::WebdavSendError,
+        typed::{WebdavMultistatusOf, WebdavUnreadableEntry},
+        unquoted_etag, xmlns_decls,
     },
     webdav_try,
 };
@@ -118,6 +127,13 @@ pub struct WebdavSyncDelta {
     /// §3.6), leaving the consumer to run the report again from
     /// [`sync_token`](Self::sync_token) to drain the rest.
     pub truncated: bool,
+    /// The member rows the server answered with another non-2xx status than
+    /// 404 and 507 (a 403, a 5xx), in the order met.
+    ///
+    /// Such a member is neither changed nor removed: its state is unknown, so
+    /// a consumer reading the delta as a full listing reads it as incomplete
+    /// and infers no removal from what it lacks.
+    pub unreadable: Vec<WebdavUnreadableEntry>,
 }
 
 /// A changed member reported by a `sync-collection` REPORT.
@@ -270,8 +286,12 @@ pub fn sync_collection_body(sync_token: Option<&str>, props: &[WebdavProperty]) 
 }
 
 /// Sorts the multistatus rows into a [`WebdavSyncDelta`]: 404 rows are
-/// removals, a 507 row flags truncation, everything else is a change. Both
-/// enumerations answer a multistatus, so both are sorted here.
+/// removals, a 507 row flags truncation, any other non-2xx row is unreadable,
+/// everything else is a change. Both enumerations answer a multistatus, so
+/// both are sorted here.
+///
+/// A 2xx row whose `getetag` the server refused stays a change with no ETag:
+/// the member exists and changed, only its version is unknown.
 ///
 /// `collection` is the request-target path, against which the collection's own
 /// self-entry is recognised and dropped rather than taken for a member.
@@ -290,18 +310,27 @@ fn from_multistatus(
         match entry.status {
             Some(404) => delta.vanished.push(entry.href),
             Some(507) => delta.truncated = true,
-            Some(status) if status / 100 != 2 => {
-                trace!(
-                    "skip sync-collection row {} with status {status}",
-                    entry.href
-                );
-            }
             // NOTE: some servers (iCloud) echo the collection itself in the
             // sync report, and a PROPFIND always answers with it, neither being
             // a member resource; either would otherwise enter the spine as a
             // bogus member named after the collection.
             _ if same_path(href_path(&entry.href).trim_end_matches('/'), collection) => {
                 trace!("skip enumeration self-entry {}", entry.href);
+            }
+            Some(status) if status / 100 != 2 => {
+                let id = entry.id().into_owned();
+                if id.is_empty() {
+                    trace!("skip enumeration row {} naming no member", entry.href);
+                    continue;
+                }
+
+                trace!("enumeration row {} unreadable: {status}", entry.href);
+                delta.unreadable.push(WebdavUnreadableEntry {
+                    id,
+                    href: entry.href,
+                    status: entry.status,
+                    failures: entry.failures,
+                });
             }
             _ => {
                 let etag = unquoted_etag(entry.props.getetag);

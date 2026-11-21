@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **BREAKING**: Added `unreadable` to `rfc6578::sync_collection::WebdavSyncDelta`, the member rows the server answered with an error, as `rfc4918::typed::WebdavUnreadableEntry`.
+
+  Both enumerations, the `sync-collection` REPORT and its `PROPFIND` fallback, dropped a row with a status other than 2xx, 404 and 507 (a 403, a 5xx), so a full listing read as the whole collection took the member for removed. A 2xx row whose `getetag` was refused stays a change with no ETag.
+
 ## [0.13.0] - 2026-11-21
 
 ### Changed

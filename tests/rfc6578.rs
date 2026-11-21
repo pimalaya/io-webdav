@@ -71,6 +71,9 @@ fn initial_sync_sorts_the_delta_rows() {
         Some("http://example.org/ns/sync/42")
     );
     assert!(delta.truncated);
+    assert_eq!(delta.unreadable.len(), 1);
+    assert_eq!(delta.unreadable[0].href, "/dav/books/contacts/error.vcf");
+    assert_eq!(delta.unreadable[0].status, Some(500));
 }
 
 #[test]
@@ -374,6 +377,86 @@ fn the_self_entry_is_skipped_however_the_server_encodes_it() {
         .map(|change| change.href)
         .collect();
     assert_eq!(hrefs, ["/dav/user%40example.org/work/alice.vcf"]);
+}
+
+#[test]
+fn an_enumeration_returns_the_member_rows_it_could_not_read() {
+    let xml = r#"<d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/dav/books/contacts/</d:href>
+        <d:status>HTTP/1.1 403 Forbidden</d:status>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/alice.vcf</d:href>
+        <d:propstat>
+          <d:prop><d:getetag>"etag-1"</d:getetag></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/bob.vcf</d:href>
+        <d:status>HTTP/1.1 403 Forbidden</d:status>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/carol%20c.vcf</d:href>
+        <d:status>HTTP/1.1 503 Service Unavailable</d:status>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/dave.vcf</d:href>
+        <d:propstat>
+          <d:prop><d:getetag/></d:prop>
+          <d:status>HTTP/1.1 403 Forbidden</d:status>
+        </d:propstat>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts/removed.vcf</d:href>
+        <d:status>HTTP/1.1 404 Not Found</d:status>
+      </d:response>
+      <d:response>
+        <d:href>/dav/books/contacts</d:href>
+        <d:status>HTTP/1.1 507 Insufficient Storage</d:status>
+      </d:response>
+    </d:multistatus>"#;
+
+    for fallback in [false, true] {
+        let mut sync = enumerate(None, fallback);
+        let (_, ret) = expect_exchange(&mut sync, &multistatus_response(xml));
+        let delta = ret.unwrap();
+
+        let changed: Vec<(&str, Option<&str>)> = delta
+            .changed
+            .iter()
+            .map(|change| (change.href.as_str(), change.etag.as_deref()))
+            .collect();
+        assert_eq!(
+            changed,
+            [
+                ("/dav/books/contacts/alice.vcf", Some("etag-1")),
+                ("/dav/books/contacts/dave.vcf", None),
+            ],
+            "fallback {fallback}"
+        );
+        assert_eq!(delta.vanished, ["/dav/books/contacts/removed.vcf"]);
+        assert!(delta.truncated);
+
+        let unreadable: Vec<(&str, &str, Option<u16>)> = delta
+            .unreadable
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.href.as_str(), entry.status))
+            .collect();
+        assert_eq!(
+            unreadable,
+            [
+                ("bob.vcf", "/dav/books/contacts/bob.vcf", Some(403)),
+                (
+                    "carol c.vcf",
+                    "/dav/books/contacts/carol%20c.vcf",
+                    Some(503)
+                ),
+            ],
+            "fallback {fallback}"
+        );
+    }
 }
 
 #[test]

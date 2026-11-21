@@ -86,6 +86,10 @@ impl<P> WebdavResponseOf<P> {
 
 /// A listed resource whose `<response>` carried no data, as the server
 /// answered it.
+///
+/// A card or item listing or multiget names one for a refused or missing
+/// payload; an enumeration (RFC 6578) for a member row answered with an error
+/// status, its state unknown.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WebdavUnreadableEntry {
     /// Resource id: the last path segment of [`href`](Self::href), read as a
@@ -94,7 +98,7 @@ pub struct WebdavUnreadableEntry {
     /// The `<href>` as served, percent-encoding kept: the key for a store
     /// keeping the server's spelling, which [`id`](Self::id) may decode.
     pub href: String,
-    /// The response-level `<status>` code, when present (a 403 or a 404).
+    /// The response-level `<status>` code, when present (a 403, a 404, a 5xx).
     pub status: Option<u16>,
     /// The properties the server refused, with their `<propstat>` status.
     pub failures: Vec<WebdavPropFailure>,
