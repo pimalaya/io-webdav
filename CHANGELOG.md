@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-24
+
 ### Added
 
 - **BREAKING**: Added `unreadable` to `rfc6578::sync_collection::WebdavSyncDelta`, the member rows the server answered with an error, as `rfc4918::typed::WebdavUnreadableEntry`.
@@ -517,7 +519,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Added offline test suites resuming every coroutine and client method against scripted HTTP responses, reaching 100% line coverage (cargo-tarpaulin, LLVM engine), plus ignored live-provider suites for Radicale, Stalwart, Fastmail, Google and iCloud.
 
-[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.13.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-webdav/compare/v0.14.0..HEAD
+[0.14.0]: https://github.com/pimalaya/io-webdav/compare/v0.13.0..v0.14.0
 [0.13.0]: https://github.com/pimalaya/io-webdav/compare/v0.12.0..v0.13.0
 [0.12.0]: https://github.com/pimalaya/io-webdav/compare/v0.11.0..v0.12.0
 [0.11.0]: https://github.com/pimalaya/io-webdav/compare/v0.10.0..v0.11.0
